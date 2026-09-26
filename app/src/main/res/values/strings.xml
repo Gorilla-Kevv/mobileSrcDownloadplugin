@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">剪存 ClipDown</string>
+    <string name="accessibility_label">剪存链接识别</string>
+    <string name="accessibility_description">用于在其他应用中识别正在浏览或复制的内容链接，仅在检测到受支持平台的链接时提示下载。本服务不会收集或上传你的任何个人信息。</string>
+
+    <string name="channel_download">下载任务</string>
+    <string name="channel_monitor">剪贴板守护</string>
+
+    <string name="notification_monitor_title">剪存正在守护剪贴板</string>
+    <string name="notification_monitor_text">检测到支持的链接时将提示下载</string>
+    <string name="notification_download_title">正在下载 %1$s</string>
+    <string name="notification_download_text">%1$d%% · %2$s</string>
+
+    <string name="float_bubble_content_desc">剪存悬浮球</string>
+</resources>
