@@ -23,14 +23,16 @@ fun ok(body: String, headers: Headers = headersOf(), code: Int = 200): HttpRespo
 
 fun notFound(): HttpResponse = HttpResponse(404, "not found", headersOf(), "")
 
-/** 构造解析上下文：可选 Cookie 与请求记录 */
+/** 构造解析上下文：可选 Cookie、webFetcher 与请求记录 */
 fun testContext(
     http: HttpFacade,
     cookies: Map<Platform, String> = emptyMap(),
-    logs: MutableList<String> = mutableListOf()
+    logs: MutableList<String> = mutableListOf(),
+    webFetcher: ((url: String) -> String?)? = null
 ): ParseContext = ParseContext(
     config = com.clipdown.parser.config.ParserConfig.default(),
     http = http,
     cookieProvider = { cookies[it] },
-    logger = { tag, msg -> logs.add("$tag: $msg") }
+    logger = { tag, msg -> logs.add("$tag: $msg") },
+    webFetcher = webFetcher
 )

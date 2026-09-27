@@ -5,6 +5,7 @@ import android.util.Log
 import com.clipdown.app.data.CookieStore
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.clip.ClipboardMonitor
+import com.clipdown.app.clip.WebViewHtmlFetcher
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.model.DownloadConfig
 import com.clipdown.parser.core.ParserEngine
@@ -31,7 +32,8 @@ class ClipDownApp : Application() {
             androidContext = this,
             config = settings.parserConfig(),
             cookieProvider = { platform -> CookieStore.get(this, platform) },
-            logger = { tag, msg -> Log.d(tag, msg) }
+            logger = { tag, msg -> Log.d(tag, msg) },
+            webFetcher = { url -> WebViewHtmlFetcher.fetch(this, url) }
         )
 
         // 下载引擎：并发度与网络策略在设置变更后通过 updateConfig 热更新

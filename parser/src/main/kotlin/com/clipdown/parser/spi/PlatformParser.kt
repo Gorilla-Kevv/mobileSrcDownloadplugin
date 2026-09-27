@@ -17,7 +17,13 @@ class ParseContext(
     val http: HttpFacade,
     /** 按平台返回 Cookie 字符串；不需要登录的平台返回 null */
     val cookieProvider: (Platform) -> String? = { null },
-    val logger: ((String, String) -> Unit)? = null
+    val logger: ((String, String) -> Unit)? = null,
+    /**
+     * 真浏览器抓取能力（App 层以 WebView 实现注入，内核保持纯 JVM）。
+     * 用于 WAF 指纹拦截（小红书）与 JS 壳页（Instagram）等 OkHttp 无法直取的场景。
+     * 返回渲染完成后的页面 HTML；失败返回 null。
+     */
+    val webFetcher: ((url: String) -> String?)? = null
 ) {
     fun log(tag: String, msg: String) = logger?.invoke(tag, msg)
 

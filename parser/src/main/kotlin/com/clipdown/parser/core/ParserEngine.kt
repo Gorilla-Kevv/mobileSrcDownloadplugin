@@ -43,6 +43,9 @@ object ParserEngine {
     private var cookieProvider: (Platform) -> String? = { null }
 
     @Volatile
+    private var webFetcher: ((url: String) -> String?)? = null
+
+    @Volatile
     private var logger: ((String, String) -> Unit)? = null
 
     @Volatile
@@ -59,12 +62,14 @@ object ParserEngine {
         config: ParserConfig = ParserConfig.default(),
         http: HttpFacade? = null,
         cookieProvider: (Platform) -> String? = { null },
-        logger: ((String, String) -> Unit)? = null
+        logger: ((String, String) -> Unit)? = null,
+        webFetcher: ((url: String) -> String?)? = null
     ) {
         this.config = config
         this.http = http ?: OkHttpFacade(config.connectTimeoutMs, config.readTimeoutMs)
         this.cookieProvider = cookieProvider
         this.logger = logger
+        this.webFetcher = webFetcher
         if (!bootstrapped) {
             PlatformRegistry.registerAll(defaultParsers())
             bootstrapped = true
@@ -93,7 +98,7 @@ object ParserEngine {
         GenericParser()
     )
 
-    private fun context(): ParseContext = ParseContext(config, http, cookieProvider, logger)
+    private fun context(): ParseContext = ParseContext(config, http, cookieProvider, logger, webFetcher)
 
     /** 从剪贴板文本中解析：先抽链接，再走完整链路 */
     fun parseText(text: String?): ParseResult {

@@ -44,6 +44,37 @@ class InstagramParserTest {
     }
 
     @Test
+    fun `webFetcher 渲染页含视频时优先返回视频`() {
+        val rendered = """
+            <html><head>
+            <meta property="og:title" content="My Reel Video" />
+            <meta property="og:video" content="https://cdn.instagram.com/reel_video.mp4" />
+            <meta property="og:image" content="https://cdn.instagram.com/reel_cover.jpg" />
+            </head><body>
+            <script type="text/javascript">window.__additionalDataLoaded('extra',{"username":"nasa"});</script>
+            </body></html>
+        """.trimIndent()
+        val http = FakeHttp { url ->
+            // embed 与 oEmbed 都不含视频，逼出 WebView 通道
+            if (url.contains("/embed/captioned/")) ok("<html><body>no media</body></html>") else notFound()
+        }
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DReal111/",
+            testContext(
+                http,
+                webFetcher = { url ->
+                    if (url.contains("instagram.com/reel/DReal111")) rendered else null
+                }
+            )
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertTrue("应通过 WebView 渲染页拿到视频: ${result.media.map { it.kind }}", videos.isNotEmpty())
+        assertEquals("https://cdn.instagram.com/reel_video.mp4", videos.first().url)
+        assertEquals("ig-local-v1-page", result.resolverId)
+        assertEquals("My Reel Video", result.title)
+    }
+
+    @Test
     fun `带 Cookie 且 embed 失败时降级路径完整`() {
         // Cookie 存在但 GraphQL 不可用（fake 全 404）→ 走 embed → embed 也 404 → oEmbed 404 → 抛业务异常
         val http = FakeHttp { notFound() }

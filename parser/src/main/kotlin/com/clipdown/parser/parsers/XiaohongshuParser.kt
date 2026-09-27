@@ -28,24 +28,34 @@ class XiaohongshuParser : PlatformParser {
     override fun canHandle(url: String): Boolean = true
 
     override fun parse(url: String, ctx: ParseContext): ParseResult {
-        val headers = warmUp(ctx.headersFor(platform), ctx) + mapOf(
-            "Referer" to "https://www.xiaohongshu.com/",
-            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        )
-        val resp = runCatching { ctx.http.get(url, headers) }
-            .getOrElse { throw ParseException("网络请求失败：${it.message}", platform) }
+        // WebView 渲染优先：真浏览器栈过阿里云 WAF（OkHttp 指纹被拦，见 PROGRESS 阶段 8）
+        val rendered = runCatching { ctx.webFetcher?.invoke(url) }.getOrNull()
+        val respBody: String?
+        val respCode: Int
+        if (!rendered.isNullOrBlank()) {
+            respBody = rendered
+            respCode = 200
+        } else {
+            val headers = warmUp(ctx.headersFor(platform), ctx) + mapOf(
+                "Referer" to "https://www.xiaohongshu.com/",
+                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+            )
+            val resp = runCatching { ctx.http.get(url, headers) }
+                .getOrElse { throw ParseException("网络请求失败：${it.message}", platform) }
+            respBody = resp.body
+            respCode = resp.code
+        }
 
         ctx.log(
             id,
-            "请求诊断：ua=${headers["User-Agent"]?.take(50)} cookieLen=${headers["Cookie"]?.length} " +
-                "code=${resp.code} len=${resp.body?.length} final=${resp.finalUrl.take(70)} " +
-                "state=${resp.body?.contains("__INITIAL_STATE__")}"
+            "请求诊断：via=${if (!rendered.isNullOrBlank()) "webview" else "okhttp"} " +
+                "code=$respCode len=${respBody?.length} state=${respBody?.contains("__INITIAL_STATE__")}"
         )
 
-        val html = resp.body
+        val html = respBody
             ?: throw ParseException("页面内容为空（可能触发了风控）", platform)
-        if (resp.code == 404) throw ParseException("笔记不存在或已删除", platform, retryable = false)
-        if (resp.code >= 400) throw ParseException("页面返回 ${resp.code}", platform)
+        if (respCode == 404) throw ParseException("笔记不存在或已删除", platform, retryable = false)
+        if (respCode >= 400) throw ParseException("页面返回 $respCode", platform)
 
         val state = HtmlUtil.inlineJson(html, "__INITIAL_STATE__")
         val blob = state ?: html
