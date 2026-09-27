@@ -70,7 +70,7 @@ object UrlUtil {
             name.isNotEmpty() && name !in TRACKING_PARAMS
         }
         val query = if (kept.isEmpty()) "" else kept.joinToString("&").let { "?$it" }
-        return "${uri.scheme}://$host${if (uri.port != -1) ":${uri.port}" else ""}${uri.path ?: ""}$query"
+        return "${uri.scheme}://$host${if (uri.port != -1) ":${uri.port}" else ""}${(uri.path ?: "").trimEnd('/')}$query"
     }
 
     fun hostOf(url: String): String =

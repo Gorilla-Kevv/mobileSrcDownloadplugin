@@ -118,3 +118,13 @@
 - 改动文件：`parser/.../XiaohongshuParser.kt`（预热+诊断）
 - 测试结果：`assembleDebug` 两次全绿；诊断链路完整（每次失败都能看到具体原因）
 - 下一阶段入口：WebView 抓取方案设计 → 实现；或 `:parser` JVM 单测；或真机回归
+
+## 阶段 9：`:parser` JVM 单测（已完成）
+- 已完成：
+  - **7 个测试套件 34 个用例全绿**（JUnit4，`:parser:test` 33s）：UrlUtil 8 / M3u8 4 / PlatformRegistry 6 / X 5 / Youtube 4 / Instagram 3 / Xiaohongshu 4
+  - 真实数据夹具入库 `parser/src/test/resources/`：syndication_video_tweet.json（真实 API 响应+已知 token 答案 52qqmtfi7esad5b）、piped_streams.json（真实 Piped 响应）、xhs_note.html（真实笔记页 104KB）
+  - **修复 5（真 Bug）：`HtmlUtil.jsonField` 不支持 `\uXXXX` 转义**——小红书 SSR 用 `\u002F` 表示斜杠，`[^"\\]+` 遇反斜杠即断导致整段匹配失败；pattern 改为 `(?:[^"\\]|\\.)+?` + unescapeJson 增加 `\uXXXX` 通用解码（IG 等平台同样受益）
+  - **修复 6（小）：`UrlUtil.normalize` 未去除路径尾斜杠**（query 存在时 trimEnd 只作用于串尾）→ 路径 `trimEnd('/')`，链接去重更稳
+- 改动文件：`parser/src/test/**`（8 文件+3 夹具）、`HtmlUtil.kt`、`UrlUtil.kt`
+- 测试结果：`:parser:test` 全绿（34/34）
+- 下一阶段入口：WebView 抓取方案（小红书）；真机回归；`:downloader` 单测（可复用 FakeHttp 思路）

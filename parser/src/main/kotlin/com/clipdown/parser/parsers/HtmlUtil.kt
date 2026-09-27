@@ -88,10 +88,10 @@ object HtmlUtil {
         return null
     }
 
-    /** 抓取形如 "key":"value" 的 JSON 字段（含转义写法 \"key\":\"value\"） */
+    /** 抓取形如 "key":"value" 的 JSON 字段（含转义写法 \"key\":\"value\"，值中允许 \uXXXX 与 \/ 等转义序列） */
     fun jsonField(text: String, key: String): List<String> {
         val escaped = Regex.escape(key)
-        val pattern = Regex("""\\?"${escaped}\\?"\s*:\s*\\?"([^"\\]+)\\?"""")
+        val pattern = Regex("""\\?"${escaped}\\?"\s*:\s*\\?"((?:[^"\\]|\\.)+?)\\?"""")
         return pattern.findAll(text).map { it.groupValues[1].unescapeJson() }.toList()
     }
 
@@ -108,6 +108,7 @@ object HtmlUtil {
         .replace("\\/", "/")
 
     fun String.unescapeJson(): String = this
+        .replace(Regex("""\\u([0-9a-fA-F]{4})""")) { it.groupValues[1].toInt(16).toChar().toString() }
         .replace("\\/", "/")
         .replace("\\u002F", "/")
         .replace("\\u0026", "&")
