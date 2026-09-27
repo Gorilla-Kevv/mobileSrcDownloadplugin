@@ -65,3 +65,17 @@
 - 改动文件：`parser/.../YoutubeParser.kt`（HLS 标记）、`downloader/.../DownloadController.kt`（m3u8 兜底）
 - 测试结果：`assembleDebug` 全绿（55s）；360p 产物 11,829,048B 且 `ftyp mp42` 验证通过；HLS 引擎对正常播放列表的分片下载/变体选择已验证（用错位内容跑通了全流程）
 - 下一阶段入口：真机回归（B 站专属解析+家宽 IP）；`:parser` JVM 单测；可选：下载产物 magic bytes 校验、时长 sanity check
+
+## 阶段 5：Instagram / X 模拟器实测（已完成）
+- 已完成：
+  - **X 全链路通过**：Chrome 复制真实推文链接（@Watase_Yuzuki 图片推文）→ 读取剪贴板 → syndication 接口解析（结果标注「X (Twitter) · 平台公开接口」= OFFICIAL，guest token 推导正常）→ 原图下载 361KB → 落盘 `Pictures/ClipDown/`，**JPEG 魔数 `FF D8 FF E0` 验证通过** ✅；图片任务正确路由到 Pictures 目录
+  - **IG embed 路径通过**：Chrome 复制真实 reel 链接（instagram.com/reels/DczssLA...）→ 免登录 embed 解析出原图与作者（@utamichann，悬浮窗弹窗路径独立验证），结果标注「Instagram · 平台公开接口」+ 降级提示「多图作品需要登录态才能全部获取」✅
+  - 悬浮窗弹窗再次实战：剪贴板粘贴动作自动触发，X/IG 平台徽标、结果卡、15s 倒计时均正常
+- 未完成/已知问题：
+  - **IG 视频直链未获取**：该 reel 的 embed 页未暴露 `video_url`，需登录 Cookie 才能走 parsePrivateApi 拿视频多清晰度。Chrome/官方 App 的登录态无法共享给 App（Cookie 隔离），需用户从电脑浏览器导出 IG Cookie（F12 → Application → Cookies → 复制整串）粘到 App 设置页对应输入框
+  - 用户手工测试遗留产物：`Instagram-a6a2.jpg` 900B 实为 WEBP（oEmbed 降级路径只拿缩略图 + 容器扩展名误标 webp→jpg）——改进方向：按实际字节定扩展名
+  - X 视频推文（variants 多码率）未做 UI 实测（Chrome 盲操作复制失败率过高 + 截图内容审查拦截），该逻辑为纯 JSON 解析，交由 `:parser` JVM 单测覆盖
+  - 无障碍服务在应用重装/重置后会失效（设置页显示"去开启"），后台剪贴板通道依赖它
+- 改动文件：无代码改动（纯测试）；PROGRESS.md 本节
+- 测试结果：X/IG 真实链接解析均成功，X 原图产物字节级验证通过
+- 下一阶段入口：`:parser` JVM 单测（重点覆盖 X variants/IG embed/M3u8）；或用户注入 IG Cookie 后复测 IG 视频；或真机回归
