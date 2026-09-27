@@ -98,6 +98,8 @@ object HtmlUtil {
     /** 普通函数形态的 HTML 反转义，便于跨类调用（避免成员扩展函数的调用歧义） */
     fun unescapeHtmlOf(s: String): String = s.unescapeHtml()
 
+    fun unescapeJsonOf(s: String): String = s.unescapeJson()
+
     fun String.unescapeHtml(): String = this
         .replace("&amp;", "&")
         .replace("&lt;", "<")

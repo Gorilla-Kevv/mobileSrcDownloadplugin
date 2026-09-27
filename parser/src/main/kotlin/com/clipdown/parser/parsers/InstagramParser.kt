@@ -216,12 +216,19 @@ class InstagramParser : PlatformParser {
 
     private fun urlEncode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
-    /** 渲染后的帖子页 HTML 提取（WebView 通道）：og:video / video_url / playable_url / display_url */
+    /** 渲染后的帖子页 HTML 提取（WebView 通道）：新版 xdt_api 结构（video_versions / image_versions2）+ 旧版键名兜底 */
     private fun extractFromPageHtml(html: String, sourceUrl: String, code: String): ParseResult {
         val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
         val media = mutableListOf<MediaItem>()
 
         val videos = linkedSetOf<String>()
+        // 新版结构：IG 已把视频数据迁移到 video_versions:[{width,height,url}]（旧键名 video_url/playable_url 已消失）
+        Regex(""""video_versions":\[(.*?)\]""").findAll(html).forEach { block ->
+            Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
+                videos.add(HtmlUtil.unescapeJsonOf(u.groupValues[1]))
+            }
+        }
+        // 旧版键名兜底
         HtmlUtil.jsonField(html, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
         HtmlUtil.jsonField(html, "video_url").forEach { videos.add(it) }
         HtmlUtil.jsonField(html, "playable_url").forEach { videos.add(it) }
@@ -242,11 +249,18 @@ class InstagramParser : PlatformParser {
         }
 
         val images = linkedSetOf<String>()
+        // 新版结构：image_versions2.candidates:[{url}]（跳过视频首帧缩略图）
+        Regex(""""image_versions2":\{"candidates":\[(.*?)\]\}""").findAll(html).forEach { block ->
+            Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
+                val url = HtmlUtil.unescapeJsonOf(u.groupValues[1])
+                if (!url.contains("video_first_frame", ignoreCase = true)) images.add(url)
+            }
+        }
         HtmlUtil.jsonField(html, "display_url").forEach { images.add(it) }
         Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)?.let {
             images.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
-        images.filter { it.startsWith("http") }.take(4).forEachIndexed { i, u ->
+        images.filter { it.startsWith("http") }.take(8).forEachIndexed { i, u ->
             media += MediaItem(
                 id = "ig-w-i-$i",
                 url = u,

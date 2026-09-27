@@ -90,6 +90,13 @@ object WebViewHtmlFetcher {
         latch.await(timeoutMs + 3000, TimeUnit.MILLISECONDS)
         wv?.let { v -> Handler(Looper.getMainLooper()).post { v.destroy() } }
         android.util.Log.d(TAG, "fetch 结束：html=${html?.length ?: "null"}")
+        // 调试落盘：保留最后一次渲染页，供 adb pull 分析（应用私有外部目录，无需存储权限）
+        html?.let { page ->
+            runCatching {
+                val dir = appContext.getExternalFilesDir(null) ?: return@let
+                java.io.File(dir, "debug_last_page.html").writeText(page)
+            }
+        }
         return html
     }
 
@@ -103,8 +110,8 @@ object WebViewHtmlFetcher {
                 v.evaluateJavascript("document.documentElement.outerHTML") { raw ->
                     val page = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
                     if (page != null) {
-                        val hasMedia = page.contains("video_url") || page.contains("playable_url") ||
-                            page.contains("og:video") || page.contains("<video")
+                        val hasMedia = page.contains("video_versions") || page.contains("video_url") ||
+                            page.contains("playable_url") || page.contains("og:video") || page.contains("<video")
                         val title = Regex("""<title[^>]*>([^<]{0,80})""").find(page)?.groupValues?.getOrNull(1)
                         android.util.Log.d(TAG, "轮询 $attempt：len=${page.length} media=$hasMedia title=$title")
                         if (hasMedia) {
