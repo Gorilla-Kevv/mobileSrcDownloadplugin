@@ -28,12 +28,19 @@ class XiaohongshuParser : PlatformParser {
     override fun canHandle(url: String): Boolean = true
 
     override fun parse(url: String, ctx: ParseContext): ParseResult {
-        val headers = ctx.headersFor(platform) + mapOf(
+        val headers = warmUp(ctx.headersFor(platform), ctx) + mapOf(
             "Referer" to "https://www.xiaohongshu.com/",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
         )
         val resp = runCatching { ctx.http.get(url, headers) }
             .getOrElse { throw ParseException("网络请求失败：${it.message}", platform) }
+
+        ctx.log(
+            id,
+            "请求诊断：ua=${headers["User-Agent"]?.take(50)} cookieLen=${headers["Cookie"]?.length} " +
+                "code=${resp.code} len=${resp.body?.length} final=${resp.finalUrl.take(70)} " +
+                "state=${resp.body?.contains("__INITIAL_STATE__")}"
+        )
 
         val html = resp.body
             ?: throw ParseException("页面内容为空（可能触发了风控）", platform)
@@ -131,4 +138,34 @@ class XiaohongshuParser : PlatformParser {
 
     private fun guessExt(u: String): String =
         u.substringBefore('?').substringAfterLast('.', "jpg").takeIf { it.length in 3..4 } ?: "jpg"
+
+    /**
+     * WAF 预热：阿里云 WAF 对"无 acw_tc 的新客户端"（OkHttp 指纹）会 302 到风控页。
+     * 先访问主页拿 Set-Cookie 的 acw_tc 等种子，合并进 Cookie 后二次请求放行。
+     */
+    private fun warmUp(headers: Map<String, String>, ctx: ParseContext): Map<String, String> {
+        val existing = headers["Cookie"]
+        if (!existing.isNullOrBlank() && existing.contains("acw_tc")) return headers
+        val warm = runCatching {
+            ctx.http.get(
+                "https://www.xiaohongshu.com/",
+                mapOf(
+                    "User-Agent" to (headers["User-Agent"] ?: ctx.ua()),
+                    "Accept-Language" to "zh-CN,zh;q=0.9",
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Cookie" to (existing ?: "")
+                )
+            )
+        }.onFailure { ctx.log(id, "WAF 预热请求异常：${it.message}") }.getOrNull() ?: return headers
+        val seeds = warm.headers.values("Set-Cookie")
+            .map { it.substringBefore(';').trim() }
+            .filter { it.contains('=') && !it.startsWith("acw_sc__v2=") }
+        if (seeds.isEmpty()) {
+            ctx.log(id, "WAF 预热无种子：code=${warm.code} len=${warm.body?.length}")
+            return headers
+        }
+        val merged = ((existing?.trimEnd(';')?.plus("; ")) ?: "") + seeds.joinToString("; ")
+        ctx.log(id, "WAF 预热(${warm.code})：收集 ${seeds.size} 项种子 Cookie")
+        return headers + ("Cookie" to merged)
+    }
 }

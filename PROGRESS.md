@@ -106,3 +106,15 @@
 - 测试结果：X 视频产物 10,241,500B ftyp isom 验证通过；IG/XHS 真实链接解析结论如上
 - 平台覆盖总结：YouTube✅(视频) / X✅(图片+视频) / IG✅(图片+真实场景)、IG视频⏸(需真机家宽IP) / 小红书⏸(需Cookie) / 抖音·Facebook·微博·TikTok·B站专属解析 未测
 - 下一阶段入口：用户注入 XHS Cookie 复测；`:parser` JVM 单测；真机回归
+
+## 阶段 8：小红书 Cookie 实测 + WAF 指纹定性（已完成）
+- 已完成：
+  - XHS Cookie 注入（a1/web_session/webId 等，同 IG 的 base64 直写方案）；精简掉含引号的 `unread` 噪音项
+  - **定位三层原因**：①二手 xsec_token（B 站简介抄的）被拒（300031 当前笔记暂时无法浏览）→ ②用 Cookie 访问首页可提取**第一方 token** 的笔记链接（宿主机验证 200 + urlDefault 出数据）→ ③**同一 URL 宿主机 curl 成功、App OkHttp 被拒**——定性为阿里云 WAF 拦 OkHttp TLS 指纹（acw_tc 预热拿到了也无效，非 Cookie/IP 问题）
+  - XhsParser 增加 WAF 预热（acw_tc 种子）与请求诊断日志（保留，未来有用）
+- 结论与待办：
+  - **小红书网页解析需要 WebView 抓取方案**（真浏览器栈过 WAF 的 JS/指纹挑战）——跨 :app/:parser 架构改动（ParseContext 注入 webFetcher 能力），列入下一步；OkHttp 直连路线已判死
+  - XHS Cookie 的 `unread` 值含 URL 编码 JSON（引号），注入前应过滤
+- 改动文件：`parser/.../XiaohongshuParser.kt`（预热+诊断）
+- 测试结果：`assembleDebug` 两次全绿；诊断链路完整（每次失败都能看到具体原因）
+- 下一阶段入口：WebView 抓取方案设计 → 实现；或 `:parser` JVM 单测；或真机回归
