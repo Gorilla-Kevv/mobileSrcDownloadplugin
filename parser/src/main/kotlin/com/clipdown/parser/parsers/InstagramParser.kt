@@ -45,13 +45,12 @@ class InstagramParser : PlatformParser {
         val headers = ctx.headersFor(platform, desktop = false) +
             mapOf("Referer" to "https://www.instagram.com/", "Accept" to "*/*")
 
-        // 1) 登录态直连
+        // 1) 登录态直连：__a=1 老接口已废，改为带 Cookie 抓帖子页 HTML，提取 og:video / video_url / sidecar
         if (!cookie.isNullOrBlank()) {
             val r = runCatching { parsePrivateApi(code, headers + mapOf("Cookie" to cookie), ctx) }
             if (r.isSuccess) return r.getOrThrow().copy(source = ParseSource.LOCAL)
             ctx.log(id, "登录态解析失败：${r.exceptionOrNull()?.message}")
         }
-
         // 2) 免登录 embed
         val embedUrl = "https://www.instagram.com/p/$code/embed/captioned/"
         val embedHtml = runCatching { ctx.http.get(embedUrl, headers).body }.getOrNull()
@@ -97,88 +96,107 @@ class InstagramParser : PlatformParser {
     }
 
     private fun parsePrivateApi(code: String, headers: Map<String, String>, ctx: ParseContext): ParseResult {
-        val body = privateJson(ctx.http, headers, code)
-            ?: throw ParseException("登录态接口未返回数据（Cookie 可能已失效）", platform)
-        val root = json.parseToJsonElement(body).jsonObject
-        val item = (root["items"] as? JsonArray)?.firstOrNull()?.jsonObject
-            ?: root["graphql"]?.jsonObject?.get("shortcode_media")?.jsonObject
-            ?: throw ParseException("接口数据结构异常", platform)
+        val cookie = headers["Cookie"] ?: ""
+        val pageHeaders = mapOf(
+            "User-Agent" to ctx.ua(desktop = true),
+            "Accept-Language" to "zh-CN,zh;q=0.9,en;q=0.8",
+            "Referer" to "https://www.instagram.com/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Cookie" to cookie
+        )
+        // 1) 取帖子页只为拿 LSD 令牌（2026 起 IG 对非浏览器客户端返回 JS 空壳页，媒体不在 HTML 里）
+        val page = runCatching { ctx.http.get("https://www.instagram.com/p/$code/", pageHeaders) }.getOrNull()
+            ?: throw ParseException("无法获取帖子页面", platform)
+        val html = page.body ?: throw ParseException("帖子页面返回为空", platform)
+        val lsd = Regex(""""LSD",\[\],\{"token":"([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+            ?: Regex(""""lsd":"([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
+        if (lsd.isNullOrBlank()) {
+            ctx.log(id, "LSD 提取失败：code=${page.code} len=${html.length}")
+            throw ParseException("页面缺少 LSD 令牌", platform)
+        }
 
+        // 2) 网页版 GraphQL：doc_id 对应 PolarisPostActionLoadPostQuery（shortcode → 媒体）
+        val csrf = Regex("csrftoken=([^;]+)").find(cookie)?.groupValues?.getOrNull(1) ?: ""
+        val variables = """{"shortcode":"$code","fetch_tagged_user_count":null,"hoisted_comment_id":null,"hoisted_reply_id":null}"""
+        val form = "lsd=${urlEncode(lsd)}&variables=${urlEncode(variables)}&doc_id=8845758582119845&server_timestamps=true"
+        val apiHeaders = mapOf(
+            "User-Agent" to ctx.ua(desktop = true),
+            "X-IG-App-ID" to "936619743392459",
+            "X-CSRF-Token" to csrf,
+            "X-FB-LSD" to lsd,
+            "X-ASBD-ID" to "129477",
+            "Referer" to "https://www.instagram.com/p/$code/",
+            "Cookie" to cookie
+        )
+        val resp = runCatching { ctx.http.postForm("https://www.instagram.com/api/graphql", form, apiHeaders) }.getOrNull()
+            ?: throw ParseException("GraphQL 请求失败", platform)
+        val body = resp.body ?: throw ParseException("GraphQL 返回为空", platform)
+        if (!resp.isSuccessful) {
+            ctx.log(id, "GraphQL code=${resp.code} head=${body.take(140).replace(Regex("\\s+"), " ")}")
+            throw ParseException("GraphQL 返回 ${resp.code}", platform)
+        }
+        val root = runCatching { json.parseToJsonElement(body).jsonObject }.getOrElse {
+            ctx.log(id, "GraphQL 非 JSON：${body.take(140).replace(Regex("\\s+"), " ")}")
+            throw ParseException("GraphQL 返回异常格式", platform)
+        }
+        val node = root["data"]?.jsonObject?.get("xdt_shortcode_media")?.jsonObject
+            ?: run {
+                ctx.log(id, "GraphQL 无 xdt_shortcode_media：${body.take(160).replace(Regex("\\s+"), " ")}")
+                throw ParseException("GraphQL 无媒体数据", platform)
+            }
+
+        val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
         val media = mutableListOf<MediaItem>()
-        val videoVersions = item["video_versions"] as? JsonArray
-        videoVersions?.forEachIndexed { i, el ->
-            val o = el.jsonObject
-            val u = o.str("url") ?: return@forEachIndexed
-            media += MediaItem(
-                id = "ig-v-$i",
-                url = u,
-                kind = MediaKind.VIDEO,
-                quality = "${o.int("height") ?: 0}p",
-                rank = 100 - i,
-                width = o.int("width"),
-                height = o.int("height"),
-                container = "mp4",
-                mimeType = "video/mp4",
-                headers = mapOf("Referer" to "https://www.instagram.com/")
-            )
+
+        fun addFrom(node: JsonObject, idPrefix: String, rank: Int) {
+            (node["video_versions"] as? JsonArray)?.firstOrNull()?.jsonObject?.str("url")?.let { u ->
+                media += MediaItem(
+                    id = "$idPrefix-v",
+                    url = u,
+                    kind = MediaKind.VIDEO,
+                    quality = "${node["video_versions"]?.jsonArray?.firstOrNull()?.jsonObject?.int("height") ?: 0}p",
+                    rank = rank,
+                    container = "mp4",
+                    mimeType = "video/mp4",
+                    headers = igHeaders
+                )
+            } ?: (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)?.firstOrNull()
+                ?.jsonObject?.str("url")?.let { u ->
+                    media += MediaItem(
+                        id = "$idPrefix-i",
+                        url = u,
+                        kind = MediaKind.IMAGE,
+                        quality = "原图",
+                        rank = rank - 20,
+                        container = "jpg",
+                        headers = igHeaders
+                    )
+                }
         }
 
-        val candidates = item["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray
-        candidates?.firstOrNull()?.jsonObject?.str("url")?.let { u ->
-            media += MediaItem(
-                id = "ig-i-0",
-                url = u,
-                kind = MediaKind.IMAGE,
-                quality = "原图",
-                rank = 80,
-                container = "jpg",
-                headers = mapOf("Referer" to "https://www.instagram.com/")
-            )
+        addFrom(node, "ig-g-0", 100)
+        (node["edge_sidecar_to_children"]?.jsonObject?.get("edges") as? JsonArray)?.forEachIndexed { i, el ->
+            el.jsonObject["node"]?.jsonObject?.let { addFrom(it, "ig-g-s$i", 70 - i) }
         }
 
-        val carousel = item["carousel_media"] as? JsonArray
-        carousel?.forEachIndexed { i, el ->
-            val o = el.jsonObject
-            val u = (o["video_versions"] as? JsonArray)?.firstOrNull()?.jsonObject?.str("url")
-                ?: o["image_versions2"]?.jsonObject?.get("candidates")?.jsonArray?.firstOrNull()
-                    ?.jsonObject?.str("url")
-                ?: return@forEachIndexed
-            val isVideo = o["video_versions"] != null
-            media += MediaItem(
-                id = "ig-c-$i",
-                url = u,
-                kind = if (isVideo) MediaKind.VIDEO else MediaKind.IMAGE,
-                quality = "第 ${i + 1} 项",
-                rank = 70 - i,
-                container = if (isVideo) "mp4" else "jpg",
-                headers = mapOf("Referer" to "https://www.instagram.com/")
-            )
-        }
-
-        if (media.isEmpty()) throw ParseException("接口返回空媒体列表", platform)
+        if (media.isEmpty()) throw ParseException("登录态 GraphQL 未提取到媒体", platform)
 
         return ParserDsl.result(
             platform = platform,
             resolverId = "$id-private",
             sourceUrl = "https://www.instagram.com/p/$code/",
             media = media,
-            title = item["caption"]?.jsonObject?.str("text")?.take(60),
-            author = item["user"]?.jsonObject?.str("username"),
-            cover = candidates?.firstOrNull()?.jsonObject?.str("url"),
+            title = node["caption"]?.jsonObject?.str("text")?.take(60)
+                ?: (node["edge_media_to_caption"]?.jsonObject?.get("edges") as? JsonArray)
+                    ?.firstOrNull()?.jsonObject?.get("node")?.jsonObject?.str("text")?.take(60),
+            author = node["owner"]?.jsonObject?.str("username"),
+            cover = (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)
+                ?.firstOrNull()?.jsonObject?.str("url"),
             source = ParseSource.LOCAL
         )
     }
 
-    private fun privateJson(
-        http: com.clipdown.parser.http.HttpFacade,
-        headers: Map<String, String>,
-        code: String
-    ): String? {
-        val url = "https://www.instagram.com/p/$code/?__a=1&__d=dis"
-        val resp = runCatching { http.get(url, headers) }.getOrNull()
-        val b = resp?.body ?: return null
-        return if (resp.isSuccessful && b.trimStart().startsWith("{")) b else null
-    }
+    private fun urlEncode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
     private fun parseEmbed(html: String, sourceUrl: String, code: String): ParseResult {
         val media = mutableListOf<MediaItem>()

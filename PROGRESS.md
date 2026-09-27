@@ -79,3 +79,16 @@
 - 改动文件：无代码改动（纯测试）；PROGRESS.md 本节
 - 测试结果：X/IG 真实链接解析均成功，X 原图产物字节级验证通过
 - 下一阶段入口：`:parser` JVM 单测（重点覆盖 X variants/IG embed/M3u8）；或用户注入 IG Cookie 后复测 IG 视频；或真机回归
+
+## 阶段 6：IG Cookie 注入 + 登录态解析攻坚 + IG App 安装（已完成）
+- 已完成：
+  - Cookie 注入：用户提供网页版 Cookie（sessionid 等 9 项），adb base64 管道直写 `shared_prefs/clipdown_cookies.xml`（`/sdcard` cp 被 API34 沙盒拒，base64 方案可行）
+  - **IG 登录态解析重写**：`?__a=1&__d=dis` 老接口 2026 已废（404 HTML）；帖子页 HTML 是 663KB JS 空壳（媒体全不在 HTML 里）；最终实现 **GraphQL 方案**：GET 帖子页取 LSD 令牌 → POST `/api/graphql`（doc_id=8845758582119845 + X-IG-App-ID + X-CSRF-Token + X-FB-LSD + jazoest）→ 解析 `data.xdt_shortcode_media`（video_versions/image_versions2/sidecar）
+  - `HttpFacade` 新增 `postForm`（x-www-form-urlencoded）
+  - **Instagram App 安装到模拟器**：APKPure XAPK（132MB，需浏览器 UA+Referer 绕 403），`install-multiple` base+mdpi 成功，ARM 翻译下正常启动到登录页
+- 未完成/已知问题：
+  - **GraphQL 返回 "Log in to continue"（error 1357001）**：常规页面承认会话（/accounts/edit/ 200 且 echo ds_user_id），但 /api/graphql 拒绝。怀疑 Clash 多节点分流导致 GET/POST 出口 IP 漂移（页面宽容、API 严格校验会话-IP 绑定）。jazoest 校验、fresh CSRF 均无效。**结论：IG 视频的网页 Cookie 路线在模拟器+代理环境不可行，需真机+家宽 IP 复验**（代码已就位，条件满足即生效）
+  - App 内 Cookie 输入框在设置页底部（需滚动），用户没找到——后续可在首页权限卡下加"补充 Cookie"快捷入口
+- 改动文件：`parser/.../InstagramParser.kt`（GraphQL 重写）、`parser/.../http/HttpFacade.kt`（+postForm）
+- 测试结果：`assembleDebug` 三次全绿；IG App 可正常启动
+- 下一阶段入口：用户在 IG App 登录后测「分享/复制链接 → 悬浮窗」真实场景；`:parser` JVM 单测；真机回归

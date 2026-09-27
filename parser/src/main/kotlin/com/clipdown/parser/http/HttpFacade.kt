@@ -33,6 +33,13 @@ interface HttpFacade {
         headers: Map<String, String> = emptyMap()
     ): HttpResponse
 
+    /** 表单 POST（application/x-www-form-urlencoded），用于 Instagram GraphQL 等接口 */
+    fun postForm(
+        url: String,
+        formBody: String,
+        headers: Map<String, String> = emptyMap()
+    ): HttpResponse
+
     /** 只取响应头，用于短链展开与资源探测（避免下载整包） */
     fun head(url: String, headers: Map<String, String> = emptyMap()): HttpResponse
 }
@@ -75,6 +82,17 @@ class OkHttpFacade(
             .url(url)
             .apply { headers.forEach { (k, v) -> header(k, v) } }
             .post(jsonBody.toRequestBody("application/json".toMediaType()))
+            .build()
+        return client.newCall(req).execute().use { resp ->
+            HttpResponse(resp.code, runCatching { resp.body?.string() }.getOrNull(), resp.headers, resp.request.url.toString())
+        }
+    }
+
+    override fun postForm(url: String, formBody: String, headers: Map<String, String>): HttpResponse {
+        val req = Request.Builder()
+            .url(url)
+            .apply { headers.forEach { (k, v) -> header(k, v) } }
+            .post(formBody.toRequestBody("application/x-www-form-urlencoded".toMediaType()))
             .build()
         return client.newCall(req).execute().use { resp ->
             HttpResponse(resp.code, runCatching { resp.body?.string() }.getOrNull(), resp.headers, resp.request.url.toString())
