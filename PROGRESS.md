@@ -119,19 +119,19 @@
 - 测试结果：`assembleDebug` 两次全绿；诊断链路完整（每次失败都能看到具体原因）
 - 下一阶段入口：WebView 抓取方案设计 → 实现；或 `:parser` JVM 单测；或真机回归
 
-## 阶段 10：WebView 抓取实现 + IG reel 实测（进行中）
+## 阶段 10：WebView 抓取实现 + IG reel 实测（**基础设施完成，媒体提取未通**）
 - 已完成：
-  - **webFetcher 架构落地**：ParseContext.webFetcher 注入点（纯 JVM）→ App 层 `WebViewHtmlFetcher`（Cookie 注入/桌面 UA/超时回传 outerHTML）
-  - IG 解析器新增 2.5 级：embed 无视频 → WebView 渲染页提取（og:video/video_url/playable_url）；oEmbed 容器按扩展名修正（webp 误标 jpg）
-  - WebView 抓取**已跑通**：instagram.com/reel/ 页面成功渲染并拿到 650KB HTML（onPageFinished → outerHTML）
-  - 轮询等待机制：IG React 应用异步填充媒体数据，onPageFinished 后每 2.5s 探测（video_url/playable_url/og:video/video 标签），8 轮或命中即抓全量
-- 待解决（下一轮精确续接点）：
-  - 实测 25s 超时早于 8 轮轮询（20s）结束 → html=null 白等；**超时需上调至 40s**
-  - 轮询期间无"媒体数据出现"日志 → 需每轮打点确认：a) evaluateJavascript 是否真执行 b) 匿名/登录态下 DOM 是否出现媒体数据（若 IG 匿名登录墙则永远不出现）
-  - WebView 匿名访问 IG reel 可能被引导登录页——若登录墙确认，验证注入的 sessionid 是否被 WebView 会话采用（CookieManager 域名/路径）
-- 改动文件：`parser/spi/PlatformParser.kt`、`parser/core/ParserEngine.kt`、`parser/parsers/InstagramParser.kt`（2.5 级+extractFromPageHtml）、`parser/parsers/XiaohongshuParser.kt`（webFetcher 优先）、`parser/parsers/InstagramParser.kt` oEmbed 容器修正、`app/clip/WebViewHtmlFetcher.kt`（新增）
-- 测试结果：`:parser:test` 35 例全绿；`assembleDebug` 绿
-- 下一阶段入口：按上面"待解决"三项逐个排除；提交 617c8a6 为 webFetcher 基础设施版本
+  - **webFetcher 架构落地**：ParseContext.webFetcher 注入点（纯 JVM）→ App 层 `WebViewHtmlFetcher`（Cookie 注入 + Cookie 请求头双通道 / 桌面 UA / 无状态轮询 / 超时回传）
+  - IG 解析降级链完整化：Cookie GraphQL → embed → **WebView 渲染页**（extractFromPageHtml）→ oEmbed（容器按扩展名修正 webp 误标 jpg）
+  - WebView 渲染 **跑通**：reel 页 650KB→1037KB HTML 稳定抓取；轮询改为无状态定时抓取（不依赖 evaluateJavascript 回调链——原回调链被页面 JS 阻塞 38s 无响应，已改掉）
+  - 单测 35 例全绿（新增 webFetcher 通道用例）
+- **未解决（精确续接点）**：
+  - WebView 渲染的 reel 页 **DOM 持续无媒体数据**（title=Instagram 非 Login 墙、页面 1037KB 存活增长，但无 video_url/og:video/video 标签）
+  - 待排除清单：①`accounts/edit/` 登录态探针未触发（share intent 未引发新 parse，需查 LinkCenter 分发）②验证 sessionid 是否被 WebView 会话采用（document.cookie 看不到 httpOnly，需用页面 UI 判断）③尝试手机 UA + IG 移动版页面 ④IG 可能对非浏览器环境根本不给媒体（比对 saveinta 服务端账号池方案 → 自建中继 cobalt 是正解）
+  - 用户问题结论已给出：套壳第三方站点可行但不推荐（脆弱+ToS 风险），自建远端中继（设置页已留接口）为正解
+- 改动文件：`parser/spi/PlatformParser.kt`、`parser/core/ParserEngine.kt`、`parser/parsers/InstagramParser.kt`、`parser/parsers/XiaohongshuParser.kt`、`parser/parsers/InstagramParser.kt`（oEmbed 容器）、`app/clip/WebViewHtmlFetcher.kt`（新增，全程日志）
+- 测试结果：`:parser:test` 35 例全绿；`assembleDebug` 绿；模拟器实测 IG reel 视频未通（如上）
+- 下一阶段入口：按"未解决"清单逐项排除；或转向 `:downloader` 单测/真机回归
 
 ## 阶段 9：`:parser` JVM 单测（已完成）
 - 已完成：

@@ -38,16 +38,17 @@ object WebViewHtmlFetcher {
         "xiaohongshu.com" to Platform.XIAOHONGSHU
     )
 
-    fun fetch(context: Context, url: String, timeoutMs: Long = 25_000L): String? {
+    fun fetch(context: Context, url: String, timeoutMs: Long = 40_000L): String? {
         if (Looper.myLooper() == Looper.getMainLooper()) return null
         android.util.Log.d(TAG, "fetch 开始：$url")
         val latch = CountDownLatch(1)
         var html: String? = null
         val appContext = context.applicationContext
         var wv: WebView? = null
+        var cookieHeader: String? = null
         Handler(Looper.getMainLooper()).post {
             try {
-                injectCookies(appContext, url)
+                cookieHeader = injectCookies(appContext, url)
                 @SuppressLint("SetJavaScriptEnabled")
                 val view = WebView(appContext)
                 wv = view
@@ -58,43 +59,23 @@ object WebViewHtmlFetcher {
                     userAgentString = DESKTOP_UA
                 }
                 view.webViewClient = object : WebViewClient() {
-                    private var done = false
                     override fun onPageFinished(v: WebView, u: String) {
                         android.util.Log.d(TAG, "onPageFinished：$u")
-                        if (done) return
-                        // React 应用在 finished 之后才异步拉媒体数据，轮询等待出现再抓全量
-                        fun poll(attempt: Int) {
-                            if (done) return
-                            v.evaluateJavascript(MEDIA_PRESENT_JS) { flag ->
-                                if (done) return@evaluateJavascript
-                                if (flag?.contains("true") == true) {
-                                    done = true
-                                    android.util.Log.d(TAG, "媒体数据出现（第 ${attempt + 1} 轮）")
-                                    v.evaluateJavascript("document.documentElement.outerHTML") { h ->
-                                        html = runCatching { JSONTokener(h).nextValue() as? String }.getOrNull()
-                                        android.util.Log.d(TAG, "outerHTML 长度=${html?.length}")
-                                        latch.countDown()
-                                    }
-                                } else if (attempt >= 8) {
-                                    done = true
-                                    android.util.Log.d(TAG, "轮询 8 轮未见媒体数据，按当前页面返回")
-                                    v.evaluateJavascript("document.documentElement.outerHTML") { h ->
-                                        html = runCatching { JSONTokener(h).nextValue() as? String }.getOrNull()
-                                        latch.countDown()
-                                    }
-                                } else {
-                                    v.postDelayed({ poll(attempt + 1) }, 2500)
-                                }
+                        startPolling(v) { page ->
+                            if (html == null) {
+                                html = page
+                                latch.countDown()
                             }
                         }
-                        poll(0)
                     }
 
                     override fun onReceivedError(v: WebView, req: android.webkit.WebResourceRequest, err: android.webkit.WebResourceError) {
                         android.util.Log.d(TAG, "onReceivedError：${req.url} ${err.description}")
                     }
                 }
-                view.loadUrl(url)
+                // 主请求直接带 Cookie 请求头（比 CookieManager 时序更可靠），双保险
+                if (cookieHeader.isNullOrBlank()) view.loadUrl(url)
+                else view.loadUrl(url, mapOf("Cookie" to cookieHeader!!))
                 Handler(Looper.getMainLooper()).postDelayed({
                     if (latch.count != 0L) {
                         android.util.Log.d(TAG, "fetch 超时")
@@ -112,15 +93,46 @@ object WebViewHtmlFetcher {
         return html
     }
 
-    private fun injectCookies(context: Context, url: String) {
+    /** 独立于页面回调的无状态轮询：每 2.5s 直接抓 outerHTML，命中媒体标记即回调；超时兜底 */
+    private fun startPolling(v: WebView, onResult: (String) -> Unit) {
+        val h = Handler(Looper.getMainLooper())
+        val task = object : Runnable {
+            var attempt = 0
+            override fun run() {
+                attempt++
+                v.evaluateJavascript("document.documentElement.outerHTML") { raw ->
+                    val page = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
+                    if (page != null) {
+                        val hasMedia = page.contains("video_url") || page.contains("playable_url") ||
+                            page.contains("og:video") || page.contains("<video")
+                        val title = Regex("""<title[^>]*>([^<]{0,80})""").find(page)?.groupValues?.getOrNull(1)
+                        android.util.Log.d(TAG, "轮询 $attempt：len=${page.length} media=$hasMedia title=$title")
+                        if (hasMedia) {
+                            onResult(page)
+                            return@evaluateJavascript
+                        }
+                    }
+                    if (attempt <= 14) h.postDelayed(this, 2500)
+                }
+            }
+        }
+        h.postDelayed(task, 2000)
+    }
+
+    /** 返回拼好的 Cookie 请求头（同时写入 CookieManager 供页面内 XHR 使用） */
+    private fun injectCookies(context: Context, url: String): String? {
         val cm = CookieManager.getInstance()
+        var header: String? = null
         cookieDomains.forEach { (domain, platform) ->
             if (!url.contains(domain)) return@forEach
             val cookie = CookieStore.get(context, platform) ?: return@forEach
+            header = cookie
             cookie.split(';').map { it.trim() }.filter { it.contains('=') }.forEach { pair ->
                 cm.setCookie("https://$domain/", "$pair; Path=/; Domain=$domain")
             }
         }
         cm.flush()
+        android.util.Log.d(TAG, "Cookie 注入：${header?.length ?: 0} 字符")
+        return header
     }
 }
