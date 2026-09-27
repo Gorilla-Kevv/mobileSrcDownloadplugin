@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.clipdown.parser.config.ParserConfig
 import kotlinx.coroutines.flow.Flow
@@ -37,6 +38,7 @@ class SettingsRepository(private val context: Context) {
         val REMOTE_ENABLED = booleanPreferencesKey("remote_enabled")
         val ENABLED_PLATFORMS = stringPreferencesKey("enabled_platforms")
         val ACCESSIBILITY_HINT_SHOWN = booleanPreferencesKey("a11y_hint_shown")
+        val SEEN_LINKS = stringSetPreferencesKey("seen_links")
     }
 
     val floatEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.FLOAT_ENABLED] ?: true }
@@ -50,6 +52,9 @@ class SettingsRepository(private val context: Context) {
     val enabledPlatforms: Flow<Set<String>> =
         context.settingsDataStore.data.map { parsePlatforms(it[Keys.ENABLED_PLATFORMS]) }
 
+    /** 已识别过的链接记忆（持久化）：命中者不再自动弹窗，仅用户手动识别时触发 */
+    val seenLinks: Flow<Set<String>> = context.settingsDataStore.data.map { it[Keys.SEEN_LINKS] ?: emptySet() }
+
     suspend fun setFloatEnabled(value: Boolean) = edit { it[Keys.FLOAT_ENABLED] = value }
     suspend fun setAutoPopup(value: Boolean) = edit { it[Keys.AUTO_POPUP] = value }
     suspend fun setWifiOnly(value: Boolean) = edit { it[Keys.WIFI_ONLY] = value }
@@ -60,6 +65,14 @@ class SettingsRepository(private val context: Context) {
     suspend fun setRemoteEnabled(value: Boolean) = edit { it[Keys.REMOTE_ENABLED] = value }
     suspend fun setEnabledPlatforms(value: Set<String>) = edit { it[Keys.ENABLED_PLATFORMS] = value.joinToString(",") }
     suspend fun saveBubblePosition(x: Int, y: Int) = edit { it[Keys.BUBBLE_X] = x; it[Keys.BUBBLE_Y] = y }
+
+    /** 记录一条已识别链接（带上限防无限膨胀） */
+    suspend fun markLinkSeen(url: String) = edit { prefs ->
+        val current = prefs[Keys.SEEN_LINKS] ?: emptySet()
+        val merged = if (current.size >= SEEN_LIMIT) current.drop(current.size / 2).toSet() + url
+        else current + url
+        prefs[Keys.SEEN_LINKS] = merged
+    }
 
     suspend fun bubblePosition(): Pair<Int, Int> {
         val p = context.settingsDataStore.data.first()
@@ -109,5 +122,8 @@ class SettingsRepository(private val context: Context) {
     companion object {
         /** 默认远端兜底解析服务：官方 cobalt 公共实例，用户可自建后替换 */
         const val DEFAULT_REMOTE = "https://api.cobalt.tools"
+
+        /** 识别记忆上限 */
+        private const val SEEN_LIMIT = 400
     }
 }

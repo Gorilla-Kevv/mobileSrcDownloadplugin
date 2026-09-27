@@ -65,12 +65,15 @@ object UrlUtil {
         if (!s.contains("://")) s = "https://$s"
         val uri = runCatching { URI(s) }.getOrNull() ?: return s
         val host = runCatching { IDN.toASCII(uri.host ?: return s) }.getOrNull() ?: uri.host ?: return s
+        // X 的 /mediaViewer 是同一推文的媒体查看视图：剥掉后与作品页共用识别记忆，
+        // 避免"播放视频→地址栏变体→绕过去重反复弹窗"
+        val path = (uri.path ?: "").replace(Regex("/mediaViewer/?$", RegexOption.IGNORE_CASE), "")
         val kept = (uri.query ?: "").split('&').filter { q ->
             val name = q.substringBefore('=')
             name.isNotEmpty() && name !in TRACKING_PARAMS
         }
         val query = if (kept.isEmpty()) "" else kept.joinToString("&").let { "?$it" }
-        return "${uri.scheme}://$host${if (uri.port != -1) ":${uri.port}" else ""}${(uri.path ?: "").trimEnd('/')}$query"
+        return "${uri.scheme}://$host${if (uri.port != -1) ":${uri.port}" else ""}${path.trimEnd('/')}$query"
     }
 
     fun hostOf(url: String): String =

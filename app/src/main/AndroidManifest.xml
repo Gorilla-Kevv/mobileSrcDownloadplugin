@@ -74,12 +74,14 @@
             </intent-filter>
         </activity>
 
-        <!-- 前台借道：悬浮窗/无障碍捕获到候选链接后，用透明 Activity 把进程拉到前台以合法读取剪贴板 -->
+        <!-- 前台借道：悬浮窗/无障碍捕获到候选链接后，用透明 Activity 把进程拉到前台以合法读取剪贴板。
+             taskAffinity="" 让它独占任务栈，finish 后直接回到原应用，不会把主界面带到前台 -->
         <activity
             android:name=".clip.ClipGateActivity"
             android:excludeFromRecents="true"
             android:exported="false"
             android:noHistory="true"
+            android:taskAffinity=""
             android:theme="@style/Theme.ClipDown.Transparent" />
 
         <!-- 悬浮窗气泡 + 解析弹窗宿主 -->

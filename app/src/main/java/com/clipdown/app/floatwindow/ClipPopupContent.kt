@@ -5,6 +5,8 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -28,7 +30,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.ExitToApp
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -36,6 +40,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,9 +50,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.clipdown.app.R
 import com.clipdown.app.ui.theme.GlassBase
 import com.clipdown.app.ui.theme.SeedBlue
 import com.clipdown.parser.model.MediaKind
@@ -64,6 +71,7 @@ fun ClipPopupContent(
     state: PopupUiState,
     blurSupported: Boolean,
     remainSeconds: Int,
+    onRecognize: () -> Unit,
     onSelect: (Int) -> Unit,
     onDownload: () -> Unit,
     onRetry: () -> Unit,
@@ -85,10 +93,11 @@ fun ClipPopupContent(
         ) {
             GlassCard(
                 modifier = Modifier
-                    .fillMaxWidth(0.92f)
+                    .fillMaxWidth(if (state is PopupUiState.Mini) 0.55f else 0.92f)
                     .clickable(enabled = true, onClick = {})
             ) {
                 when (state) {
+                    is PopupUiState.Mini -> MiniBody(state, onRecognize, onDismiss)
                     is PopupUiState.Loading -> LoadingBody(state.link.platform.displayName, remainSeconds, onDismiss)
                     is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
                     is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
@@ -157,6 +166,66 @@ private fun HeaderRow(
         }
         IconButton(onClick = onDismiss, modifier = Modifier.size(32.dp)) {
             Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White.copy(0.8f))
+        }
+    }
+}
+
+@Composable
+private fun MiniBody(
+    state: PopupUiState.Mini,
+    onRecognize: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 18.dp, vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.TopEnd) {
+            IconButton(onClick = onDismiss, modifier = Modifier.size(28.dp)) {
+                Icon(Icons.Default.Close, contentDescription = "收起", tint = Color.White.copy(0.8f))
+            }
+        }
+        Image(
+            painter = painterResource(R.drawable.bubble_logo),
+            contentDescription = null,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(72.dp)
+                .clip(CircleShape)
+                .border(1.dp, Color.White.copy(0.2f), CircleShape)
+        )
+        Spacer(Modifier.height(10.dp))
+        Text("剪存 ClipDown", color = Color.White, style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = state.hint ?: "复制链接后，点下方按钮识别",
+            color = if (state.hint != null) Color(0xFFFFB020) else Color.White.copy(0.6f),
+            style = MaterialTheme.typography.labelMedium,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+        )
+        Spacer(Modifier.height(16.dp))
+        if (state.recognizing) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(bottom = 4.dp)
+            ) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp, color = SeedBlue)
+                Spacer(Modifier.width(8.dp))
+                Text("正在识别剪贴板…", color = Color.White.copy(0.75f), style = MaterialTheme.typography.bodyMedium)
+            }
+        } else {
+            Button(
+                onClick = onRecognize,
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = SeedBlue),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("识别链接")
+            }
         }
     }
 }
@@ -308,13 +377,26 @@ private fun ReadyBody(
                             color = Color.White.copy(0.7f),
                             style = MaterialTheme.typography.labelMedium
                         )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "点击空白处收起弹窗，下载将在后台继续",
+                            color = Color.White.copy(0.45f),
+                            style = MaterialTheme.typography.labelSmall
+                        )
                     }
                 }
             }
         } else {
             Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onOpenApp) {
-                    Text("在应用内打开", color = Color.White.copy(0.72f))
+                OutlinedButton(
+                    onClick = onOpenApp,
+                    shape = RoundedCornerShape(14.dp),
+                    border = BorderStroke(1.dp, SeedBlue.copy(alpha = 0.7f)),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)
+                ) {
+                    Icon(Icons.Default.ExitToApp, contentDescription = null, modifier = Modifier.size(16.dp), tint = SeedBlue)
+                    Spacer(Modifier.width(6.dp))
+                    Text("跳转至剪存应用", color = Color.White.copy(0.92f), style = MaterialTheme.typography.labelLarge)
                 }
                 Spacer(Modifier.weight(1f))
                 Button(
@@ -324,7 +406,7 @@ private fun ReadyBody(
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("下载")
+                    Text("开始下载")
                 }
             }
         }

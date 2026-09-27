@@ -14,9 +14,11 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -25,7 +27,10 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.unit.dp
@@ -45,6 +50,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.launchIn
@@ -80,6 +86,12 @@ class FloatingWindowService : Service() {
 
     private var dismissJob: Job? = null
     private var parseJob: Job? = null
+    private var downloadJob: Job? = null
+    private var recognizeTimeoutJob: Job? = null
+
+    /** 手动识别模式：迷你面板点"识别链接"后置位，下一个链接无条件弹窗 */
+    @Volatile
+    private var manualRecognize = false
 
     /** 下载进行中：期间任何新链接都不允许打断弹窗（视频播放会持续触发窗口扫描） */
     @Volatile
@@ -115,6 +127,8 @@ class FloatingWindowService : Service() {
     override fun onDestroy() {
         dismissJob?.cancel()
         parseJob?.cancel()
+        downloadJob?.cancel()
+        recognizeTimeoutJob?.cancel()
         removePopup()
         removeBubble()
         super.onDestroy()
@@ -192,9 +206,35 @@ class FloatingWindowService : Service() {
     }
 
     private fun onBubbleClick() {
-        // 借道前台读取剪贴板（Android 10+ 后台不可读）
+        // 气泡是纯入口：只展开迷你面板，不读剪贴板、不解析、不跳应用
+        uiState.value = PopupUiState.Mini()
+        ensurePopupHost()
+        // 迷你面板不自动收起，等用户操作或点空白回气泡
+        dismissJob?.cancel()
+        remainSeconds.value = 0
+    }
+
+    /** 迷你面板"识别链接"：借道前台读剪贴板并解析（绕过识别记忆） */
+    private fun startManualRecognize() {
+        uiState.value = PopupUiState.Mini(recognizing = true)
+        manualRecognize = true
+        ClipGateActivity.onResult = { found ->
+            if (!found) {
+                manualRecognize = false
+                uiState.value = PopupUiState.Mini(hint = "剪贴板中没有可识别的链接")
+            }
+            // found 时由 LinkCenter.detected 接管，切到解析流程
+        }
         startActivity(Intent(this, ClipGateActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        LinkCenter.last.value?.let { showAndParse(it) }
+        // 兜底：gate 未能获取焦点等异常场景下复位迷你面板
+        recognizeTimeoutJob?.cancel()
+        recognizeTimeoutJob = scope.launch {
+            delay(4_000)
+            if (manualRecognize && uiState.value is PopupUiState.Mini) {
+                manualRecognize = false
+                uiState.value = PopupUiState.Mini(hint = "未能读取剪贴板，请重试")
+            }
+        }
     }
 
     private fun removeBubble() {
@@ -209,9 +249,17 @@ class FloatingWindowService : Service() {
         LinkCenter.detected
             .onEach { link ->
                 hasPending.value = true
-                // 下载进行中不响应新链接：避免进度 UI 被新解析结果覆盖
-                val current = uiState.value
-                if (current is PopupUiState.Ready && current.downloading) return@onEach
+                // 识别记忆：检测过的链接持久化，自动弹窗只给"新面孔"
+                val seenBefore = settings.seenLinks.first()
+                scope.launch { settings.markLinkSeen(link.url) }
+
+                if (manualRecognize) {
+                    manualRecognize = false
+                    recognizeTimeoutJob?.cancel()
+                    showAndParse(link)
+                    return@onEach
+                }
+                if (link.url in seenBefore) return@onEach
                 if (autoPopupEnabled) showAndParse(link)
             }
             .launchIn(scope)
@@ -265,6 +313,7 @@ class FloatingWindowService : Service() {
                         state = uiState.value,
                         blurSupported = blurSupported,
                         remainSeconds = remainSeconds.value,
+                        onRecognize = { startManualRecognize() },
                         onSelect = { index ->
                             val s = uiState.value
                             if (s is PopupUiState.Ready) {
@@ -336,13 +385,15 @@ class FloatingWindowService : Service() {
         val state = uiState.value
         if (state !is PopupUiState.Ready) return
         val item = state.selected ?: return
-        // 下载中不自动收起弹窗：全部流程在弹窗内闭环
+        // 下载中不自动收起弹窗：全部流程在弹窗内闭环；用户也可点空白收起，后台继续
         dismissJob?.cancel()
         remainSeconds.value = 0
         downloadActive = true
+        hasPending.value = true
         uiState.value = state.copy(downloading = true, downloadPercent = 0)
 
-        scope.launch(Dispatchers.Main.immediate) {
+        downloadJob?.cancel()
+        downloadJob = scope.launch(Dispatchers.Main.immediate) {
             val taskId = withContext(Dispatchers.IO) {
                 DownloadController.enqueue(item, state.result.platform, state.result.title)
             }
@@ -351,30 +402,46 @@ class FloatingWindowService : Service() {
             // 订阅进度：下载/合并/完成/失败全部在弹窗内呈现
             DownloadController.engine().progress.collect { e ->
                 if (e.taskId != taskId) return@collect
-                val cur = uiState.value
-                if (cur !is PopupUiState.Ready || cur.link != state.link) return@collect
                 when (e.status) {
-                    com.clipdown.downloader.model.DownloadStatus.COMPLETED -> {
+                    com.clipdown.downloader.model.DownloadStatus.COMPLETED,
+                    com.clipdown.downloader.model.DownloadStatus.FAILED,
+                    com.clipdown.downloader.model.DownloadStatus.CANCELED -> {
+                        // 终态簿记与弹窗可见性无关：弹窗已收起时下载也在后台完成
                         downloadActive = false
-                        suppressedUrl = state.link.url
-                        suppressedAt = System.currentTimeMillis()
-                        uiState.value = cur.copy(downloadPercent = 100, downloadDone = true)
-                        scope.launch {
-                            delay(2500)
-                            hidePopup()
+                        if (e.status == com.clipdown.downloader.model.DownloadStatus.COMPLETED) {
+                            suppressedUrl = state.link.url
+                            suppressedAt = System.currentTimeMillis()
                         }
-                        return@collect
+                        val cur = uiState.value
+                        if (cur is PopupUiState.Ready && cur.link == state.link) {
+                            when (e.status) {
+                                com.clipdown.downloader.model.DownloadStatus.COMPLETED -> {
+                                    uiState.value = cur.copy(downloadPercent = 100, downloadDone = true)
+                                    scope.launch {
+                                        delay(2500)
+                                        hidePopup()
+                                    }
+                                }
+                                com.clipdown.downloader.model.DownloadStatus.FAILED ->
+                                    uiState.value = cur.copy(downloadError = "下载失败，可在应用内重试")
+                                else -> Unit
+                            }
+                        }
+                        hasPending.value = false
+                        currentCoroutineContext()[Job]?.cancel()
                     }
-                    com.clipdown.downloader.model.DownloadStatus.FAILED -> {
-                        downloadActive = false
-                        uiState.value = cur.copy(downloadError = "下载失败，可在应用内重试")
-                        return@collect
+                    com.clipdown.downloader.model.DownloadStatus.MERGING -> {
+                        val cur = uiState.value
+                        if (cur is PopupUiState.Ready && cur.link == state.link) {
+                            uiState.value = cur.copy(downloadPercent = 99)
+                        }
                     }
-                    com.clipdown.downloader.model.DownloadStatus.MERGING ->
-                        uiState.value = cur.copy(downloadPercent = 99)
                     else -> {
                         val pct = if (e.totalBytes > 0) ((e.downloadedBytes * 100) / e.totalBytes).toInt() else null
-                        uiState.value = cur.copy(downloadPercent = pct)
+                        val cur = uiState.value
+                        if (cur is PopupUiState.Ready && cur.link == state.link && pct != null) {
+                            uiState.value = cur.copy(downloadPercent = pct)
+                        }
                     }
                 }
             }
@@ -495,10 +562,12 @@ private fun BubbleContent(hasPending: Boolean) {
         modifier = Modifier.size(56.dp),
         contentAlignment = Alignment.Center
     ) {
+        // 头像 logo 气泡：待处理时绿环 + 右上角绿点
         Box(
             modifier = Modifier
                 .size(52.dp)
-                .background(SeedBlue.copy(alpha = 0.92f), CircleShape)
+                .clip(CircleShape)
+                .background(Color(0xFF141824))
                 .border(
                     1.5.dp,
                     if (hasPending) Color(0xFF2EB872) else Color.White.copy(alpha = 0.35f),
@@ -506,11 +575,21 @@ private fun BubbleContent(hasPending: Boolean) {
                 ),
             contentAlignment = Alignment.Center
         ) {
-            Text(
-                text = if (hasPending) "!" else "抓",
-                color = Color.White,
-                style = androidx.compose.material3.MaterialTheme.typography.titleMedium
+            Image(
+                painter = painterResource(com.clipdown.app.R.drawable.bubble_logo),
+                contentDescription = "剪存",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize()
             )
+            if (hasPending) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(14.dp)
+                        .background(Color(0xFF2EB872), CircleShape)
+                        .border(1.5.dp, Color(0xFF141824), CircleShape)
+                )
+            }
         }
     }
 }

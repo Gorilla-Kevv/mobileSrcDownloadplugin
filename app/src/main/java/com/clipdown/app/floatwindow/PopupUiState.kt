@@ -10,6 +10,12 @@ sealed interface PopupUiState {
     /** 不展示（默认） */
     data object Hidden : PopupUiState
 
+    /** 迷你面板：点击气泡后展开，仅提供"识别链接"入口，不自动解析 */
+    data class Mini(
+        val recognizing: Boolean = false,
+        val hint: String? = null
+    ) : PopupUiState
+
     /** 已捕获链接，正在解析 */
     data class Loading(val link: DetectedLink) : PopupUiState
 
