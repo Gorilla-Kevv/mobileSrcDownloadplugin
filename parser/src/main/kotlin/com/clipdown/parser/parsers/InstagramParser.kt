@@ -216,23 +216,77 @@ class InstagramParser : PlatformParser {
 
     private fun urlEncode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
 
+    /**
+     * 截取正帖数据范围：`xdt_api__v1__media__shortcode__web_info.items[0]`。
+     * 该容器只含用户请求的这条帖子；页面其余位置的媒体数据全部来自推荐流，必须排除。
+     * 找不到容器时回退整页（保持旧行为兼容）。
+     */
+    private fun ownPostScope(html: String, code: String): String {
+        val key = "\"xdt_api__v1__media__shortcode__web_info\""
+        val kPos = html.indexOf(key)
+        if (kPos < 0) return html
+        val itemsKey = html.indexOf("\"items\":[", kPos)
+        if (itemsKey < 0) return html
+        val arr = balancedSlice(html, itemsKey + "\"items\":".length, '[', ']') ?: return html
+        val objStart = arr.indexOf('{')
+        if (objStart < 0) return html
+        val first = balancedSlice(arr, objStart, '{', '}') ?: return html
+        // items[0] 就是请求的帖子；code 校验失败仍优先采用（避免推荐流污染）
+        return first
+    }
+
+    /** 括号配对截取：从 start 处的 open 起到与之配对的 close 止（含字符串状态，防数据内括号干扰） */
+    private fun balancedSlice(s: String, start: Int, open: Char, close: Char): String? {
+        var depth = 0
+        var inStr = false
+        var esc = false
+        val end = minOf(s.length, start + 800_000)
+        for (i in start until end) {
+            val c = s[i]
+            if (esc) {
+                esc = false
+                continue
+            }
+            if (inStr) {
+                when (c) {
+                    '\\' -> esc = true
+                    '"' -> inStr = false
+                }
+                continue
+            }
+            when (c) {
+                '"' -> inStr = true
+                open -> depth++
+                close -> {
+                    depth--
+                    if (depth == 0) return s.substring(start, i + 1)
+                }
+            }
+        }
+        return null
+    }
+
     /** 渲染后的帖子页 HTML 提取（WebView 通道）：新版 xdt_api 结构（video_versions / image_versions2）+ 旧版键名兜底 */
     private fun extractFromPageHtml(html: String, sourceUrl: String, code: String): ParseResult {
+        // 关键隔离：页面还含有"更多帖子"推荐流的数据（image_versions2 可达 35 个），
+        // 直接全页扫描会把推荐帖的视频/图片混进来（用户复制图集却解析出陌生人视频的根因）。
+        // 正帖数据固定在 xdt_api__v1__media__shortcode__web_info.items[0]，限定在此范围内提取。
+        val scope = ownPostScope(html, code)
         val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
         val media = mutableListOf<MediaItem>()
 
         val videos = linkedSetOf<String>()
-        // 新版结构：IG 已把视频数据迁移到 video_versions:[{width,height,url}]（旧键名 video_url/playable_url 已消失）
-        Regex(""""video_versions":\[(.*?)\]""").findAll(html).forEach { block ->
+        // 新版结构：video_versions:[{width,height,url}]（旧键名 video_url/playable_url 已消失）
+        Regex(""""video_versions":\[(.*?)\]""").findAll(scope).forEach { block ->
             Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
                 videos.add(HtmlUtil.unescapeJsonOf(u.groupValues[1]))
             }
         }
         // 旧版键名兜底
-        HtmlUtil.jsonField(html, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
-        HtmlUtil.jsonField(html, "video_url").forEach { videos.add(it) }
-        HtmlUtil.jsonField(html, "playable_url").forEach { videos.add(it) }
-        Regex("""<meta property="og:video" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)?.let {
+        HtmlUtil.jsonField(scope, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
+        HtmlUtil.jsonField(scope, "video_url").forEach { videos.add(it) }
+        HtmlUtil.jsonField(scope, "playable_url").forEach { videos.add(it) }
+        Regex("""<meta property="og:video" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(scope)?.let {
             videos.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
         videos.filter { it.startsWith("http") }.forEachIndexed { i, u ->
@@ -249,27 +303,54 @@ class InstagramParser : PlatformParser {
         }
 
         val images = linkedSetOf<String>()
-        // 新版结构：image_versions2.candidates:[{url}]（跳过视频首帧缩略图）
-        Regex(""""image_versions2":\{"candidates":\[(.*?)\]\}""").findAll(html).forEach { block ->
-            Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
-                val url = HtmlUtil.unescapeJsonOf(u.groupValues[1])
-                if (!url.contains("video_first_frame", ignoreCase = true)) images.add(url)
-            }
+        // 新版结构：image_versions2.candidates:[{width,height,url}]——图集每个子项一块，
+        // 每块取宽度最大的一个（candidates 是同一张图的多尺寸候选），并跳过视频首帧缩略图
+        Regex(""""image_versions2":\{"candidates":\[(.*?)\]\}""").findAll(scope).forEach { block ->
+            val pairs = Regex(""""width":(\d+),"height":\d+,"url":"([^"]+)"""")
+                .findAll(block.groupValues[1])
+                .map { it.groupValues[1].toInt() to HtmlUtil.unescapeJsonOf(it.groupValues[2]) }
+                .filter { !it.second.contains("video_first_frame", ignoreCase = true) }
+                .toList()
+            val best = pairs.maxByOrNull { it.first }?.second
+                ?: Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1])
+                    .map { HtmlUtil.unescapeJsonOf(it.groupValues[1]) }
+                    .firstOrNull { !it.contains("video_first_frame", ignoreCase = true) }
+            best?.let { images.add(it) }
         }
-        HtmlUtil.jsonField(html, "display_url").forEach { images.add(it) }
-        Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)?.let {
+        HtmlUtil.jsonField(scope, "display_url").forEach { images.add(it) }
+        Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(scope)?.let {
             images.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
-        images.filter { it.startsWith("http") }.take(8).forEachIndexed { i, u ->
+        images.filter { it.startsWith("http") }.take(12).forEachIndexed { i, u ->
             media += MediaItem(
                 id = "ig-w-i-$i",
                 url = u,
                 kind = MediaKind.IMAGE,
-                quality = if (i == 0) "原图" else "图片 ${i + 1}",
+                quality = if (images.size > 1) "图 ${i + 1}" else "原图",
                 rank = 80 - i,
                 container = "jpg",
                 headers = igHeaders
             )
+        }
+
+        // 链接带 img_index=N 时（用户在图集里复制了第 N 张），把该图排到首位作为默认选中
+        val imgIndex = Regex("img_index=(\\d+)").find(sourceUrl)?.groupValues?.get(1)?.toInt()
+        if (imgIndex != null && imgIndex in 1..images.size) {
+            val list = images.toList()
+            val ordered = listOf(imgIndex - 1) + list.indices.filter { it != imgIndex - 1 }
+            media.removeAll { it.id.startsWith("ig-w-i-") }
+            ordered.forEachIndexed { i, idx ->
+                val u = list[idx]
+                media += MediaItem(
+                    id = "ig-w-i-$i",
+                    url = u,
+                    kind = MediaKind.IMAGE,
+                    quality = if (i == 0) "你选的第 $imgIndex 张" else "图 ${idx + 1}",
+                    rank = 90 - i,
+                    container = "jpg",
+                    headers = igHeaders
+                )
+            }
         }
 
         if (media.isEmpty()) return ParserDsl.result(platform, "$id-page", sourceUrl, emptyList())
