@@ -159,3 +159,13 @@
 - 测试结果：`:parser:test` 35 例全绿；模拟器实测全链路通过——Chrome 地址栏扫描自动弹窗 ✓、复制气泡扫描自动弹窗 ✓、悬浮球借道读取剪贴板 ✓（deny 日志消失）、弹窗内下载 16%→合并→完成→自动收起 ✓、完成后同链接不重弹 ✓、毛玻璃视觉确认 ✓；产物 `/sdcard/Movies/ClipDown/*.mp4`（10.2MB）落盘验证
 - 遗留：IG 内复制场景的 Snackbar 借道通路已实现但未在 IG App 内实测（IG 视频解析本身待阶段 10 遗留解决）；X 解析偶发回落通用解析（guest token 波动，既有问题）
 - 环境教训（重要）：**模拟器上 `adb install -r` 或反复 `settings put` 切换无障碍后，服务会出现"dumpsys 显示已绑定但事件永不派发"的假死态**——卸载重装后首次启用可恢复；彻底恢复需重启模拟器
+
+## 阶段 12：气泡交互重构 + IG Cookie 注入（已完成 · 2026-09-28）
+- 用户四点需求全部落地（提交 `580b0d3`）：
+  1. **气泡纯入口化**：头像 logo（用户图片裁切 256px，`drawable-nodpi/bubble_logo.png`）+ 待处理绿点；点击只展开迷你面板（`PopupUiState.Mini`：logo + "识别链接"按钮 + hint 提示），不再借道读剪贴板/不再自动解析/不再跳应用
+  2. **跳转入口**：解析弹窗新增描边按钮「跳转至剪存应用」；"下载"更名"开始下载"
+  3. **后台下载**：下载中点空白收起弹窗，任务在 DownloadService 继续；终态簿记与弹窗可见性解耦；collect 终态自终止（修泄漏）
+  4. **识别记忆**：DataStore `seen_links`（StringSet，上限 400）持久化——已识别链接不再自动弹窗，仅迷你面板手动识别（绕过记忆 + gate force 提交）；`UrlUtil.normalize` 剥离 X `/mediaViewer` 变体，杜绝视频播放期间绕过记忆反复弹窗
+- 附带修复：`ClipGateActivity` 独占任务栈（taskAffinity=""）消除跳转主界面闪现；剪贴板读取 200ms×3 重试；识别结果回调驱动迷你面板
+- **IG Cookie 注入方法（固化）**：`adb root` → 写 `/data/data/com.clipdown.app/shared_prefs/clipdown_cookies.xml`（key=`instagram`，`k=v; k=v` 格式）→ chown u0_aXXX（uid=10204→u0_a204）→ force-stop 重启。**验证信号：WebView 抓取 title 从 "This content is unavailable • Instagram" 变为 "Instagram"**（页面 1037KB）
+- 未解决：登录态下 WebView 渲染 reel 页 DOM 仍无媒体数据（阶段 10 遗留，真实帖子待测）；待用户提供真实 IG 帖子链接验证 GraphQL/embed 链路
