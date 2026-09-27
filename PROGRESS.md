@@ -119,6 +119,20 @@
 - 测试结果：`assembleDebug` 两次全绿；诊断链路完整（每次失败都能看到具体原因）
 - 下一阶段入口：WebView 抓取方案设计 → 实现；或 `:parser` JVM 单测；或真机回归
 
+## 阶段 10：WebView 抓取实现 + IG reel 实测（进行中）
+- 已完成：
+  - **webFetcher 架构落地**：ParseContext.webFetcher 注入点（纯 JVM）→ App 层 `WebViewHtmlFetcher`（Cookie 注入/桌面 UA/超时回传 outerHTML）
+  - IG 解析器新增 2.5 级：embed 无视频 → WebView 渲染页提取（og:video/video_url/playable_url）；oEmbed 容器按扩展名修正（webp 误标 jpg）
+  - WebView 抓取**已跑通**：instagram.com/reel/ 页面成功渲染并拿到 650KB HTML（onPageFinished → outerHTML）
+  - 轮询等待机制：IG React 应用异步填充媒体数据，onPageFinished 后每 2.5s 探测（video_url/playable_url/og:video/video 标签），8 轮或命中即抓全量
+- 待解决（下一轮精确续接点）：
+  - 实测 25s 超时早于 8 轮轮询（20s）结束 → html=null 白等；**超时需上调至 40s**
+  - 轮询期间无"媒体数据出现"日志 → 需每轮打点确认：a) evaluateJavascript 是否真执行 b) 匿名/登录态下 DOM 是否出现媒体数据（若 IG 匿名登录墙则永远不出现）
+  - WebView 匿名访问 IG reel 可能被引导登录页——若登录墙确认，验证注入的 sessionid 是否被 WebView 会话采用（CookieManager 域名/路径）
+- 改动文件：`parser/spi/PlatformParser.kt`、`parser/core/ParserEngine.kt`、`parser/parsers/InstagramParser.kt`（2.5 级+extractFromPageHtml）、`parser/parsers/XiaohongshuParser.kt`（webFetcher 优先）、`parser/parsers/InstagramParser.kt` oEmbed 容器修正、`app/clip/WebViewHtmlFetcher.kt`（新增）
+- 测试结果：`:parser:test` 35 例全绿；`assembleDebug` 绿
+- 下一阶段入口：按上面"待解决"三项逐个排除；提交 617c8a6 为 webFetcher 基础设施版本
+
 ## 阶段 9：`:parser` JVM 单测（已完成）
 - 已完成：
   - **7 个测试套件 34 个用例全绿**（JUnit4，`:parser:test` 33s）：UrlUtil 8 / M3u8 4 / PlatformRegistry 6 / X 5 / Youtube 4 / Instagram 3 / Xiaohongshu 4
