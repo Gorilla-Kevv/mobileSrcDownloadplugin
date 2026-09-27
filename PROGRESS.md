@@ -92,3 +92,17 @@
 - 改动文件：`parser/.../InstagramParser.kt`（GraphQL 重写）、`parser/.../http/HttpFacade.kt`（+postForm）
 - 测试结果：`assembleDebug` 三次全绿；IG App 可正常启动
 - 下一阶段入口：用户在 IG App 登录后测「分享/复制链接 → 悬浮窗」真实场景；`:parser` JVM 单测；真机回归
+
+## 阶段 7：X 视频 + 小红书 + IG 真实场景实测（已完成）
+- 已完成：
+  - **IG 真实场景全通**：用户登录 IG App → reel 分享 Copy link → 切回 App → 悬浮窗自动弹出解析出 @kedronji 自己的 reel（平台徽标/倒计时/原图）✅
+  - **X 视频全链路通过**：宿主机批量探测 syndication 找到带视频的真实推文（astro_anil 2094077925989515691，PowerShell 版 guest token 推导同步验证）→ App 解析出 3 个 mp4 变体（视频·中码率/低码率×2，码率排序正确）→ 下载 9.8MB → **ftyp isom 真 MP4** ✅
+  - **小红书实测**：真实 explore 链接（含 xsec_token）匿名访问被 404 墙（"你访问的页面不见了"），GenericParser 兜底抓到 404 页图片。与 loginRequired=true 设计一致，需用户注入 XHS 网页 Cookie（a1/web_session）
+  - 发现 adb input text 对含 `?` 的 URL 会吞字符——长 URL 一律走分享通道（ACTION_SEND EXTRA_TEXT）
+- 已知问题（新）：
+  - 分享通道 openParse 疑似解析了输入框旧内容而非提交链接（弹窗徽标显示 Instagram 而非 X），需复查 ShareTargetActivity→LinkCenter→MainActivity 链路
+  - 悬浮窗弹窗 15s 倒计时太短（自动化/手慢场景易超时），可考虑结果到达后重置计时
+- 改动文件：无代码改动（纯测试）
+- 测试结果：X 视频产物 10,241,500B ftyp isom 验证通过；IG/XHS 真实链接解析结论如上
+- 平台覆盖总结：YouTube✅(视频) / X✅(图片+视频) / IG✅(图片+真实场景)、IG视频⏸(需真机家宽IP) / 小红书⏸(需Cookie) / 抖音·Facebook·微博·TikTok·B站专属解析 未测
+- 下一阶段入口：用户注入 XHS Cookie 复测；`:parser` JVM 单测；真机回归
