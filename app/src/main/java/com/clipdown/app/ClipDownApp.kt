@@ -1,6 +1,7 @@
 package com.clipdown.app
 
 import android.app.Application
+import android.util.Log
 import com.clipdown.app.data.CookieStore
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.clip.ClipboardMonitor
@@ -29,7 +30,8 @@ class ClipDownApp : Application() {
         ParserEngine.bootstrap(
             androidContext = this,
             config = settings.parserConfig(),
-            cookieProvider = { platform -> CookieStore.get(this, platform) }
+            cookieProvider = { platform -> CookieStore.get(this, platform) },
+            logger = { tag, msg -> Log.d(tag, msg) }
         )
 
         // 下载引擎：并发度与网络策略在设置变更后通过 updateConfig 热更新

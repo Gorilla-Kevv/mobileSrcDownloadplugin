@@ -47,10 +47,16 @@ class BilibiliParser : PlatformParser {
         val avid = avidRegex.find(url)?.groupValues?.getOrNull(1)
         if (bvid == null && avid == null) throw ParseException("无法从链接中提取稿件 ID", platform, retryable = false)
 
-        val headers = ctx.headersFor(platform) + mapOf(
-            "Referer" to "https://www.bilibili.com/",
-            "Origin" to "https://www.bilibili.com",
-            "Accept" to "application/json, text/plain, */*"
+        // B 站风控：playurl 对无 buvid3 cookie 的请求返回 HTML 拦截页（HTTP 404/412）。
+        // 先访问视频页预热 cookie，把 Set-Cookie 合并进后续 API 请求。
+        val headers = warmUpCookie(
+            url,
+            ctx.headersFor(platform) + mapOf(
+                "Referer" to "https://www.bilibili.com/",
+                "Origin" to "https://www.bilibili.com",
+                "Accept" to "application/json, text/plain, */*"
+            ),
+            ctx
         )
 
         val viewQuery = if (bvid != null) "bvid=$bvid" else "aid=$avid"
@@ -82,9 +88,15 @@ class BilibiliParser : PlatformParser {
             ctx,
             headers
         )
-        val playRaw = runCatching { ctx.http.get("$API/playurl?$signed", headers).body }.getOrNull()
+        val playResp = runCatching { ctx.http.get("$API/playurl?$signed", headers) }.getOrNull()
             ?: throw ParseException("无法获取播放地址", platform)
+        val playRaw = playResp.body ?: throw ParseException("播放地址响应为空", platform)
         val play = runCatching { json.parseToJsonElement(playRaw).jsonObject }.getOrElse {
+            ctx.log(
+                id,
+                "playurl 异常响应：code=${playResp.code} len=${playRaw.length} head=" +
+                    playRaw.take(160).replace(Regex("\\s+"), " ")
+            )
             throw ParseException("播放地址接口返回异常格式", platform)
         }
 
@@ -97,6 +109,10 @@ class BilibiliParser : PlatformParser {
         val playData = play["data"]?.jsonObject ?: throw ParseException("播放数据为空", platform)
 
         val media = mutableListOf<MediaItem>()
+        val mediaHeaders = buildMap {
+            put("Referer", "https://www.bilibili.com/")
+            headers["Cookie"]?.takeIf { it.isNotBlank() }?.let { put("Cookie", it) }
+        }
         val durl = playData["durl"]?.jsonArray
         durl?.forEachIndexed { i, el ->
             val u = el.jsonObject.str("url") ?: return@forEachIndexed
@@ -109,7 +125,7 @@ class BilibiliParser : PlatformParser {
                 sizeBytes = el.jsonObject["size"]?.jsonPrimitive?.contentOrNull?.toLongOrNull(),
                 container = "flv",
                 mimeType = "video/x-flv",
-                headers = mapOf("Referer" to "https://www.bilibili.com/"),
+                headers = mediaHeaders,
                 fileNameHint = title
             )
         }
@@ -137,9 +153,9 @@ class BilibiliParser : PlatformParser {
                     height = bestVideo?.int("height"),
                     container = "m4s",
                     mimeType = "video/mp4",
-                    headers = mapOf("Referer" to "https://www.bilibili.com/"),
+                    headers = mediaHeaders,
                     audioUrl = bestAudio?.str("baseUrl") ?: bestAudio?.str("base_url"),
-                    audioHeaders = mapOf("Referer" to "https://www.bilibili.com/"),
+                    audioHeaders = mediaHeaders,
                     needsRemux = true,
                     fileNameHint = title
                 )
@@ -167,7 +183,10 @@ class BilibiliParser : PlatformParser {
         headers: Map<String, String>
     ): String {
         val keys = runCatching { fetchWbiKeys(ctx, headers) }.getOrNull()
-            ?: return params.entries.joinToString("&") { "${it.key}=${it.value}" }
+        if (keys.isNullOrBlank()) {
+            ctx.log(id, "WBI 密钥获取失败，playurl 将以未签名请求降级")
+            return params.entries.joinToString("&") { "${it.key}=${it.value}" }
+        }
         val sorted = params.toSortedMap()
         val wts = System.currentTimeMillis() / 1000
         val query = sorted.entries.joinToString("&") { "${it.key}=${urlEncode(it.value)}" } + "&wts=$wts"
@@ -175,14 +194,48 @@ class BilibiliParser : PlatformParser {
         return "$query&w_rid=$wRid"
     }
 
-    private fun fetchWbiKeys(ctx: ParseContext, headers: Map<String, String>): String {
-        val raw = ctx.http.get("$API/nav", headers).body ?: return ""
-        val root = json.parseToJsonElement(raw).jsonObject
-        val wbi = root["data"]?.jsonObject?.get("wbi_img")?.jsonObject ?: return ""
-        val img = wbi.str("img_url") ?: return ""
-        val sub = wbi.str("sub_url") ?: return ""
+    /**
+     * cookie 预热：无 buvid3 时先访问视频页（比主站下发更多风控 cookie），
+     * 收集 Set-Cookie 并合并进 headers 的 Cookie。失败不影响原 headers。
+     */
+    private fun warmUpCookie(pageUrl: String, headers: Map<String, String>, ctx: ParseContext): Map<String, String> {
+        val existing = headers["Cookie"]
+        if (!existing.isNullOrBlank() && existing.contains("buvid3")) return headers
+        val warm = runCatching {
+            ctx.http.get(
+                pageUrl,
+                mapOf(
+                    "User-Agent" to ctx.ua(),
+                    "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language" to "zh-CN,zh;q=0.9"
+                )
+            )
+        }.getOrNull() ?: return headers
+        val harvested = warm.headers.values("Set-Cookie")
+            .map { it.substringBefore(';').trim() }
+            .filter { it.contains('=') && !it.endsWith("=", true) }
+        if (harvested.isEmpty()) return headers
+        val merged = ((existing?.trimEnd(';')?.plus("; ")) ?: "") + harvested.joinToString("; ")
+        ctx.log(id, "cookie 预热(${warm.code})：收集 ${harvested.size} 项（buvid3=${harvested.any { it.startsWith("buvid3") }}）")
+        return headers + ("Cookie" to merged)
+    }
+
+    private fun fetchWbiKeys(ctx: ParseContext, headers: Map<String, String>): String? {
+        val resp = ctx.http.get("$API/nav", headers)
+        val raw = resp.body ?: return null
+        val root = runCatching { json.parseToJsonElement(raw).jsonObject }.getOrNull() ?: run {
+            ctx.log(id, "nav 异常响应：code=${resp.code} head=${raw.take(120).replace(Regex("\\s+"), " ")}")
+            return null
+        }
+        val wbi = root["data"]?.jsonObject?.get("wbi_img")?.jsonObject ?: return null
+        val img = wbi.str("img_url") ?: return null
+        val sub = wbi.str("sub_url") ?: return null
         val imgKey = img.substringAfterLast('/').substringBefore('.')
         val subKey = sub.substringAfterLast('/').substringBefore('.')
+        if (imgKey.length < 32 || subKey.length < 16) {
+            ctx.log(id, "WBI 密钥长度异常：img=$imgKey sub=$subKey")
+            return null
+        }
         return mixinKey(imgKey + subKey)
     }
 
