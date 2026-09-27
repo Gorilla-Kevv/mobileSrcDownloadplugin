@@ -67,11 +67,28 @@ class YoutubeParser : PlatformParser {
 
         val media = mutableListOf<MediaItem>()
 
-        // 合并流（videoStreams）：直接可播的 mp4
+        // 合并流（videoStreams）：直接可播的 mp4；HLS 流标记为播放列表交给 M3u8 下载器
         root["videoStreams"]?.jsonArray?.forEachIndexed { i, el ->
             val o = el.jsonObject
             val u = o["url"]?.jsonPrimitive?.contentOrNull ?: return@forEachIndexed
-            if (o["format"]?.jsonPrimitive?.contentOrNull == "MIME_TYPE_VIDEO_HLS") return@forEachIndexed
+            val format = o["format"]?.jsonPrimitive?.contentOrNull ?: ""
+            val mime = o["mimeType"]?.jsonPrimitive?.contentOrNull ?: ""
+            val isHls = format == "HLS" || format == "MIME_TYPE_VIDEO_HLS" ||
+                mime.contains("mpegurl", ignoreCase = true) || u.substringBefore('?').endsWith(".m3u8")
+            if (isHls) {
+                media += MediaItem(
+                    id = "yt-hls-$i",
+                    url = u,
+                    kind = MediaKind.VIDEO,
+                    quality = o["quality"]?.jsonPrimitive?.contentOrNull ?: "HLS",
+                    rank = 90 - i,
+                    container = "m3u8",
+                    mimeType = "application/x-mpegurl",
+                    isPlaylist = true,
+                    fileNameHint = title
+                )
+                return@forEachIndexed
+            }
             media += MediaItem(
                 id = "yt-v-$i",
                 url = u,

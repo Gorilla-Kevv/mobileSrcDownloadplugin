@@ -51,3 +51,17 @@
 - 测试结果：`assembleDebug` 三次全绿（增量 48-50s）；模拟器实测解析/下载链路通过
 - 风险：沙箱内 adb 守护进程跨调用不持久（表现为 device offline），adb 命令须非沙箱执行；PowerShell 二进制重定向会损坏截图，须 `screencap 到 /sdcard + adb pull`
 - 下一阶段入口：真机回归（B 站风控在真实手机+家庭宽带 IP 下大概率消失，可验证 BilibiliParser 专属路径）；或先做 `:parser` JVM 单测；或注入 SESSDATA 后在模拟器复测 B 站全链路
+
+## 阶段 4：模拟器代理 + YouTube 全链路实测（已完成）
+- 已完成：
+  - 模拟器代理：启动参数 `-http-proxy http://10.0.2.2:7890`（10.0.2.2=宿主回环→Clash）+ Android 全局代理 `settings put global http_proxy`，YouTube/Google 实测可达
+  - **YouTube E2E 全通**：Piped 中继解析（实例探测：kavin=526✗、adminforge=301✗、private.coffee=200✓、reallyaweso=502✗）→ 标题/缩略图/资源选项渲染 → 360p（googlevideo itag-18）下载 → MediaStore 入库 11.3MB → **文件头验证 `ftyp mp42` 为真实 MP4** ✅
+  - 悬浮窗毛玻璃弹窗实战自证：自动抓取剪贴板链接→平台徽标→解析中→结果卡，15s 倒计时自动收起
+  - 修复 3：`YoutubeParser` 的 HLS 过滤条件错误（Piped 实际 format 为 `HLS`/`MP4`/`MPEG_4`，原代码比较 `MIME_TYPE_VIDEO_HLS` 永不匹配 → master.m3u8 被当直链下载，产出 489B 假 mp4）；现正确标记 `isPlaylist=true` 路由到 M3u8 下载器
+  - 修复 4：`DownloadController.enqueue` 增加 `.m3u8` URL 后缀兜底路由（防解析器漏标记）
+- 已知问题（新）：
+  - Piped LBRY 镜像内容错位：LBRY/LBRY HLS 流（odycdn）指向 10 小时长视频（v0.m3u8 共 3620 段），与 213s 原视频不符——上游数据质量问题，引擎行为正确（分片/相对 URL/变体选择均正常）。改进方向：用 Piped `duration` 字段做时长 sanity check
+  - 模拟器 UI 自动化坑：Compose 卡片高度随键盘/重布局漂移 ~132px，固定坐标点击会误触资源 chip；稳定做法=收键盘→截屏实测坐标→点击
+- 改动文件：`parser/.../YoutubeParser.kt`（HLS 标记）、`downloader/.../DownloadController.kt`（m3u8 兜底）
+- 测试结果：`assembleDebug` 全绿（55s）；360p 产物 11,829,048B 且 `ftyp mp42` 验证通过；HLS 引擎对正常播放列表的分片下载/变体选择已验证（用错位内容跑通了全流程）
+- 下一阶段入口：真机回归（B 站专属解析+家宽 IP）；`:parser` JVM 单测；可选：下载产物 magic bytes 校验、时长 sanity check

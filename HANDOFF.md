@@ -46,6 +46,7 @@
   10. 新版 cmdline-tools 的 android CLI（重写版）在 Windows 有两个 bug：大文件解压崩溃（0xC0000409）与 `;` 分隔包名被拆分；装组件用 classic cmdline-tools 12.0（临时解压在 `%TEMP%\cmdtools-classic`，可移至 `F:\AndroidDev\cmdline-tools-classic`）
   11. AVD `clip34` 为手写配置（avdmanager 的 SDK 根解析有问题）：`C:\Users\kevin\.android\avd\clip34.avd\config.ini` + 同级 `clip34.ini`；启动 `F:\AndroidDev\sdk\emulator\emulator.exe -avd clip34 -gpu host -no-snapshot -http-proxy http://10.0.2.2:7890`（10.0.2.2=宿主机回环，7890=宿主 Clash；另可 `adb shell settings put global http_proxy 10.0.2.2:7890` 设应用层全局代理，YouTube/Google 已实测可达）；adb 在 `F:\AndroidDev\sdk\platform-tools\adb.exe`
   12. B 站风控（2026-09-27 实测）：`api.bilibili.com` 的 view 可匿名访问，但 nav（无 wbi_img）与 playurl（返回 404/412 HTML 错误页）对无登录态+可疑 IP/指纹持续拦截；`BilibiliParser` 已做 cookie 预热（访问视频页收 buvid3）与诊断日志，彻底解法 = 设置页注入 SESSDATA 或远端解析服务；GenericParser 会把外链播放器 HTML 存成 .mp4，待加 magic bytes 校验
+  13. YouTube/Piped（2026-09-27 实测）：Piped 的 `format` 实际取值是 `HLS`/`MP4`/`MPEG_4`（不是 `MIME_TYPE_VIDEO_HLS`），`YoutubeParser` 已按此识别并把 HLS 标记 `isPlaylist=true`；`DownloadController.enqueue` 另有 `.m3u8` 后缀兜底路由。LBRY 镜像（odycdn）存在内容错位（返回无关长视频的播放列表），不可信，优先选 360p itag-18（googlevideo 代理直链）已实测产出真实 MP4；改进方向=用 Piped `duration` 做时长 sanity check
 
 ## 命令
 - 构建：`F:\AndroidDev\build.bat :app:assembleDebug --console=plain`

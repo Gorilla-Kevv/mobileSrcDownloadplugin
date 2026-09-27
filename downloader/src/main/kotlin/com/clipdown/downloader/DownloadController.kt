@@ -69,7 +69,8 @@ object DownloadController {
      */
     fun enqueue(item: MediaItem, platform: Platform, title: String?): String {
         val kind = when {
-            item.isPlaylist || item.container == "m3u8" -> TaskKind.HLS
+            item.isPlaylist || item.container == "m3u8" ||
+                item.url.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS
             !item.audioUrl.isNullOrBlank() -> TaskKind.DASH
             else -> TaskKind.SINGLE
         }
