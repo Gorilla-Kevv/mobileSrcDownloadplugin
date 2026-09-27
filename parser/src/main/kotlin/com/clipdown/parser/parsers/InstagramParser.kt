@@ -64,10 +64,14 @@ class InstagramParser : PlatformParser {
             }
         }
 
-        // 2.5) WebView 渲染抓取（App 层注入；带登录态 Cookie 渲染 reel 页，HTML 内含视频数据）
+        // 2.5) WebView 渲染抓取（App 层注入；带登录态 Cookie 渲染帖子页，HTML 内含视频数据）。
+        // 优先沿用用户链接的原路径（/p/ 与 /reel/ 服务端渲染行为不同，硬编码 /reel/ 会让
+        // 图片帖链接第一阶段白等 40s 超时），失败再换另一种路径。
+        val primary = if (url.contains("/reel/", ignoreCase = true)) "reel" else "p"
+        val secondary = if (primary == "reel") "p" else "reel"
         val rendered = runCatching {
-            ctx.webFetcher?.invoke("https://www.instagram.com/reel/$code/")
-                ?: ctx.webFetcher?.invoke("https://www.instagram.com/p/$code/")
+            ctx.webFetcher?.invoke("https://www.instagram.com/$primary/$code/")
+                ?: ctx.webFetcher?.invoke("https://www.instagram.com/$secondary/$code/")
         }.getOrNull()
         if (!rendered.isNullOrBlank()) {
             val fromPage = extractFromPageHtml(rendered, url, code)
