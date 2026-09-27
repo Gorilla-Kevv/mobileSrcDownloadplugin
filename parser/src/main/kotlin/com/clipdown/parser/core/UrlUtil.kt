@@ -18,11 +18,11 @@ object UrlUtil {
      * 尾部刻意排除中文标点与常见收尾符号，避免把文案一起吃进来。
      */
     private val URL_PATTERN =
-        Regex("""(?:https?://|www\.)[A-Za-z0-9\-._~%]+(?::\d+)?(?:/[^\s"'<>，,。；;！!？?）)\]】]*)?""")
+        Regex("""(?:https?://|www\.)[A-Za-z0-9\-._~%]+(?::\d+)?(?:/[^\s"'<>“”‘’，,。；;！!？?）)\]】]*)?""")
 
     /** 无协议头的裸域名，如 xhslink.com/a/xxx、v.douyin.com/xxx */
     private val BARE_HOST_PATTERN =
-        Regex("""(?<![A-Za-z0-9.\-])((?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+(?:com|cn|net|org|io|tv|co|me|link|watch|be|tv|app)(?:/[^\s"'<>，,。；;！!？?）)\]】]*)?)""")
+        Regex("""(?<![A-Za-z0-9.\-])((?:[a-z0-9](?:[a-z0-9\-]*[a-z0-9])?\.)+(?:com|cn|net|org|io|tv|co|me|link|watch|be|tv|app)(?:/[^\s"'<>“”‘’，,。；;！!？?）)\]】]*)?)""")
 
     private val TRACKING_PARAMS = setOf(
         "igshid", "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",

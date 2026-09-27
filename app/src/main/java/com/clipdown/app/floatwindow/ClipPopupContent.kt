@@ -25,6 +25,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Refresh
@@ -33,6 +34,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -77,7 +79,7 @@ fun ClipPopupContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (blurSupported) Color(0x33000000) else Color(0xAA0A0E1A))
+                .background(if (blurSupported) Color(0x1F000000) else Color(0xAA0A0E1A))
                 .clickable(enabled = true, onClick = onDismiss),
             contentAlignment = Alignment.Center
         ) {
@@ -113,7 +115,7 @@ fun GlassCard(
             .clip(RoundedCornerShape(24.dp))
             .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp)),
         shape = RoundedCornerShape(24.dp),
-        color = GlassBase.copy(alpha = 0.74f),
+        color = GlassBase.copy(alpha = 0.62f),
         tonalElevation = 12.dp,
         shadowElevation = 24.dp,
         content = content
@@ -267,20 +269,63 @@ private fun ReadyBody(
 
         Spacer(Modifier.height(16.dp))
 
-        Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onOpenApp) {
-                Text("在应用内打开", color = Color.White.copy(0.72f))
+        if (state.downloading) {
+            // 下载进度：弹窗内闭环（进度条/合并中/完成/失败）
+            Column(modifier = Modifier.fillMaxWidth()) {
+                when {
+                    state.downloadDone -> Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.Center
+                    ) {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF2EB872),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text("下载完成", color = Color(0xFF2EB872), style = MaterialTheme.typography.titleSmall)
+                    }
+                    state.downloadError != null -> Text(
+                        state.downloadError,
+                        color = Color(0xFFFFB020),
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    else -> Column {
+                        LinearProgressIndicator(
+                            progress = { (state.downloadPercent ?: 0) / 100f },
+                            modifier = Modifier.fillMaxWidth(),
+                            color = SeedBlue,
+                            trackColor = Color.White.copy(0.12f)
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            text = when (state.downloadPercent) {
+                                99 -> "正在合并音视频…"
+                                else -> "下载中 ${state.downloadPercent ?: 0}%"
+                            },
+                            color = Color.White.copy(0.7f),
+                            style = MaterialTheme.typography.labelMedium
+                        )
+                    }
+                }
             }
-            Spacer(Modifier.weight(1f))
-            Button(
-                onClick = onDownload,
-                enabled = !state.downloading,
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(if (state.downloading) "已加入队列" else "下载")
+        } else {
+            Row(modifier = Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onOpenApp) {
+                    Text("在应用内打开", color = Color.White.copy(0.72f))
+                }
+                Spacer(Modifier.weight(1f))
+                Button(
+                    onClick = onDownload,
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("下载")
+                }
             }
         }
     }

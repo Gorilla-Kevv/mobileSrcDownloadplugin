@@ -18,7 +18,10 @@ sealed interface PopupUiState {
         val link: DetectedLink,
         val result: ParseResult,
         val selectedIndex: Int = 0,
-        val downloading: Boolean = false
+        val downloading: Boolean = false,
+        val downloadPercent: Int? = null,
+        val downloadDone: Boolean = false,
+        val downloadError: String? = null
     ) : PopupUiState {
         val selected: MediaItem? get() = result.media.getOrNull(selectedIndex)
     }

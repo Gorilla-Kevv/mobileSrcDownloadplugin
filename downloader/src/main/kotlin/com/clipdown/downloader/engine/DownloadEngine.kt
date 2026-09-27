@@ -176,6 +176,9 @@ class DownloadEngine(
                     db.incrementRetry(taskId)
                     if (attempt > config.maxRetry) {
                         db.updateStatus(taskId, DownloadStatus.FAILED, failure?.message ?: "下载失败")
+                        _progress.tryEmit(
+                            ProgressEvent(taskId, task.downloadedBytes, task.totalBytes, 0, DownloadStatus.FAILED)
+                        )
                         db.get(taskId)?.let { notifier.notifyFinished(it) }
                         notifier.cancel(taskId)
                         repository.refresh()
@@ -219,6 +222,9 @@ class DownloadEngine(
         }
 
         db.updateStatus(task.id, DownloadStatus.MERGING)
+        _progress.tryEmit(
+            ProgressEvent(task.id, state.downloaded, state.total, 0, DownloadStatus.MERGING)
+        )
 
         val uri = if (config.saveToAlbum) {
             MediaStoreWriter.save(context, target, task.fileName, task.mimeType)
@@ -230,6 +236,10 @@ class DownloadEngine(
             localUri = uri?.toString(),
             mimeType = task.mimeType,
             totalBytes = target.length()
+        )
+        // 终态事件：悬浮窗等订阅方依赖它把 UI 切到"下载完成"
+        _progress.tryEmit(
+            ProgressEvent(task.id, target.length(), target.length(), 0, DownloadStatus.COMPLETED)
         )
         tmpDir.deleteRecursively()
     }

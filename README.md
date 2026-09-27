@@ -8,27 +8,27 @@ Android 端「剪贴板识别 → 网址解析 → 下载」应用。复制 Inst
 
 ## 一、快速开始
 
-### 1. 开发环境（已搭建完毕）
+### 1. 开发环境（已搭建完毕，位于 `F:\AndroidDev`）
 
 | 组件 | 版本 | 路径 |
 | --- | --- | --- |
-| JDK | Temurin 17.0.20.1 | `C:\AndroidDev\jdk\jdk-17.0.20.1+1` |
-| Android SDK | cmdline-tools 23.0 / platform 34 / build-tools 34.0.0 | `C:\AndroidDev\sdk` |
-| Gradle | 8.9（二进制 + Wrapper） | `C:\AndroidDev\gradle-8.9` |
+| JDK | Temurin 17.0.20.1 | `F:\AndroidDev\jdk\jdk-17.0.20.1+1` |
+| Android SDK | cmdline-tools 23.0 / platform 34 / build-tools 34.0.0 | `F:\AndroidDev\sdk` |
+| Gradle | 8.9（二进制 + Wrapper） | `F:\AndroidDev\gradle-8.9` |
+| Gradle 缓存 | 依赖已全部下载 | `F:\AndroidDev\.gradle` |
 | AGP / Kotlin | 8.7.3 / 2.0.21 | 见 `build.gradle.kts` |
 
-环境变量 `JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`GRADLE_USER_HOME` 已写入用户级环境变量，PATH 已追加 JDK / Gradle / platform-tools。
+用户级环境变量 `JAVA_HOME`、`ANDROID_HOME`、`ANDROID_SDK_ROOT`、`GRADLE_USER_HOME` 已指向 `F:\AndroidDev`，PATH 已追加 JDK / Gradle / platform-tools。项目根的 `local.properties` 中 `sdk.dir=F:\AndroidDev\sdk`。
 
 > 注意：本机自带的 JDK 24 版本过高（AGP 8.x 仅支持 JDK 17/21），构建统一使用上面这套 JDK 17。
 
 ### 2. 构建
 
 ```bash
-# Windows（已配置好环境变量时）
-gradlew.bat assembleDebug
+# 推荐：统一构建脚本（自动设置 JAVA_HOME / ANDROID_HOME / GRADLE_USER_HOME）
+F:\AndroidDev\build.bat :app:assembleDebug --console=plain
 
-# 或显式指定（推荐，避免与系统 JDK 冲突）
-set JAVA_HOME=C:\AndroidDev\jdk\jdk-17.0.20.1+1
+# 或已配置好环境变量时直接用 Wrapper
 gradlew.bat assembleDebug
 ```
 

@@ -142,3 +142,20 @@
 - 改动文件：`parser/src/test/**`（8 文件+3 夹具）、`HtmlUtil.kt`、`UrlUtil.kt`
 - 测试结果：`:parser:test` 全绿（34/34）
 - 下一阶段入口：WebView 抓取方案（小红书）；真机回归；`:downloader` 单测（可复用 FakeHttp 思路）
+
+## 阶段 11：悬浮窗复制触发修复 + 弹窗内下载闭环（已完成 · 2026-09-27）
+- 用户需求：①复制链接后悬浮弹窗自动弹出；②弹窗半透明毛玻璃质感；③弹窗为顶级交互入口，下载全流程在弹窗内闭环，无需进主界面
+- **定位到的 4 个真根因（全部修复）**：
+  1. **`accessibility_service_config.xml` 的 `android:packageNames=""`（空串）= 空数组 = 不匹配任何包**——无障碍服务"已绑定但收不到任何事件"的总根因（框架语义：不写此属性才接收全部包）。删除该属性后事件流立即恢复
+  2. **防抖为丢弃式**：复制瞬间事件风暴中首条事件先于内容出现，携带真实数据的后续事件全被 800ms 防抖吞掉 → 改为**尾部合并**（最后一次事件后静默 350ms 统一扫描）
+  3. **Android 10+ 剪贴板后台读取被拒**（logcat 实证 `ClipboardService: Denying clipboard access`，无障碍服务也无豁免）→ 三段式策略：复制特征 Toast（"已复制/Copied"）→ 借道 [ClipGateActivity]（无障碍+悬浮窗权限持后台启动豁免）读剪贴板；窗口短促复制提示文本（IG Snackbar 类）兜底；剪贴板直读仅在偶有焦点时生效
+  4. **ClipGateActivity 在 onResume 读剪贴板过早**：Android 12+ onResume 早于窗口焦点授予，必被拒（实测 `Displayed` 晚于 deny 700ms）→ 改在 `onWindowFocusChanged(hasFocus=true)` 读取
+- **弹窗内下载闭环（新增）**：PopupUiState.Ready 增加 downloading/downloadPercent/downloadDone/downloadError；下载中停倒计时，进度条/合并提示（99%="正在合并音视频…"）/完成对勾/失败文案全部在弹窗内；毛玻璃强化（BLUR_RADIUS 28→56px、scrim 减淡）
+- **引擎级修复（`:downloader`）**：DownloadEngine 此前**从不发出 MERGING/COMPLETED/FAILED 进度事件**（reportLoop 只发 DOWNLOADING 采样）→ execute() 在 updateStatus(MERGING)/markCompleted 后补发事件，runTask 失败终态补发 FAILED（文件早已落盘但 UI 永远停在"下载中 100%"的根因）
+- **扫描噪音治理**：页面内容里的短链（t.co 等）是媒体跳转噪音（展开后落在媒体主机，提不出作品 ID）→ 窗口扫描通道跳过短链，完整 URL 由地址栏/复制气泡提供
+- **弹窗状态保护**：视频播放会每 500ms 触发窗口内容变化 → 每 15s 去重过期后重复弹窗覆盖下载状态 → 服务级 `downloadActive` 标志集中守卫 showAndParse；下载完成后 10 分钟内抑制同一 URL 自动重弹（悬浮球转绿色"!"待处理态）
+- **修复 7（小）**：`UrlUtil` URL_PATTERN 漏排除弯引号 `“”‘’`，推文标题里的 t.co 带尾引号被整段吃入 → 补进排除类
+- 改动文件：`app/clip/ClipAccessibilityService.kt`（重写）、`app/clip/ClipGateActivity.kt`、`app/floatwindow/FloatingWindowService.kt`、`app/floatwindow/ClipPopupContent.kt`、`app/floatwindow/PopupUiState.kt`、`app/res/xml/accessibility_service_config.xml`、`downloader/engine/DownloadEngine.kt`、`parser/core/UrlUtil.kt`
+- 测试结果：`:parser:test` 35 例全绿；模拟器实测全链路通过——Chrome 地址栏扫描自动弹窗 ✓、复制气泡扫描自动弹窗 ✓、悬浮球借道读取剪贴板 ✓（deny 日志消失）、弹窗内下载 16%→合并→完成→自动收起 ✓、完成后同链接不重弹 ✓、毛玻璃视觉确认 ✓；产物 `/sdcard/Movies/ClipDown/*.mp4`（10.2MB）落盘验证
+- 遗留：IG 内复制场景的 Snackbar 借道通路已实现但未在 IG App 内实测（IG 视频解析本身待阶段 10 遗留解决）；X 解析偶发回落通用解析（guest token 波动，既有问题）
+- 环境教训（重要）：**模拟器上 `adb install -r` 或反复 `settings put` 切换无障碍后，服务会出现"dumpsys 显示已绑定但事件永不派发"的假死态**——卸载重装后首次启用可恢复；彻底恢复需重启模拟器

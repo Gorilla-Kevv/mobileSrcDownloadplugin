@@ -81,6 +81,14 @@ class FloatingWindowService : Service() {
     private var dismissJob: Job? = null
     private var parseJob: Job? = null
 
+    /** 下载进行中：期间任何新链接都不允许打断弹窗（视频播放会持续触发窗口扫描） */
+    @Volatile
+    private var downloadActive = false
+
+    /** 下载完成后短时抑制同一链接的自动重弹（地址栏仍在该页面时会持续触发扫描） */
+    private var suppressedUrl: String? = null
+    private var suppressedAt = 0L
+
     private val settings by lazy { SettingsRepository(this) }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -201,12 +209,25 @@ class FloatingWindowService : Service() {
         LinkCenter.detected
             .onEach { link ->
                 hasPending.value = true
+                // 下载进行中不响应新链接：避免进度 UI 被新解析结果覆盖
+                val current = uiState.value
+                if (current is PopupUiState.Ready && current.downloading) return@onEach
                 if (autoPopupEnabled) showAndParse(link)
             }
             .launchIn(scope)
     }
 
     private fun showAndParse(link: com.clipdown.app.clip.DetectedLink) {
+        if (downloadActive) {
+            hasPending.value = true
+            return
+        }
+        suppressedUrl?.let { url ->
+            if (link.url == url && System.currentTimeMillis() - suppressedAt < SUPPRESS_MS) {
+                hasPending.value = true
+                return
+            }
+        }
         hasPending.value = false
         uiState.value = PopupUiState.Loading(link)
         ensurePopupHost()
@@ -315,14 +336,48 @@ class FloatingWindowService : Service() {
         val state = uiState.value
         if (state !is PopupUiState.Ready) return
         val item = state.selected ?: return
-        scope.launch(Dispatchers.IO) {
-            DownloadController.enqueue(item, state.result.platform, state.result.title)
-        }
-        startService(DownloadService.intent(this, DownloadService.ACTION_RESUME))
-        uiState.value = state.copy(downloading = true)
-        scope.launch {
-            delay(900)
-            hidePopup()
+        // 下载中不自动收起弹窗：全部流程在弹窗内闭环
+        dismissJob?.cancel()
+        remainSeconds.value = 0
+        downloadActive = true
+        uiState.value = state.copy(downloading = true, downloadPercent = 0)
+
+        scope.launch(Dispatchers.Main.immediate) {
+            val taskId = withContext(Dispatchers.IO) {
+                DownloadController.enqueue(item, state.result.platform, state.result.title)
+            }
+            startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))
+
+            // 订阅进度：下载/合并/完成/失败全部在弹窗内呈现
+            DownloadController.engine().progress.collect { e ->
+                if (e.taskId != taskId) return@collect
+                val cur = uiState.value
+                if (cur !is PopupUiState.Ready || cur.link != state.link) return@collect
+                when (e.status) {
+                    com.clipdown.downloader.model.DownloadStatus.COMPLETED -> {
+                        downloadActive = false
+                        suppressedUrl = state.link.url
+                        suppressedAt = System.currentTimeMillis()
+                        uiState.value = cur.copy(downloadPercent = 100, downloadDone = true)
+                        scope.launch {
+                            delay(2500)
+                            hidePopup()
+                        }
+                        return@collect
+                    }
+                    com.clipdown.downloader.model.DownloadStatus.FAILED -> {
+                        downloadActive = false
+                        uiState.value = cur.copy(downloadError = "下载失败，可在应用内重试")
+                        return@collect
+                    }
+                    com.clipdown.downloader.model.DownloadStatus.MERGING ->
+                        uiState.value = cur.copy(downloadPercent = 99)
+                    else -> {
+                        val pct = if (e.totalBytes > 0) ((e.downloadedBytes * 100) / e.totalBytes).toInt() else null
+                        uiState.value = cur.copy(downloadPercent = pct)
+                    }
+                }
+            }
         }
     }
 
@@ -394,7 +449,8 @@ class FloatingWindowService : Service() {
     companion object {
         private const val CHANNEL_MONITOR = "clipdown_monitor"
         private const val NOTIFICATION_ID = 9002
-        private const val BLUR_RADIUS_PX = 28
+        private const val BLUR_RADIUS_PX = 56
+        private const val SUPPRESS_MS = 10 * 60_000L
 
         const val ACTION_HIDE_POPUP = "com.clipdown.app.action.HIDE_POPUP"
         const val ACTION_SHOW_LAST = "com.clipdown.app.action.SHOW_LAST"

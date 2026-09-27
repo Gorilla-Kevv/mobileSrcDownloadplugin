@@ -17,14 +17,21 @@ import android.os.Looper
 class ClipGateActivity : Activity() {
 
     private val handler = Handler(Looper.getMainLooper())
+    private var handled = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // 不 setContentView：整窗透明
     }
 
-    override fun onResume() {
-        super.onResume()
+    /**
+     * 必须等窗口真正拿到焦点再读剪贴板：Android 12+ 上 onResume 早于焦点授予，
+     * 在 onResume 里读会被 ClipboardService 以 "not in focus" 拒绝（实测日志）。
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (!hasFocus || handled) return
+        handled = true
         val text = ClipboardMonitor.readFromGate()
         if (!text.isNullOrBlank()) {
             LinkCenter.submit(text, LinkSource.GATE_CLIP)
