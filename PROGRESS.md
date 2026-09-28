@@ -1,5 +1,18 @@
 # PROGRESS
 
+## 阶段 16：并发解析可见性 + 三徽标（已完成 · 2026-09-28）
+- 已完成（按 PLAN 阶段 16；并发骨架已由阶段 15 承载——autoParseJobs/pipelineUrls 每条链接独立 Job 互不取消，下载侧引擎自带 maxConcurrent 排队，本阶段补齐可见性与一致性）：
+  - **三徽标**：左上绿=搁置待处理（pendingCount 原语义）、左下黄=**解析中 N**、右下蓝=**下载中 M**；parsingCount/downloadingCount 两个 mutableIntStateOf，在 autoRecognize 入队/出队、startAutoDownload enqueue、watchAutoTask 终态、downloadCurrent（手动下载同样计数）各转换点维护；>0 才显示，9+ 封顶；抽出 CountBadge 复用（align 由 BoxScope 调用方传入）
+  - **相位冲突修正**：并发解析下瞬态闪现（ParseOk/ParseFail/DownloadOk）到点回退时，若 parsingCount>0 则回 Parsing 而非 Idle——多链接同时解析时黄圈不会被单条结果"提前熄灭"
+  - **pendingCount 消费 bug**：force 点气泡识别现在也清零 pendingCount（原只在 showAndParse/下载终态清零，新交互下 deferred 计数会永久残留）
+  - LinkCenter 未改动：15s 去重 + 每条独立事件已满足并发需求，PLAN 提的"detected 携带序号"无实际用途（YAGNI）
+- 未完成/遗留：
+  - **双链接并发峰值（徽标=2）未在模拟器抓到**：第一条 SEND 被 delivered-to-top 吞（坑 27 注入限制），且 Piped 全挂只有单条入队——并发正确性由独立 launch 结构保证，用户真实"5 秒连发多条"场景待实测；同平台并发节流（IG 风控放大风险）未做，PLAN 风险项保留
+- 改动文件：`floatwindow/FloatingWindowService.kt`（计数状态+三徽标+setPhase 回退修正+pendingCount bug）
+- 测试结果：`assembleDebug` + `:parser:test` 38 例全绿；模拟器连拍验证：黄色旋转光弧+黄徽标"1"同框（解析中）→ Piped 失败卡 → 收口，徽标与相位流转全程一致
+- 风险：同平台并发解析对 IG 的风控放大（未节流）；多任务并发下载时进度环显示最新事件任务（不聚合，阶段 16 PLAN 未要求，记录现状）
+- 下一阶段入口：**阶段 18 图集全选/多选下载 UI**（纯 UI 不依赖外部服务健康，批量 enqueue=DownloadController.enqueueAll 已有）或**阶段 17 reels 403**（IG 侧待风控解除，X 变体组自动下载已验证）
+
 ## 阶段 15：自动解析→自动下载流水线（已完成 · 2026-09-28）
 - 已完成（按 PLAN 阶段 15）：
   - **自动流水线**：`autoRecognize` 接管 observeLinks 的自动路径——后台解析（气泡黄圈）→ 解析成功按资源形态分流：单资源/全视频变体组 → **自动 enqueue 下载无 UI 确认**（绿闪 600ms→进度环→紫闪）；图集/多图/混合形态或自动下载不可用 → 回退现有 Ready 选择卡；解析失败 → 红闪+Failed 卡。`autoDownloadCandidate` 判定规则：media.size==1 直取；多条但 kind 全为 VIDEO（同源清晰度变体，如 reel 原画质+备选、X 多码率）取推荐首位（与选择卡默认选中一致）；其余（图集）返回 null

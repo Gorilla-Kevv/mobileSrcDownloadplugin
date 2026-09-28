@@ -104,8 +104,14 @@ class FloatingWindowService : Service() {
     private val remainSeconds = mutableIntStateOf(0)
     private val bubblePhase = mutableStateOf<BubblePhase>(BubblePhase.Idle)
 
-    /** 被下载中/抑制窗口搁置、尚未处理的链接数（气泡左上角徽标） */
+    /** 被下载中/抑制窗口搁置、尚未处理的链接数（气泡左上角绿徽标） */
     private val pendingCount = mutableIntStateOf(0)
+
+    /** 并发解析中的链接数（气泡左下角黄徽标，阶段 16） */
+    private val parsingCount = mutableIntStateOf(0)
+
+    /** 下载进行中的任务数（气泡右下角蓝徽标，阶段 16） */
+    private val downloadingCount = mutableIntStateOf(0)
 
     private var dismissJob: Job? = null
     private var parseJob: Job? = null
@@ -211,7 +217,12 @@ class FloatingWindowService : Service() {
         val composeView = ComposeView(this).apply {
             setContent {
                 ClipDownTheme(darkTheme = true) {
-                    BubbleContent(bubblePhase.value, pendingCount.intValue)
+                    BubbleContent(
+                        bubblePhase.value,
+                        pendingCount.intValue,
+                        parsingCount.intValue,
+                        downloadingCount.intValue
+                    )
                 }
             }
         }
@@ -308,14 +319,14 @@ class FloatingWindowService : Service() {
         )
     }
 
-    /** 切换气泡相位；瞬态相位（revertMs 非空）到点自动回 Idle */
+    /** 切换气泡相位；瞬态相位（revertMs 非空）到点自动回 Idle（仍有并发解析在跑则回 Parsing） */
     private fun setPhase(phase: BubblePhase, revertMs: Long? = null) {
         phaseRevertJob?.cancel()
         bubblePhase.value = phase
         if (revertMs != null) {
             phaseRevertJob = scope.launch {
                 delay(revertMs)
-                bubblePhase.value = BubblePhase.Idle
+                bubblePhase.value = if (parsingCount.intValue > 0) BubblePhase.Parsing else BubblePhase.Idle
             }
         }
     }
@@ -387,11 +398,14 @@ class FloatingWindowService : Service() {
         // force（点气泡识别）：绕过抑制窗口；pipelineUrls 保留——同链接正在跑时忽略重复点击
         if (!force && isSuppressed(link.url)) return
         pipelineUrls.add(link.url)
+        parsingCount.intValue++
+        pendingCount.intValue = 0
         setPhase(BubblePhase.Parsing)
         val job = scope.launch {
             val result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url) }
             autoParseJobs.remove(currentCoroutineContext()[Job])
             pipelineUrls.remove(link.url)
+            parsingCount.intValue--
 
             if (result.isSuccess) {
                 val parsed = result.getOrThrow()
@@ -464,6 +478,7 @@ class FloatingWindowService : Service() {
                     platformName = parsed.platform.displayName,
                     percent = 0
                 )
+                downloadingCount.intValue++
                 startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))
                 // 绿圈短闪后转入下载进度环（进度事件先到则由 watchAutoTask 直接切相位）
                 setPhase(BubblePhase.ParseOk)
@@ -489,6 +504,7 @@ class FloatingWindowService : Service() {
                     DownloadStatus.FAILED,
                     DownloadStatus.CANCELED -> {
                         autoTasks.remove(taskId)
+                        downloadingCount.intValue--
                         when (e.status) {
                             DownloadStatus.COMPLETED -> {
                                 consecutiveFailures = 0
@@ -687,6 +703,7 @@ class FloatingWindowService : Service() {
             val taskId = withContext(Dispatchers.IO) {
                 DownloadController.enqueue(item, state.result.platform, state.result.title)
             }
+            downloadingCount.intValue++
             startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))
 
             // 订阅进度：下载/合并/完成/失败全部在弹窗内呈现
@@ -722,6 +739,7 @@ class FloatingWindowService : Service() {
                             }
                         }
                         pendingCount.intValue = 0
+                        downloadingCount.intValue--
                         currentCoroutineContext()[Job]?.cancel()
                     }
                     com.clipdown.downloader.model.DownloadStatus.MERGING -> {
@@ -876,13 +894,19 @@ private fun BubblePhase.accent(): Color = when (this) {
 }
 
 /**
- * 悬浮气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 左上角待处理计数徽标。
+ * 悬浮气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 三个计数徽标。
+ * 左上绿 = 搁置待处理；左下黄 = 解析中 N；右下蓝 = 下载中 M（阶段 16 并发可见性）。
  *
  * 注意：这里刻意不放任何 pointerInput——Compose 内容一旦认领触摸事件，
  * 服务层 View 级拖拽/单击监听器就收不到事件（见 addBubble）。
  */
 @Composable
-private fun BubbleContent(phase: BubblePhase, pendingCount: Int) {
+private fun BubbleContent(
+    phase: BubblePhase,
+    pendingCount: Int,
+    parsingCount: Int,
+    downloadingCount: Int
+) {
     val infinite = rememberInfiniteTransition(label = "bubbleHalo")
     val breathe by infinite.animateFloat(
         initialValue = 0.3f,
@@ -969,23 +993,28 @@ private fun BubbleContent(phase: BubblePhase, pendingCount: Int) {
                 modifier = Modifier.fillMaxSize()
             )
         }
-        // 左上角待处理计数徽标（下载中/抑制窗口搁置的链接数）
-        if (pendingCount > 0) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .size(16.dp)
-                    .background(Color(0xFF2EB872), CircleShape)
-                    .border(1.5.dp, Color(0xFF141824), CircleShape),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    if (pendingCount > 9) "9+" else pendingCount.toString(),
-                    color = Color.White,
-                    fontSize = 9.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-        }
+        // 徽标：左上绿=搁置待处理，左下黄=解析中，右下蓝=下载中（>0 才显示，9+ 封顶）
+        if (pendingCount > 0) CountBadge(pendingCount, Color(0xFF2EB872), Modifier.align(Alignment.TopStart))
+        if (parsingCount > 0) CountBadge(parsingCount, Color(0xFFFFC53D), Modifier.align(Alignment.BottomStart))
+        if (downloadingCount > 0) CountBadge(downloadingCount, HaloBlue, Modifier.align(Alignment.BottomEnd))
+    }
+}
+
+/** 计数徽标：数字圆点，深色描边与 logo 融合（调用方处于 BoxScope，传入对齐修饰符） */
+@Composable
+private fun CountBadge(count: Int, color: Color, align: Modifier) {
+    Box(
+        modifier = align
+            .size(16.dp)
+            .background(color, CircleShape)
+            .border(1.5.dp, Color(0xFF141824), CircleShape),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(
+            if (count > 9) "9+" else count.toString(),
+            color = Color.White,
+            fontSize = 9.sp,
+            fontWeight = FontWeight.Bold
+        )
     }
 }
