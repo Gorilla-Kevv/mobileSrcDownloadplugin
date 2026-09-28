@@ -272,6 +272,7 @@ class FloatingWindowService : Service() {
                     params.x = startX + dx
                     params.y = startY + dy
                     runCatching { wm.updateViewLayout(composeView, params) }
+                    followBubble(params.x, params.y)
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!moved) {
@@ -306,7 +307,12 @@ class FloatingWindowService : Service() {
     }
 
     private fun onBubbleClick() {
-        // 自动下载进行中：单击气泡 = 下载详情小卡（文件名/大小/进度）
+        // toggle 语义：已有弹层（竖条/详情卡/失败卡）时点气泡=收回
+        if (uiState.value !is PopupUiState.Hidden) {
+            hidePopup()
+            return
+        }
+        // 自动下载进行中：气泡拉出下载详情竖条
         if (autoTasks.isNotEmpty()) {
             uiState.value = PopupUiState.Downloads(autoTasks.values.toList())
             ensurePopupHost()
@@ -615,8 +621,13 @@ class FloatingWindowService : Service() {
     }
 
     private fun ensurePopupHost() {
-        // 图集多选用"气泡上方条形"形态，其余用全屏居中卡；形态切换需重建窗口
-        val desiredBar = (uiState.value as? PopupUiState.Ready)?.multiSelect == true
+        // 气泡侧竖向窄条：Mini 提示与图集多选；其余（失败/详情/变体组）仍为全屏居中卡。
+        // 窗口参数不同，形态切换需重建窗口。
+        val desiredBar = when (val s = uiState.value) {
+            is PopupUiState.Mini -> true
+            is PopupUiState.Ready -> s.multiSelect
+            else -> false
+        }
         if (popupHost != null) {
             if (popupIsBar == desiredBar) return
             removePopup()
@@ -659,7 +670,7 @@ class FloatingWindowService : Service() {
         bindOwners(view, lifecycleOwner)
         lifecycleOwner.attach()
 
-        val params = if (desiredBar) albumBarParams() else WindowManager.LayoutParams(
+        val params = if (desiredBar) sideBarParams() else WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType(),
@@ -682,12 +693,15 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * 图集条形选择卡窗口：贴气泡上方、点窗外穿透（不抢操作）、15s 自动收起。
-     * 展开的网格向下延伸（覆盖气泡下方区域）。
+     * 气泡侧竖向窄条窗口：贴气泡左侧、顶缘对齐气泡顶，点窗外穿透（不抢操作）、15s 自动收起。
+     * 展开的网格向下延伸；气泡拖拽时由 addBubble 的 MOVE 分支同步移动（sideBarWinParams 引用）。
      */
-    private fun albumBarParams(): WindowManager.LayoutParams {
+    private var sideBarWinParams: WindowManager.LayoutParams? = null
+    private var sideBarWidthPx = 0
+
+    private fun sideBarParams(): WindowManager.LayoutParams {
         val dm = resources.displayMetrics
-        val barWidthPx = (320 * dm.density).toInt()
+        sideBarWidthPx = (128 * dm.density).toInt()
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -699,9 +713,20 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             val (bx, by) = bubblePos
-            x = (bx - 24).coerceIn(16, (dm.widthPixels - barWidthPx - 16).coerceAtLeast(16))
-            y = (by - 96 * dm.density).toInt().coerceAtLeast(60)
+            x = (bx - sideBarWidthPx - 8 * dm.density).toInt().coerceAtLeast(12)
+            y = (by - 20 * dm.density).toInt().coerceAtLeast(48)
+            sideBarWinParams = this
         }
+    }
+
+    /** 拖拽气泡时竖条同步跟随（与 sideBarParams 同一相对公式，绝对对齐无漂移） */
+    private fun followBubble(bubbleX: Int, bubbleY: Int) {
+        val p = sideBarWinParams ?: return
+        if (popupHost == null || !popupIsBar) return
+        val dm = resources.displayMetrics
+        p.x = (bubbleX - sideBarWidthPx - 8 * dm.density).toInt().coerceAtLeast(12)
+        p.y = (bubbleY - 20 * dm.density).toInt().coerceAtLeast(48)
+        runCatching { popupHost?.let { wm.updateViewLayout(it, p) } }
     }
 
     private fun removePopup() {
