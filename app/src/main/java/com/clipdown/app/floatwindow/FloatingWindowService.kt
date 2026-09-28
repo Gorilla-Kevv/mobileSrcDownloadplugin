@@ -82,8 +82,9 @@ import kotlin.math.abs
  * 悬浮窗服务：应用的主交互形态。
  *
  * 组成：
- * - 悬浮球：常驻屏幕边缘，可拖动，点击后"借道"读取剪贴板并立即解析；
- * - 毛玻璃弹窗：解析成功后半屏居中弹出，展示封面、清晰度选项与下载入口，若干秒后自动收起。
+ * - 悬浮球：常驻屏幕边缘，可拖动；单击 = 读取剪贴板并直接走自动流水线
+ *   （解析→单资源自动下载，图集/失败弹卡），下载中单击 = 下载详情小卡，双击 = 跳主界面；
+ * - 毛玻璃弹窗：图集选择卡 / 失败原因卡 / 下载详情卡，若干秒后自动收起。
  *
  * 视觉实现：Android 12+ 使用系统级 `FLAG_BLUR_BEHIND` + `setBackgroundBlurRadius` 得到真实背景模糊；
  * 低版本退化为半透明遮罩（见 [ClipPopupContent]）。
@@ -295,12 +296,8 @@ class FloatingWindowService : Service() {
             remainSeconds.value = 0
             return
         }
-        // 气泡是纯入口：只展开迷你面板，不读剪贴板、不解析、不跳应用
-        uiState.value = PopupUiState.Mini()
-        ensurePopupHost()
-        // 迷你面板不自动收起，等用户操作或点空白回气泡
-        dismissJob?.cancel()
-        remainSeconds.value = 0
+        // 单击 = 识别剪贴板：借道读取后直接走自动流水线，反馈全在气泡相位
+        startManualRecognize()
     }
 
     /** 双击气泡：直接跳主界面 */
@@ -323,25 +320,30 @@ class FloatingWindowService : Service() {
         }
     }
 
-    /** 迷你面板"识别链接"：借道前台读剪贴板并解析（绕过识别记忆） */
+    /**
+     * 点气泡识别：借道前台读剪贴板并直接走自动流水线（force：绕过识别记忆与抑制窗口）。
+     * 识别期间不开弹窗——反馈全在气泡相位（黄圈解析→进度环/红闪）；
+     * 剪贴板无链接或 gate 未能读取时弹迷你面板做文字提示。
+     */
     private fun startManualRecognize() {
-        uiState.value = PopupUiState.Mini(recognizing = true)
         manualRecognize = true
         ClipGateActivity.onResult = { found ->
             if (!found) {
                 manualRecognize = false
                 uiState.value = PopupUiState.Mini(hint = "剪贴板中没有可识别的链接")
+                ensurePopupHost()
             }
-            // found 时由 LinkCenter.detected 接管，切到解析流程
+            // found 时由 LinkCenter.detected 接管，进入自动流水线
         }
         startActivity(Intent(this, ClipGateActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        // 兜底：gate 未能获取焦点等异常场景下复位迷你面板
+        // 兜底：gate 未能获取焦点等异常场景下给出提示
         recognizeTimeoutJob?.cancel()
         recognizeTimeoutJob = scope.launch {
             delay(4_000)
-            if (manualRecognize && uiState.value is PopupUiState.Mini) {
+            if (manualRecognize && uiState.value is PopupUiState.Hidden) {
                 manualRecognize = false
-                uiState.value = PopupUiState.Mini(hint = "未能读取剪贴板，请重试")
+                uiState.value = PopupUiState.Mini(hint = "未能读取剪贴板，请再点一次气泡")
+                ensurePopupHost()
             }
         }
     }
@@ -364,7 +366,7 @@ class FloatingWindowService : Service() {
                 if (manualRecognize) {
                     manualRecognize = false
                     recognizeTimeoutJob?.cancel()
-                    showAndParse(link)
+                    autoRecognize(link, force = true)
                     return@onEach
                 }
                 if (link.url in seenBefore) return@onEach
@@ -380,8 +382,10 @@ class FloatingWindowService : Service() {
      * 图集/多资源/自动下载不可用（关闭/熔断/仅WiFi）时回退到现有 Ready 选择卡，失败弹原因卡。
      * 弹窗被用户占用（Loading/Ready/Failed）时不抢，只更新气泡相位。
      */
-    private fun autoRecognize(link: com.clipdown.app.clip.DetectedLink) {
-        if (link.url in pipelineUrls || isSuppressed(link.url)) return
+    private fun autoRecognize(link: com.clipdown.app.clip.DetectedLink, force: Boolean = false) {
+        if (link.url in pipelineUrls) return
+        // force（点气泡识别）：绕过抑制窗口；pipelineUrls 保留——同链接正在跑时忽略重复点击
+        if (!force && isSuppressed(link.url)) return
         pipelineUrls.add(link.url)
         setPhase(BubblePhase.Parsing)
         val job = scope.launch {

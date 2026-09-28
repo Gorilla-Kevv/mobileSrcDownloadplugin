@@ -22,7 +22,7 @@
   - `clip/ClipAccessibilityService.kt`（**四通道**：复制特征借道/剪贴板直读/窗口逐节点扫描/复制提示文本；尾部合并防抖）
   - `clip/ClipGateActivity.kt`（借道前台读剪贴板，**taskAffinity="" 独占任务栈**，onWindowFocusChanged 时机）
   - `clip/LinkCenter.kt`（通道汇聚+15s 去重）、`ClipboardMonitor`、`ShareTargetActivity`、`BootReceiver`
-  - `floatwindow/FloatingWindowService.kt`（**自动流水线 autoRecognize：解析→单资源/视频变体组自动下载，图集回退选择卡**；守卫=pipelineUrls/suppressedUrls Map/popupFreeForAuto；失败退避熔断+wifiOnly 保险丝；下载详情卡 autoTasks；气泡=BubblePhase 状态机驱动动效；单击/双击 View 级计时；ACTION_DEBUG_PHASE adb 调试通道）、`floatwindow/BubblePhase.kt`（**气泡 7 相位状态机，纯 Kotlin**）、`ClipPopupContent.kt`（毛玻璃卡/迷你面板/**下载详情卡**）、`PopupUiState.kt`（Mini/Loading/Ready/Failed/**Downloads**）
+  - `floatwindow/FloatingWindowService.kt`（**交互：单击气泡=读剪贴板+force 自动流水线（不依赖无障碍）**；自动流水线 autoRecognize：解析→单资源/视频变体组自动下载，图集回退选择卡；守卫=pipelineUrls/suppressedUrls Map/popupFreeForAuto；失败退避熔断+wifiOnly 保险丝；下载详情卡 autoTasks；气泡=BubblePhase 状态机驱动动效；单击/双击 View 级计时；ACTION_DEBUG_PHASE adb 调试通道）、`floatwindow/BubblePhase.kt`（**气泡 7 相位状态机，纯 Kotlin**）、`ClipPopupContent.kt`（毛玻璃卡/迷你提示卡/**下载详情卡**）、`PopupUiState.kt`（Mini/Loading/Ready/Failed/**Downloads**）
   - `clip/WebViewHtmlFetcher.kt`（Cookie 注入渲染抓取+轮询探针+**debug_last_page.html 落盘**）
   - `data/CookieStore.kt`（SP `clipdown_cookies`，key=platform.id）、`data/SettingsRepository.kt`（DataStore，含 `seen_links` 识别记忆）
 - 文档：`README.md`、`docs/01~05`、`PROGRESS.md`（阶段 1-13 全记录）、`PLAN.md`（阶段 14-18 开发计划）
