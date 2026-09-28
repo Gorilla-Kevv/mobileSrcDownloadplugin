@@ -55,10 +55,10 @@
 - 模拟器：见坑 11（启动带 `-http-proxy http://10.0.2.2:7890`）；装 APK `adb install -r`；预授权 `adb shell appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow`；无障碍 `adb shell settings put secure enabled_accessibility_services com.clipdown.app/com.clipdown.app.clip.ClipAccessibilityService` + `settings put secure accessibility_enabled 1`
 
 ## 状态
-- 当前状态：**阶段 17 reels 403 已修复**（用户实测通过；根因=JSON-in-JS 双重转义未还原，见修复 9/坑 30）。阶段 14-16（气泡动效/自动流水线/单击识别/三徽标）同日完成。PLAN 阶段 14-18 仅剩 18
-- 验收标准：`assembleDebug` + `:parser:test`（39 例）全绿；模拟器实测关键链路（自动流水线用 X 真实推文；IG 侧风控解除后全通；YouTube 受 Piped 实例健康制约，见坑 29）
-- 下一步：**阶段 18 图集全选/多选下载 UI**（PLAN 最后一个阶段）：
-  - Ready 卡 chip 多选态（全选/多选/仅视频）+ 批量 enqueue（DownloadController.enqueueAll 已存在）+ MainActivity 结果卡同步
-  - 验收：12 张图集全选→12 任务完成；多选 3 张→仅 3 任务
-- 真机回归累积项：60fps/掉帧、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值=2
-- 旧任务（已完成或降级）：~~IG 风控解除~~（已解除并实测）；~~真机回归/release~~（阶段 18 后回归主线）
+- 当前状态：**PLAN 阶段 14-18 全部实现**（14 气泡动效 / 15 自动流水线 / 15+ 单击识别交互 / 16 三徽标 / 17 reels 403 修复 / 18 图集多选）。阶段 18 已装机，图集批量下载待用户实测确认
+- 验收标准：`assembleDebug` + `:parser:test`（39 例）全绿；模拟器/真机实测关键链路
+- 下一步（主线回归）：
+  1. **真机回归**（累积项：60fps、下载详情卡点击分流、wifiOnly/退避熔断、双链接并发徽标峰值、图集批量下载 PLAN 验收）
+  2. release 签名 + R8 验证
+  3. `:downloader` 单测（可复用 FakeHttp 思路）
+- 旧任务（已完成或降级）：~~IG 风控解除~~（已解除并实测全通）；~~PLAN 阶段 14-18~~（全部完成）

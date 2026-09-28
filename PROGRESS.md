@@ -1,5 +1,17 @@
 # PROGRESS
 
+## 阶段 18：图集全选/多选下载 UI（代码完成 · 2026-09-28，装机待实测确认）
+- 已完成（按 PLAN 阶段 18，PLAN 阶段 14-18 至此全部实现）：
+  - **判定下沉 parser 模型**：`ParseResult.isAlbumMultiSelect`（多项且非"全视频变体组"）——弹窗/主界面/自动流水线三处共用同一语义；`autoDownloadCandidate` 简化为 `if (isAlbumMultiSelect) null else firstOrNull()`
+  - **Ready 多选态**：`selectedIndex: Int` → `selectedIndices: Set<Int>` + `multiSelect: Boolean`（旧 `selected` 兼容属性保留，取首个选中）
+  - **弹窗选择卡**：multiSelect 时 chips 点击 toggle；快捷操作行"全选 / 仅视频（取消非视频选中）/ 清空"；按钮文案"下载所选 N 项"
+  - **批量下载**：multiSelect 路径走 `DownloadController.enqueueAll` 批量入队 → downloadingCount 批量累加 → markSuppressed → 弹窗收起（进度由气泡徽标与详情卡承接）；单选（视频变体组）保留原弹窗内进度闭环
+  - **主界面同步**：HomeScreen ResultCard 同样多选化（同判定/同快捷操作/批量 enqueueAll）；顺手修复"新解析结果不重置选中"的旧问题（两处 result 赋值点均重置 setOf(0)）
+- 测试结果：`assembleDebug` + `:parser:test` 39 例全绿；已装机
+- 待实测（用户配合）：图集帖点气泡 → 多选卡出现 → 全选 N 张 → N 任务全部完成；多选 3 张 → 仅 3 任务（PLAN 验收标准）
+- 风险："仅视频/全选/清空"基于闭包旧快照逐项 toggle（依赖 service onSelect 同步 copy，已按此实现）；IG 图集帖本身受风控波动影响
+- 下一阶段入口：**PLAN 阶段 14-18 全部完成** → 回归主线下一步：真机回归（累积项见 HANDOFF）→ release 签名/R8 → `:downloader` 单测
+
 ## 阶段 17：IG reels 下载 403 修复（已完成 · 2026-09-28，用户复测通过）
 - 已完成（按 PLAN 阶段 17 排查序）：
   - **排查序①（请求头）**：代码审查全链路——解析器 `Referer: instagram.com`（InstagramParser igHeaders）→ TaskEntity.headers 原样保存 → DownloadEngine 按任务传 HttpFileDownloader → OkHttp header()，**无丢失**；请求无 User-Agent（OkHttp 默认）但实测证明不敏感
