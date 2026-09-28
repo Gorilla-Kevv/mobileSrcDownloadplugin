@@ -169,3 +169,18 @@
 - 附带修复：`ClipGateActivity` 独占任务栈（taskAffinity=""）消除跳转主界面闪现；剪贴板读取 200ms×3 重试；识别结果回调驱动迷你面板
 - **IG Cookie 注入方法（固化）**：`adb root` → 写 `/data/data/com.clipdown.app/shared_prefs/clipdown_cookies.xml`（key=`instagram`，`k=v; k=v` 格式）→ chown u0_aXXX（uid=10204→u0_a204）→ force-stop 重启。**验证信号：WebView 抓取 title 从 "This content is unavailable • Instagram" 变为 "Instagram"**（页面 1037KB）
 - 未解决：登录态下 WebView 渲染 reel 页 DOM 仍无媒体数据（阶段 10 遗留，真实帖子待测）；待用户提供真实 IG 帖子链接验证 GraphQL/embed 链路
+
+## 阶段 13：IG 解析打通 + 图集隔离 + 风控定性（已完成 · 2026-09-28）
+- 已完成（提交 7e543f2 / fa76c43 / b47f426 / 0fdbd03）：
+  - **Cookie 注入修通**：adb root 写 SP 文件注入 407 字符，登录态生效（WebView title "unavailable"→"Instagram"）；坑：重装后 uid 变化导致 chown 旧 uid 失效（注入 0 字符），需按新 uid（dumpsys package 查）修正
+  - **IG 新版数据结构适配**：dump WebView 渲染页（debug_last_page.html）分析发现 `video_url/playable_url/display_url` 已消失 → `video_versions:[{width,height,url}]` / `image_versions2.candidates`（URL `\/`+`\u0025` 双重转义）；extractFromPageHtml 按新键名重写（旧键名兜底），图片跳过视频首帧缩略图
+  - **实测通**：reel（视频·原画质 720p）、/p/ 视频帖（原画质+备选 2/3）、图集帖（图 1-N）全部本地解析成功
+  - **图集推荐流污染修复**：帖子页内嵌"更多帖子"推荐流（image_versions2 达 35 个），全页扫描把陌生帖视频混进结果（用户复制图集第 3 张却得陌生人视频的根因）→ ownPostScope 按 `xdt_api__v1__media__shortcode__web_info.items[0]` 括号配对截取正帖，提取全部限定该范围
+  - **img_index 支持**：链接带 `?img_index=N`（用户复制图集单图）时对应图排到首位，chip 标注「你选的第 N 张」
+  - **/p/ 与 /reel/ 渲染行为不同**：WebView fetch 硬编码 /reel/ 使 /p/ 链接白等 40s 超时 → 原路径优先，/p/ 登录态 5.5s 完成（1556KB）
+  - **主页误报过滤**：浏览 IG 主页也触发解析（通用解析抓 8 张装饰图）→ 扫描通道校验 pathHints，无作品路径不弹窗
+  - **风控定性**：用户报"IG 无法刷新"——逐层排查（Clash 上游 200/模拟器代理栈通/百度正常/Chrome 能收到 IG 页面）→ 真因是 **IG 风控强制页** "Your email address may not be secure"（高频登录态解析+模拟器+数据中心 IP 触发），非网络问题
+- 改动文件：`parser/parsers/InstagramParser.kt`（ownPostScope/balancedSlice/新结构提取/img_index）、`parser/parsers/HtmlUtil.kt`（unescapeJsonOf）、`app/clip/WebViewHtmlFetcher.kt`（探针+debug 落盘）、`app/clip/ClipAccessibilityService.kt`（主页过滤）
+- 测试结果：`:parser:test` 35 例全绿（--rerun-tasks 强制重跑）；IG 三类链接实测全通；产物待用户实测下载
+- 风险：IG 风控持续触发会封号/限流；`video_versions` 结构仍可能再变（探针+dump 手段已固化）
+- 下一阶段入口：风控解除后复测刷新与下载；真机回归；`:downloader` 单测；release 签名
