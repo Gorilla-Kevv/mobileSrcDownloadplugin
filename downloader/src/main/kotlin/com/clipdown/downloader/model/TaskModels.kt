@@ -31,6 +31,8 @@ data class TaskEntity(
     val kind: TaskKind = TaskKind.SINGLE,
     val platformId: String = "generic",
     val coverUrl: String? = null,
+    /** 来源帖子链接（图集分组键 + 下载页"查看来源"入口）；旧任务/无来源为 null */
+    val sourceUrl: String? = null,
     val totalBytes: Long = 0L,
     val downloadedBytes: Long = 0L,
     val status: DownloadStatus = DownloadStatus.PENDING,

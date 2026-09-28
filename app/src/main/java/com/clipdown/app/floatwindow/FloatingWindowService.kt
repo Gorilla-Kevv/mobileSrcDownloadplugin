@@ -468,7 +468,7 @@ class FloatingWindowService : Service() {
         scope.launch {
             runCatching {
                 val taskId = withContext(Dispatchers.IO) {
-                    DownloadController.enqueue(item, parsed.platform, parsed.title)
+                    DownloadController.enqueue(item, parsed.platform, parsed.title, parsed.sourceUrl)
                 }
                 autoTasks[taskId] = DownloadRow(
                     taskId = taskId,
@@ -708,7 +708,7 @@ class FloatingWindowService : Service() {
             scope.launch {
                 runCatching {
                     val taskIds = withContext(Dispatchers.IO) {
-                        DownloadController.enqueueAll(items, state.result.platform, state.result.title)
+                        DownloadController.enqueueAll(items, state.result.platform, state.result.title, state.result.sourceUrl)
                     }
                     downloadingCount.intValue += taskIds.size
                     markSuppressed(state.link.url)
@@ -729,7 +729,7 @@ class FloatingWindowService : Service() {
         downloadJob?.cancel()
         downloadJob = scope.launch(Dispatchers.Main.immediate) {
             val taskId = withContext(Dispatchers.IO) {
-                DownloadController.enqueue(item, state.result.platform, state.result.title)
+                DownloadController.enqueue(item, state.result.platform, state.result.title, state.result.sourceUrl)
             }
             downloadingCount.intValue++
             startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))

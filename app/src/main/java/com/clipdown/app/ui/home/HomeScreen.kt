@@ -227,7 +227,7 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
                     },
                     onDownload = { indices ->
                         val items = indices.mapNotNull { r.media.getOrNull(it) }
-                        DownloadController.enqueueAll(items, r.platform, r.title)
+                        DownloadController.enqueueAll(items, r.platform, r.title, r.sourceUrl)
                         context.startService(DownloadService.intent(context, DownloadService.ACTION_RESUME))
                     }
                 )

@@ -65,9 +65,10 @@ object DownloadController {
      *
      * @param platform 来源平台，仅用于分组展示
      * @param title 作品标题，用于生成文件名
+     * @param sourceUrl 来源帖子链接（图集分组 + 下载页"查看来源"）
      * @return 任务 ID
      */
-    fun enqueue(item: MediaItem, platform: Platform, title: String?): String {
+    fun enqueue(item: MediaItem, platform: Platform, title: String?, sourceUrl: String? = null): String {
         val kind = when {
             item.isPlaylist || item.container == "m3u8" ||
                 item.url.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS
@@ -103,14 +104,15 @@ object DownloadController {
             container = ext,
             kind = kind,
             platformId = platform.id,
-            coverUrl = null
+            coverUrl = null,
+            sourceUrl = sourceUrl
         )
         engine().enqueue(task)
         return task.id
     }
 
-    fun enqueueAll(items: List<MediaItem>, platform: Platform, title: String?): List<String> =
-        items.map { enqueue(it, platform, title) }
+    fun enqueueAll(items: List<MediaItem>, platform: Platform, title: String?, sourceUrl: String? = null): List<String> =
+        items.map { enqueue(it, platform, title, sourceUrl) }
 
     fun pause(taskId: String) = engine().pause(taskId)
     fun resume(taskId: String) = engine().resume(taskId)

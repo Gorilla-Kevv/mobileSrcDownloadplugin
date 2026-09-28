@@ -39,6 +39,7 @@ class TaskDatabase(context: Context) :
                 kind TEXT NOT NULL,
                 platform_id TEXT,
                 cover_url TEXT,
+                source_url TEXT,
                 total_bytes INTEGER DEFAULT 0,
                 downloaded_bytes INTEGER DEFAULT 0,
                 status TEXT NOT NULL,
@@ -56,7 +57,10 @@ class TaskDatabase(context: Context) :
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // 首个版本，暂无迁移逻辑
+        if (oldVersion < 2) {
+            // v2：来源帖子链接（图集分组 + 下载页"查看来源"）
+            db.execSQL("ALTER TABLE tasks ADD COLUMN source_url TEXT")
+        }
     }
 
     fun insert(task: TaskEntity) {
@@ -143,7 +147,7 @@ class TaskDatabase(context: Context) :
 
     companion object {
         private const val TABLE = "tasks"
-        private const val DB_VERSION = 1
+        private const val DB_VERSION = 2
     }
 }
 
@@ -160,6 +164,7 @@ private fun TaskEntity.toCv(json: Json): ContentValues = ContentValues().apply {
     put("kind", kind.name)
     put("platform_id", platformId)
     put("cover_url", coverUrl)
+    put("source_url", sourceUrl)
     put("total_bytes", totalBytes)
     put("downloaded_bytes", downloadedBytes)
     put("status", status.name)
@@ -190,6 +195,7 @@ private fun android.database.Cursor.toTask(json: Json): TaskEntity {
         kind = runCatching { TaskKind.valueOf(str("kind") ?: "SINGLE") }.getOrDefault(TaskKind.SINGLE),
         platformId = str("platform_id") ?: "generic",
         coverUrl = str("cover_url"),
+        sourceUrl = str("source_url"),
         totalBytes = long("total_bytes"),
         downloadedBytes = long("downloaded_bytes"),
         status = runCatching { DownloadStatus.valueOf(str("status") ?: "PENDING") }.getOrDefault(DownloadStatus.PENDING),
