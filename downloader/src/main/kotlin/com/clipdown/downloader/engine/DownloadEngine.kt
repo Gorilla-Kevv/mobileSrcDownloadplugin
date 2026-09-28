@@ -175,6 +175,11 @@ class DownloadEngine(
                     attempt++
                     db.incrementRetry(taskId)
                     if (attempt > config.maxRetry) {
+                        // 诊断日志：终态失败此前完全静默（阶段 17 排查 403 时 logcat 无任何线索）
+                        android.util.Log.w(
+                            "DownloadEngine",
+                            "终态失败 ${task.fileName}: ${failure?.message} | ${task.url}"
+                        )
                         db.updateStatus(taskId, DownloadStatus.FAILED, failure?.message ?: "下载失败")
                         _progress.tryEmit(
                             ProgressEvent(taskId, task.downloadedBytes, task.totalBytes, 0, DownloadStatus.FAILED)

@@ -109,10 +109,18 @@ object HtmlUtil {
         .replace("&#x27;", "'")
         .replace("\\/", "/")
 
+    /**
+     * JSON 字符串反转义。
+     *
+     * IG 页面是 JSON-in-JS 双重编码：`\/` 在源码里写作 `\\/`、`%` 写作 `\\u0025`。
+     * 先把字面反斜杠序列 `\\` 还原为 `\`（相当于 JS 层解码，把双重形态降为单层），
+     * 再做常规 JSON 解码（\uXXXX / \/）即可一次还原干净——
+     * 修复 9：此前只做单层，video_versions 的 URL 带着 `\\/` 字面反斜杠进了下载器（403 根因，
+     * 图片走 kotlinx 标准解码不受影响所以一直正常）。
+     */
     fun String.unescapeJson(): String = this
+        .replace("\\\\", "\\")
         .replace(Regex("""\\u([0-9a-fA-F]{4})""")) { it.groupValues[1].toInt(16).toChar().toString() }
         .replace("\\/", "/")
-        .replace("\\u002F", "/")
-        .replace("\\u0026", "&")
         .replace("&amp;", "&")
 }

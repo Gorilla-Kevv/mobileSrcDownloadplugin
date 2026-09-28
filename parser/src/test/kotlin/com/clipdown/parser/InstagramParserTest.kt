@@ -1,5 +1,6 @@
 package com.clipdown.parser
 
+import com.clipdown.parser.parsers.HtmlUtil
 import com.clipdown.parser.parsers.InstagramParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -8,6 +9,20 @@ import org.junit.Test
 class InstagramParserTest {
 
     private val parser = InstagramParser()
+
+    @Test
+    fun `双重转义 URL 完整还原（修复 9 reels 403 根因）`() {
+        // IG 页面 JSON-in-JS 双重转义：db 里曾存成 https:\\/\\/... 导致下载 403
+        assertEquals(
+            "https://scontent.cdninstagram.com/o1/v/t2/f2/m367/AQMN.mp4?oe=6AC018D6",
+            HtmlUtil.unescapeJsonOf(
+                "https:\\\\/\\\\/scontent.cdninstagram.com\\\\/o1\\\\/v\\\\/t2\\\\/f2\\\\/m367\\\\/AQMN.mp4?oe=6AC018D6"
+            )
+        )
+        assertEquals("%", HtmlUtil.unescapeJsonOf("\\\\u0025"))
+        // 单层形态回归（XHS 场景）
+        assertEquals("/a/b", HtmlUtil.unescapeJsonOf("\\u002Fa\\/b"))
+    }
 
     private val embedHtml = """
         <html><head>
