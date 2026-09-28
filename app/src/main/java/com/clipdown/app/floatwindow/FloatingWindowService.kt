@@ -96,6 +96,12 @@ class FloatingWindowService : Service() {
     private var bubbleView: View? = null
     private var popupHost: View? = null
 
+    /** 气泡当前位置（条形选择卡定位在其上方）；addBubble 时初始化 */
+    private var bubblePos: Pair<Int, Int> = -1 to -1
+
+    /** 当前弹窗形态：true=气泡上方条形（图集选择），false=全屏居中卡 */
+    private var popupIsBar = false
+
     private var bubbleLifecycle: OverlayLifecycleOwner? = null
     private var popupLifecycle: OverlayLifecycleOwner? = null
 
@@ -241,6 +247,7 @@ class FloatingWindowService : Service() {
             this.x = if (x >= 0) x else resources.displayMetrics.widthPixels - 140
             this.y = if (y >= 0) y else resources.displayMetrics.heightPixels / 3
         }
+        bubblePos = params.x to params.y
 
         var startX = 0
         var startY = 0
@@ -287,6 +294,7 @@ class FloatingWindowService : Service() {
                     } else {
                         scope.launch { settings.saveBubblePosition(params.x, params.y) }
                         lastPosition = params.x to params.y
+                        bubblePos = params.x to params.y
                     }
                 }
             }
@@ -607,11 +615,17 @@ class FloatingWindowService : Service() {
     }
 
     private fun ensurePopupHost() {
-        if (popupHost != null) return
+        // 图集多选用"气泡上方条形"形态，其余用全屏居中卡；形态切换需重建窗口
+        val desiredBar = (uiState.value as? PopupUiState.Ready)?.multiSelect == true
+        if (popupHost != null) {
+            if (popupIsBar == desiredBar) return
+            removePopup()
+        }
+        popupIsBar = desiredBar
         val lifecycleOwner = OverlayLifecycleOwner()
         popupLifecycle = lifecycleOwner
 
-        val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
+        val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !desiredBar
         val view = ComposeView(this).apply {
             setContent {
                 ClipDownTheme(darkTheme = true) {
@@ -645,7 +659,7 @@ class FloatingWindowService : Service() {
         bindOwners(view, lifecycleOwner)
         lifecycleOwner.attach()
 
-        val params = WindowManager.LayoutParams(
+        val params = if (desiredBar) albumBarParams() else WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType(),
@@ -665,6 +679,29 @@ class FloatingWindowService : Service() {
 
         runCatching { wm.addView(view, params) }
         popupHost = view
+    }
+
+    /**
+     * 图集条形选择卡窗口：贴气泡上方、点窗外穿透（不抢操作）、15s 自动收起。
+     * 展开的网格向下延伸（覆盖气泡下方区域）。
+     */
+    private fun albumBarParams(): WindowManager.LayoutParams {
+        val dm = resources.displayMetrics
+        val barWidthPx = (320 * dm.density).toInt()
+        return WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            val (bx, by) = bubblePos
+            x = (bx - 24).coerceIn(16, (dm.widthPixels - barWidthPx - 16).coerceAtLeast(16))
+            y = (by - 96 * dm.density).toInt().coerceAtLeast(60)
+        }
     }
 
     private fun removePopup() {

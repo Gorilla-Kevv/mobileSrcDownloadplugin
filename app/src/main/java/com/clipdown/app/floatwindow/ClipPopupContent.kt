@@ -19,22 +19,29 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -45,6 +52,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -79,36 +90,175 @@ fun ClipPopupContent(
     onDismiss: () -> Unit
 ) {
     val visible = state !is PopupUiState.Hidden
+    // 图集多选：气泡上方条形卡（窗口参数由服务层决定，这里只渲染内容本身）
+    val isBar = state is PopupUiState.Ready && state.multiSelect
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn() + slideInVertically { it / 3 },
         exit = fadeOut() + slideOutVertically { it / 3 }
     ) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(if (blurSupported) Color(0x1F000000) else Color(0xAA0A0E1A))
-                .clickable(enabled = true, onClick = onDismiss),
-            contentAlignment = Alignment.Center
-        ) {
-            GlassCard(
+        if (isBar) {
+            AlbumBarBody(
+                state = state,
+                onSelect = onSelect,
+                onDownload = onDownload,
+                onDismiss = onDismiss
+            )
+        } else {
+            Box(
                 modifier = Modifier
-                    .fillMaxWidth(
-                        when (state) {
-                            is PopupUiState.Mini -> 0.55f
-                            is PopupUiState.Downloads -> 0.78f
-                            else -> 0.92f
-                        }
-                    )
-                    .clickable(enabled = true, onClick = {})
+                    .fillMaxSize()
+                    .background(if (blurSupported) Color(0x1F000000) else Color(0xAA0A0E1A))
+                    .clickable(enabled = true, onClick = onDismiss),
+                contentAlignment = Alignment.Center
             ) {
-                when (state) {
-                    is PopupUiState.Mini -> MiniBody(state, onRecognize, onDismiss)
-                    is PopupUiState.Loading -> LoadingBody(state.link.platform.displayName, remainSeconds, onDismiss)
-                    is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
-                    is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
-                    is PopupUiState.Downloads -> DownloadsBody(state, onDismiss)
-                    PopupUiState.Hidden -> Unit
+                GlassCard(
+                    modifier = Modifier
+                        .fillMaxWidth(
+                            when (state) {
+                                is PopupUiState.Mini -> 0.55f
+                                else -> 0.92f
+                            }
+                        )
+                        .clickable(enabled = true, onClick = {})
+                ) {
+                    when (state) {
+                        is PopupUiState.Mini -> MiniBody(state, onRecognize, onDismiss)
+                        is PopupUiState.Loading -> LoadingBody(state.link.platform.displayName, remainSeconds, onDismiss)
+                        is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
+                        is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
+                        is PopupUiState.Downloads -> DownloadsBody(state, onDismiss)
+                        PopupUiState.Hidden -> Unit
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 图集条形选择卡（阶段 20）：贴气泡上方的窄条。
+ * 收起态=缩略图+计数+全选勾+下载；取消全选向下展开缩略图网格逐张挑选（默认全选）。
+ */
+@Composable
+private fun AlbumBarBody(
+    state: PopupUiState.Ready,
+    onSelect: (Int) -> Unit,
+    onDownload: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    val result = state.result
+    var expanded by remember { mutableStateOf(false) }
+    val allSelected = result.media.isNotEmpty() && state.selectedIndices.size == result.media.size
+
+    Column(
+        modifier = Modifier
+            .width(320.dp)
+            .clip(RoundedCornerShape(18.dp))
+            .background(Color(0xF0161B29))
+            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(18.dp))
+            .padding(10.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(
+                model = result.media.firstOrNull()?.url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(46.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(0.08f))
+            )
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "图集 ${result.media.size} 张",
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "已选 ${state.selectedIndices.size} 项",
+                    color = Color.White.copy(0.6f),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+            Checkbox(
+                checked = allSelected,
+                onCheckedChange = { checked ->
+                    if (checked) {
+                        // 勾选=全选并收起
+                        result.media.indices.forEach { if (it !in state.selectedIndices) onSelect(it) }
+                        expanded = false
+                    } else {
+                        // 取消全选 → 部分选择模式：条形向下展开，逐张挑选
+                        state.selectedIndices.toList().forEach { onSelect(it) }
+                        expanded = true
+                    }
+                }
+            )
+            IconButton(onClick = onDownload, enabled = state.selectedIndices.isNotEmpty()) {
+                Icon(Icons.Default.Download, contentDescription = "下载所选", tint = SeedBlue)
+            }
+            IconButton(onClick = { expanded = !expanded }) {
+                Icon(
+                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = "展开明细",
+                    tint = Color.White.copy(0.7f)
+                )
+            }
+            IconButton(onClick = onDismiss) {
+                Icon(Icons.Default.Close, contentDescription = "关闭", tint = Color.White.copy(0.6f))
+            }
+        }
+
+        AnimatedVisibility(visible = expanded) {
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                modifier = Modifier
+                    .heightIn(max = 300.dp)
+                    .padding(top = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                items(result.media.size) { index ->
+                    val selected = index in state.selectedIndices
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(10.dp))
+                            .border(
+                                if (selected) 2.dp else 1.dp,
+                                if (selected) SeedBlue else Color.White.copy(0.1f),
+                                RoundedCornerShape(10.dp)
+                            )
+                            .clickable { onSelect(index) }
+                    ) {
+                        AsyncImage(
+                            model = result.media[index].url,
+                            contentDescription = "第 ${index + 1} 张",
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(86.dp)
+                        )
+                        if (selected) {
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.TopEnd)
+                                    .padding(4.dp)
+                                    .size(18.dp)
+                                    .background(SeedBlue, CircleShape)
+                            ) {
+                                Icon(
+                                    Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.align(Alignment.Center).size(13.dp)
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
