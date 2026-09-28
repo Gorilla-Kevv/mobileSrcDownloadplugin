@@ -1,5 +1,17 @@
 # PROGRESS
 
+## 修复 10 + 竖条重排（用户实测反馈修正 · 2026-09-28，提交 e7f7a95）
+- 用户实测反馈四问题：识别到别的视频、403 复现、失败/进度/完成的气泡反馈没看到、竖条应竖向且贴气泡下方同宽
+- **修复 10（识别污染根因，最高优先）**：任务库+logcat 取证——失败的"图片"实为**别的 reel 的视频封面帧**（efg 解码 `CLIPS.xpids.720.video_default_cover_frame`）、失败的 mp4 是另一个 4 秒视频；dump 实测**IG items[0] 结构已变**：容器内嵌 3 个 code（2 个推荐流空壳块 video_versions=null + 正帖在最后），阶段 13 的"items[0] 只含正帖"假设失效，全段扫描把嵌块媒体混入
+  - **修复**：新增 `ownCodeSegment`——items[0] 内按 `"code":"X"` 切段，只保留正帖 shortcode 所在段（dump 离线验证：正帖段 13KB 只含 1 视频+1 图，推荐流全隔离；对嵌套形态免疫）
+  - **取证能力**：autoRecognize 成功分支打解析结果日志（resolverId+media 数量+每条 URL 前 70 字符）——污染再现直接看 logcat
+- **403 复现定性**：失败 URL 全部 `\/` 转义残留——但**全部产生于修复 9 装机前的旧进程**（pid/时间链闭合）；修复 9+新装的**入口清洗**（DownloadController.enqueue 对 item.url 强制还原 `\/`）双保险，入库 URL 必净；下载页看到的 403 记录=历史遗留
+- **反馈增强**：ParseFail 红闪 1.5s→4s、DownloadFail 2s→6s（刷视频时错过 2s 红闪是"没看到"的主因）
+- **竖条重排**：改到**气泡正下方**（y=气泡顶+72dp），**宽度与气泡一致（64dp）**，圆角 18dp 匹配；Mini（logo+短提示+识别图标钮）与图集（首图+计数+全选勾+下载图标钮+挑图）内容适配 64dp；展开网格改单列向下延伸；拖拽跟随保持
+- 测试结果：`:parser:test` **40 例全绿**（39+1 嵌套推荐块回归用例，夹具按真实 items[0] 嵌套结构构造）；构建全绿；已装机
+- 改动文件：`parser/parsers/InstagramParser.kt`（ownCodeSegment+segment 提取）、`parser/src/test/.../InstagramParserTest.kt`、`downloader/DownloadController.kt`（入口清洗）、`app/floatwindow/FloatingWindowService.kt`（日志/红闪/竖条参数）、`app/floatwindow/ClipPopupContent.kt`（64dp 适配）
+- 下一阶段入口：用户复测（识别正确性/下载成功反馈/竖条形态）→ 真机回归 → release
+
 ## 阶段 20 返工：竖向窄条 + toggle 交互（已完成 · 2026-09-28，用户反馈修正）
 - 用户反馈（附截图）：①条形应为**竖向**而非横向；②窄条**跟随气泡移动**、点气泡拉开/再点收起（组件语义）；③**Mini 默认弹窗同样竖条化**，去掉全屏模糊+居中大卡
 - 已完成（提交 6f88d9f）：
