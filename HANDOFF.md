@@ -25,7 +25,7 @@
   - `floatwindow/FloatingWindowService.kt`（气泡=纯入口→迷你面板→解析弹窗；downloadActive 守卫；suppressedUrl 抑制）、`ClipPopupContent.kt`（毛玻璃卡/迷你面板）、`PopupUiState.kt`（Mini/Loading/Ready/Failed）
   - `clip/WebViewHtmlFetcher.kt`（Cookie 注入渲染抓取+轮询探针+**debug_last_page.html 落盘**）
   - `data/CookieStore.kt`（SP `clipdown_cookies`，key=platform.id）、`data/SettingsRepository.kt`（DataStore，含 `seen_links` 识别记忆）
-- 文档：`README.md`、`docs/01~05`、`PROGRESS.md`（阶段 1-13 全记录）
+- 文档：`README.md`、`docs/01~05`、`PROGRESS.md`（阶段 1-13 全记录）、`PLAN.md`（阶段 14-18 开发计划）
 
 ## 决策与坑
 - 已做决策：三模块单向依赖；`:parser` 纯 JVM；手写 SQLite；DataStore 热更新；Compose 弹窗反射挂 LifecycleOwner（坑 3 勿改回）
@@ -50,8 +50,10 @@
 ## 状态
 - 当前状态：**交互重构 + IG 解析打通已完成**（阶段 11-13，提交 580b0d3/7e543f2/fa76c43/b47f426/0fdbd03）；气泡=纯入口（用户头像 logo）→迷你面板→识别；识别记忆持久化；弹窗内下载闭环；IG reel/图集/视频帖本地解析全通
 - 验收标准：`assembleDebug` + `:parser:test` 全绿；IG/X/YouTube 真链路实测出媒体并可下载
-- 下一步（按优先级）：
-  1. **IG 风控解除**（坑 18）：完成邮箱验证或换号后复测刷新；测试节奏放缓
-  2. 真机回归（家宽 IP）：B站专属解析、抖音/小红书、悬浮窗全链路
-  3. release 签名 + R8（proguard 雏形已有）
-  4. 小项：GenericParser 产物 magic bytes 校验；IG WebView 渲染页 debug 落盘开关化；:downloader 单测
+- 下一步（按优先级）：**阶段 14-18 开发计划见 `PLAN.md`**（2026-09-28 用户需求：气泡状态机动效/复制自动解析下载/环形进度/双击跳转/图集多选/并发解析/reels 403 修复）：
+  1. 阶段 14 气泡状态机与动效（纯视觉，先行）
+  2. 阶段 15 自动解析→自动下载流水线（守卫从单值改集合，IG 风控保险丝=仅 WiFi）
+  3. 阶段 16 并发解析队列（5 秒内连续复制多链接）
+  4. 阶段 17 reels 下载 403 修复（可提前与 15 并行）
+  5. 阶段 18 图集全选/多选下载 UI
+- 旧任务（已完成或降级）：~~IG 风控解除~~（并入阶段 15 保险丝）；~~真机回归/release~~（阶段 18 后回归主线下一步）
