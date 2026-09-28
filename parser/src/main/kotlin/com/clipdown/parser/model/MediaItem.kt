@@ -86,6 +86,17 @@ data class ParseResult(
     val warning: String? = null
 ) {
     val isEmpty: Boolean get() = media.isEmpty()
+
+    /**
+     * 图集/多资源形态：多于 1 项且非"全视频清晰度变体组"（后者是同一视频的多码率，单选最高画质即可）。
+     * UI 侧据此决定 chip 是单选还是多选；自动流水线据此决定是否跳过自动下载。
+     */
+    val isAlbumMultiSelect: Boolean
+        get() {
+            if (media.size <= 1) return false
+            val kinds = media.map { it.kind }.toSet()
+            return !(kinds.size == 1 && kinds.first() == MediaKind.VIDEO)
+        }
 }
 
 @Serializable

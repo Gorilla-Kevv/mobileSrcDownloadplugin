@@ -329,12 +329,27 @@ private fun ReadyBody(
 
         Spacer(Modifier.height(14.dp))
 
+        if (state.multiSelect) {
+            // 图集/多资源：快捷操作（阶段 18）
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = {
+                    result.media.indices.forEach { if (it !in state.selectedIndices) onSelect(it) }
+                }) { Text("全选", color = SeedBlue, style = MaterialTheme.typography.labelLarge) }
+                TextButton(onClick = {
+                    state.selectedIndices.toList().sortedDescending().forEach { if (result.media[it].kind != MediaKind.VIDEO) onSelect(it) }
+                }) { Text("仅视频", color = SeedBlue, style = MaterialTheme.typography.labelLarge) }
+                TextButton(onClick = {
+                    state.selectedIndices.toList().forEach { onSelect(it) }
+                }) { Text("清空", color = Color.White.copy(0.6f), style = MaterialTheme.typography.labelLarge) }
+            }
+        }
+
         LazyRow(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             contentPadding = PaddingValues(horizontal = 2.dp)
         ) {
             itemsIndexed(result.media) { index, item ->
-                val selected = index == state.selectedIndex
+                val selected = index in state.selectedIndices
                 QualityChip(
                     label = "${kindLabel(item.kind)} · ${item.quality}",
                     selected = selected,
@@ -413,7 +428,7 @@ private fun ReadyBody(
                 ) {
                     Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("开始下载")
+                    Text(if (state.multiSelect) "下载所选 ${state.selectedIndices.size} 项" else "开始下载")
                 }
             }
         }

@@ -37,10 +37,10 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -85,7 +85,7 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
     var parsing by remember { mutableStateOf(false) }
     var result by remember { mutableStateOf<ParseResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
-    var selected by remember { mutableIntStateOf(0) }
+    var selected by remember { mutableStateOf(setOf(0)) }
 
     val lastLink by LinkCenter.last.collectAsStateWithLifecycle()
 
@@ -98,6 +98,7 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
             error = null
             result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url).getOrNull() }
             parsing = false
+            selected = setOf(0)
             if (result == null) error = "解析失败，可稍后重试或在设置中配置远端解析服务"
         }
     }
@@ -109,7 +110,7 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
             parsing = true
             error = null
             result = null
-            selected = 0
+            selected = setOf(0)
             val r = withContext(Dispatchers.IO) { ParserEngine.parseSafe(url) }
             parsing = false
             if (r.isSuccess) {
@@ -215,11 +216,18 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
             item {
                 ResultCard(
                     result = r,
-                    selected = selected,
-                    onSelect = { selected = it },
-                    onDownload = { index ->
-                        val item = r.media[index]
-                        DownloadController.enqueue(item, r.platform, r.title)
+                    selectedIndices = selected,
+                    multiSelect = r.isAlbumMultiSelect,
+                    onSelect = { index ->
+                        selected = if (r.isAlbumMultiSelect) {
+                            if (index in selected) selected - index else selected + index
+                        } else {
+                            setOf(index)
+                        }
+                    },
+                    onDownload = { indices ->
+                        val items = indices.mapNotNull { r.media.getOrNull(it) }
+                        DownloadController.enqueueAll(items, r.platform, r.title)
                         context.startService(DownloadService.intent(context, DownloadService.ACTION_RESUME))
                     }
                 )
@@ -239,9 +247,10 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
 @Composable
 private fun ResultCard(
     result: ParseResult,
-    selected: Int,
+    selectedIndices: Set<Int>,
+    multiSelect: Boolean,
     onSelect: (Int) -> Unit,
-    onDownload: (Int) -> Unit
+    onDownload: (Set<Int>) -> Unit
 ) {
     Card(
         shape = RoundedCornerShape(20.dp),
@@ -284,9 +293,25 @@ private fun ResultCard(
 
             Spacer(Modifier.height(14.dp))
 
+            if (multiSelect) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    TextButton(onClick = { result.media.indices.forEach { onSelect(it) } }) {
+                        Text("全选", style = MaterialTheme.typography.labelLarge)
+                    }
+                    TextButton(onClick = {
+                        result.media.indices.forEach { if (result.media[it].kind != MediaKind.VIDEO) onSelect(it) }
+                    }) {
+                        Text("仅视频", style = MaterialTheme.typography.labelLarge)
+                    }
+                    TextButton(onClick = { result.media.indices.forEach { onSelect(it) } }) {
+                        Text("清空", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 itemsIndexed(result.media) { index, item ->
-                    val isSelected = index == selected
+                    val isSelected = index in selectedIndices
                     Surface(
                         shape = RoundedCornerShape(12.dp),
                         color = if (isSelected) SeedBlue else MaterialTheme.colorScheme.surfaceVariant,
@@ -305,14 +330,14 @@ private fun ResultCard(
             Spacer(Modifier.height(14.dp))
 
             Button(
-                onClick = { onDownload(selected) },
+                onClick = { onDownload(selectedIndices) },
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
             ) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("下载所选资源")
+                Text(if (multiSelect) "下载所选 ${selectedIndices.size} 项" else "下载所选资源")
             }
         }
     }

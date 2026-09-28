@@ -19,17 +19,18 @@ sealed interface PopupUiState {
     /** 已捕获链接，正在解析 */
     data class Loading(val link: DetectedLink) : PopupUiState
 
-    /** 解析成功，等待用户选择清晰度并下载 */
+    /** 解析成功，等待用户选择资源并下载；multiSelect=true（图集/多资源）时 chips 可多选 */
     data class Ready(
         val link: DetectedLink,
         val result: ParseResult,
-        val selectedIndex: Int = 0,
+        val selectedIndices: Set<Int> = setOf(0),
+        val multiSelect: Boolean = false,
         val downloading: Boolean = false,
         val downloadPercent: Int? = null,
         val downloadDone: Boolean = false,
         val downloadError: String? = null
     ) : PopupUiState {
-        val selected: MediaItem? get() = result.media.getOrNull(selectedIndex)
+        val selected: MediaItem? get() = result.media.getOrNull(selectedIndices.firstOrNull() ?: -1)
     }
 
     /** 解析失败，展示原因与补救入口 */

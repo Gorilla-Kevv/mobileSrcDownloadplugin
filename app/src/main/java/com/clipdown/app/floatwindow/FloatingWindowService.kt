@@ -62,7 +62,6 @@ import com.clipdown.downloader.DownloadService
 import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.MediaItem
-import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.ParseResult
 import kotlinx.coroutines.CoroutineScope
@@ -416,7 +415,11 @@ class FloatingWindowService : Service() {
                 } else {
                     setPhase(BubblePhase.ParseOk, revertMs = 1_200)
                     if (popupFreeForAuto() && !parsed.isEmpty) {
-                        uiState.value = PopupUiState.Ready(link, parsed, selectedIndex = 0)
+                        uiState.value = PopupUiState.Ready(
+                            link, parsed,
+                            selectedIndices = setOf(0),
+                            multiSelect = parsed.isAlbumMultiSelect
+                        )
                         ensurePopupHost()
                         startDismissTimer()
                     }
@@ -442,13 +445,8 @@ class FloatingWindowService : Service() {
      * 自动下载候选：单资源直取；多条但全为视频（同源清晰度变体，如 reel 原画质+备选、
      * X 多码率）取推荐首位（与选择卡默认选中一致）；图集/多图/混合形态返回 null。
      */
-    private fun autoDownloadCandidate(result: ParseResult): MediaItem? {
-        val media = result.media
-        if (media.isEmpty()) return null
-        if (media.size == 1) return media[0]
-        val kinds = media.map { it.kind }.toSet()
-        return if (kinds.size == 1 && MediaKind.VIDEO in kinds) media.first() else null
-    }
+    private fun autoDownloadCandidate(result: ParseResult): MediaItem? =
+        if (result.isAlbumMultiSelect) null else result.media.firstOrNull()
 
     /** 自动下载前置检查：开关、失败退避熔断、仅 WiFi 保险丝 */
     private fun canAutoDownload(): Boolean {
@@ -593,7 +591,11 @@ class FloatingWindowService : Service() {
                 val parsed = result.getOrThrow()
                 LinkCenter.publishResult(parsed)
                 setPhase(BubblePhase.ParseOk, revertMs = 1_200)
-                uiState.value = PopupUiState.Ready(link, parsed, selectedIndex = 0)
+                uiState.value = PopupUiState.Ready(
+                    link, parsed,
+                    selectedIndices = setOf(0),
+                    multiSelect = parsed.isAlbumMultiSelect
+                )
             } else {
                 val e = result.exceptionOrNull()
                 val msg = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
@@ -621,7 +623,14 @@ class FloatingWindowService : Service() {
                         onSelect = { index ->
                             val s = uiState.value
                             if (s is PopupUiState.Ready) {
-                                uiState.value = s.copy(selectedIndex = index)
+                                uiState.value = s.copy(
+                                    selectedIndices = if (s.multiSelect) {
+                                        if (index in s.selectedIndices) s.selectedIndices - index
+                                        else s.selectedIndices + index
+                                    } else {
+                                        setOf(index)
+                                    }
+                                )
                                 startDismissTimer()
                             }
                         },
@@ -691,7 +700,26 @@ class FloatingWindowService : Service() {
     private fun downloadCurrent() {
         val state = uiState.value
         if (state !is PopupUiState.Ready) return
-        val item = state.selected ?: return
+        val items = state.selectedIndices.mapNotNull { state.result.media.getOrNull(it) }
+        if (items.isEmpty()) return
+
+        // 图集多选：批量入队后收起弹窗，进度由气泡徽标与下载详情卡承接
+        if (state.multiSelect) {
+            scope.launch {
+                runCatching {
+                    val taskIds = withContext(Dispatchers.IO) {
+                        DownloadController.enqueueAll(items, state.result.platform, state.result.title)
+                    }
+                    downloadingCount.intValue += taskIds.size
+                    markSuppressed(state.link.url)
+                    startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))
+                }
+                hidePopup()
+            }
+            return
+        }
+
+        val item = items.first()
         // 下载中不自动收起弹窗：全部流程在弹窗内闭环；用户也可点空白收起，后台继续
         dismissJob?.cancel()
         remainSeconds.value = 0
