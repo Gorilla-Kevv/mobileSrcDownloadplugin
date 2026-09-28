@@ -46,6 +46,7 @@
   27. **adb `am start SEND` 在应用 task 前台时被 delivered-to-top**（result code=3，intent 投给顶部 MainActivity，ShareTargetActivity.onCreate 不执行、LinkCenter 不触发）→ 分享通道测试前必须 `am force-stop` 或 HOME 切后台；真实用户路径（其他 App 里点分享）无此问题
   28. **修复 8（已修）**：URL_PATTERN 曾把半角 `?` 列入排除集，带 query 的链接从文本召回时 query 被截断（YouTube ?v= 丢 ID、XHS xsec_token/IG img_index 丢失）——URL_PATTERN/BARE_HOST_PATTERN 排除集已移除半角 `?` 保留全角 `？`，UrlUtilTest 有 3 个回归用例勿删
   29. **Piped 公共实例经常性波动**（2026-09-28 全实例挂：526/301/502/500）——YouTube 解析失败文案"需要远端解析服务"是预期降级；验证 YouTube 链路前先宿主机 curl `https://<instance>/streams/<id>` 探测实例健康
+  30. **IG 页面数据是 JSON-in-JS 双重转义**：`/` 写作 `\\/`、`%` 写作 `\\u0025`——任何从页面 HTML 正则提取的字符串必须走 unescapeJson（已修复为双层解码，修复 9）；直接走 kotlinx/JSON 解析的路径不受影响。排查下载 403 的固定手法：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"` 看 FAILED 任务的 URL 是否带字面反斜杠
 
 ## 命令
 - 构建：`F:\AndroidDev\build.bat :app:assembleDebug --console=plain`
@@ -54,10 +55,10 @@
 - 模拟器：见坑 11（启动带 `-http-proxy http://10.0.2.2:7890`）；装 APK `adb install -r`；预授权 `adb shell appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow`；无障碍 `adb shell settings put secure enabled_accessibility_services com.clipdown.app/com.clipdown.app.clip.ClipAccessibilityService` + `settings put secure accessibility_enabled 1`
 
 ## 状态
-- 当前状态：**阶段 16 并发可见性已完成**（阶段 14 气泡动效、15 自动流水线、15 追加单击识别交互同日完成）：三徽标（绿搁置/黄解析中N/蓝下载中M）+ 并发解析相位一致性修正 + pendingCount 消费 bug；并发骨架=阶段 15 独立 Job + 引擎 maxConcurrent。阶段 1-13 见 PROGRESS
-- 验收标准：`assembleDebug` + `:parser:test`（38 例）全绿；模拟器实测关键链路（自动流水线用 X 真实推文；YouTube 受 Piped 实例健康制约，见坑 29）
-- 下一步（按优先级）：**阶段 17/18 详见 `PLAN.md`**：
-  1. 阶段 18 图集全选/多选下载 UI（纯 UI 不依赖外部服务健康；批量 enqueue=DownloadController.enqueueAll 已存在；弹窗 chip 多选态+批量 enqueue+主界面结果卡同步）
-  2. 阶段 17 reels 下载 403 修复（IG 侧待风控解除；排查序=下载请求头 MediaItem.headers 传递核对→URL 时效→Cookie 随下载）
-- 真机回归累积项：60fps/掉帧、下载详情卡点击分流、wifiOnly/失败退避熔断、IG reel 全链路、**双链接并发徽标峰值=2**
-- 旧任务（已完成或降级）：~~IG 风控解除~~（并入阶段 15 保险丝，已实现）；~~真机回归/release~~（阶段 18 后回归主线）
+- 当前状态：**阶段 17 reels 403 已修复**（用户实测通过；根因=JSON-in-JS 双重转义未还原，见修复 9/坑 30）。阶段 14-16（气泡动效/自动流水线/单击识别/三徽标）同日完成。PLAN 阶段 14-18 仅剩 18
+- 验收标准：`assembleDebug` + `:parser:test`（39 例）全绿；模拟器实测关键链路（自动流水线用 X 真实推文；IG 侧风控解除后全通；YouTube 受 Piped 实例健康制约，见坑 29）
+- 下一步：**阶段 18 图集全选/多选下载 UI**（PLAN 最后一个阶段）：
+  - Ready 卡 chip 多选态（全选/多选/仅视频）+ 批量 enqueue（DownloadController.enqueueAll 已存在）+ MainActivity 结果卡同步
+  - 验收：12 张图集全选→12 任务完成；多选 3 张→仅 3 任务
+- 真机回归累积项：60fps/掉帧、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值=2
+- 旧任务（已完成或降级）：~~IG 风控解除~~（已解除并实测）；~~真机回归/release~~（阶段 18 后回归主线）

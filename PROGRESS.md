@@ -1,5 +1,18 @@
 # PROGRESS
 
+## 阶段 17：IG reels 下载 403 修复（已完成 · 2026-09-28，用户复测通过）
+- 已完成（按 PLAN 阶段 17 排查序）：
+  - **排查序①（请求头）**：代码审查全链路——解析器 `Referer: instagram.com`（InstagramParser igHeaders）→ TaskEntity.headers 原样保存 → DownloadEngine 按任务传 HttpFileDownloader → OkHttp header()，**无丢失**；请求无 User-Agent（OkHttp 默认）但实测证明不敏感
+  - **根因（修复 9）**：下载任务库里 FAILED 任务的 URL 是 `https:\\/\\/scontent...`——**JSON-in-JS 双重转义未还原**。IG 页面数据里 `/` 写作 `\\/`、`%` 写作 `\\u0025`，阶段 13 重写的 video_versions HTML 正则提取只做单层反转义（unescapeJson 只处理 `\/`），URL 带字面反斜杠进下载器 → CDN 403。图片走 kotlinx 标准解码路径不受影响——完美解释"识别正确、图片能下、视频必挂"
+  - **铁证链**：任务库 FAILED URL 带字面 `\\/` → 宿主机手动还原同一 URL → curl **裸请求 200**（UA/Referer/Cookie 均不需要）→ `oe=` 签名在有效期内（排除时效）→ 修复=纯转义问题
+  - **修复**：`HtmlUtil.unescapeJson` 前置 JS 层解码（`\\`→`\`，把双重形态降为单层）再做常规 JSON 解码（\uXXXX、\/）；清理两条被 \uXXXX 正则覆盖的死代码（\u002F、\u0026 显式 replace）；新增双重/单层转义回归用例
+  - **诊断能力**：DownloadEngine 终态失败此前 logcat 完全静默（本次排查最大障碍）——失败时打 `Log.w("DownloadEngine", 任务名+原因+完整 URL)`
+- 排除项（实测证据）：请求头无问题（curl 200 无需任何头）；URL 时效不是问题（签名有效期内、流水线秒级下载）；Cookie 不需要；blob 误判不存在（video_versions 是直链）
+- 改动文件：`parser/parsers/HtmlUtil.kt`（unescapeJson 双层解码）、`parser/src/test/.../InstagramParserTest.kt`（+1 回归用例，39 例全绿）、`downloader/engine/DownloadEngine.kt`（终态失败日志）
+- 测试结果：构建+`:parser:test` 全绿；**用户实测 IG reel 下载成功**（此前同一条 403）；IG 图片帖实战全通（3 张自动落盘，含流水线自动触发）；X 视频变体组自动下载此前已验证
+- 风险：IG 页面转义形态再变时 video_versions 可能再坏（探针+dump 手段已固化，任务库 URL 是现成取证位）；`unescapeJson` 对"内容里合法字面 `\\`"的错解风险仅限非 JSON 上下文（当前调用方全是 JSON 切片，安全）
+- 下一阶段入口：**阶段 18 图集全选/多选下载 UI**（最后一个 PLAN 阶段；批量 enqueue=DownloadController.enqueueAll 已存在）
+
 ## 阶段 16：并发解析可见性 + 三徽标（已完成 · 2026-09-28）
 - 已完成（按 PLAN 阶段 16；并发骨架已由阶段 15 承载——autoParseJobs/pipelineUrls 每条链接独立 Job 互不取消，下载侧引擎自带 maxConcurrent 排队，本阶段补齐可见性与一致性）：
   - **三徽标**：左上绿=搁置待处理（pendingCount 原语义）、左下黄=**解析中 N**、右下蓝=**下载中 M**；parsingCount/downloadingCount 两个 mutableIntStateOf，在 autoRecognize 入队/出队、startAutoDownload enqueue、watchAutoTask 终态、downloadCurrent（手动下载同样计数）各转换点维护；>0 才显示，9+ 封顶；抽出 CountBadge 复用（align 由 BoxScope 调用方传入）
