@@ -29,6 +29,7 @@ class SettingsRepository(private val context: Context) {
         val BUBBLE_X = intPreferencesKey("bubble_x")
         val BUBBLE_Y = intPreferencesKey("bubble_y")
         val AUTO_POPUP = booleanPreferencesKey("auto_popup")
+        val AUTO_DOWNLOAD = booleanPreferencesKey("auto_download")
         val POPUP_AUTO_DISMISS = intPreferencesKey("popup_auto_dismiss_ms")
         val WIFI_ONLY = booleanPreferencesKey("wifi_only")
         val MAX_CONCURRENT = intPreferencesKey("max_concurrent")
@@ -43,6 +44,9 @@ class SettingsRepository(private val context: Context) {
 
     val floatEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.FLOAT_ENABLED] ?: true }
     val autoPopup: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.AUTO_POPUP] ?: true }
+
+    /** 解析成功后自动下载（单资源/视频变体组直下；图集等仍弹选择卡） */
+    val autoDownload: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.AUTO_DOWNLOAD] ?: true }
     val wifiOnly: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.WIFI_ONLY] ?: false }
     val maxConcurrent: Flow<Int> = context.settingsDataStore.data.map { it[Keys.MAX_CONCURRENT] ?: 3 }
     val saveToAlbum: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.SAVE_ALBUM] ?: true }
@@ -57,6 +61,7 @@ class SettingsRepository(private val context: Context) {
 
     suspend fun setFloatEnabled(value: Boolean) = edit { it[Keys.FLOAT_ENABLED] = value }
     suspend fun setAutoPopup(value: Boolean) = edit { it[Keys.AUTO_POPUP] = value }
+    suspend fun setAutoDownload(value: Boolean) = edit { it[Keys.AUTO_DOWNLOAD] = value }
     suspend fun setWifiOnly(value: Boolean) = edit { it[Keys.WIFI_ONLY] = value }
     suspend fun setMaxConcurrent(value: Int) = edit { it[Keys.MAX_CONCURRENT] = value.coerceIn(1, 8) }
     suspend fun setSaveToAlbum(value: Boolean) = edit { it[Keys.SAVE_ALBUM] = value }

@@ -34,4 +34,16 @@ sealed interface PopupUiState {
 
     /** 解析失败，展示原因与补救入口 */
     data class Failed(val link: DetectedLink, val message: String, val retryable: Boolean = true) : PopupUiState
+
+    /** 自动下载详情小卡：下载中单击气泡展示，进度随事件实时刷新 */
+    data class Downloads(val tasks: List<DownloadRow>) : PopupUiState
 }
+
+/** 自动下载流水线的一条任务行 */
+data class DownloadRow(
+    val taskId: String,
+    val title: String,
+    val platformName: String,
+    val percent: Int?,
+    val sizeText: String? = null
+)

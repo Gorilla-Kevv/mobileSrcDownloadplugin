@@ -38,6 +38,26 @@ class UrlUtilTest {
         assertTrue(!out.contains("ref_src"))
     }
 
+    // ---- extractFirst：query 必须完整召回（修复 8 前 URL_PATTERN 在半角 ? 处截断） ----
+
+    @Test
+    fun `extractFirst 保留 YouTube watch 的 v 参数`() {
+        val out = UrlUtil.extractFirst("看这个 https://www.youtube.com/watch?v=KKo_yn2jSGY 很不错")
+        assertEquals("https://www.youtube.com/watch?v=KKo_yn2jSGY", out)
+    }
+
+    @Test
+    fun `extractFirst 保留小红书 xsec_token`() {
+        val out = UrlUtil.extractFirst("https://www.xiaohongshu.com/explore/abc?xsec_token=TOK123&xsec_source=ss")
+        assertEquals("https://www.xiaohongshu.com/explore/abc?xsec_token=TOK123&xsec_source=ss", out)
+    }
+
+    @Test
+    fun `extractFirst 在全角问号与空白处正确截断`() {
+        val out = UrlUtil.extractFirst("地址 https://x.com/a/status/1？看看这个")
+        assertEquals("https://x.com/a/status/1", out)
+    }
+
     // ---- extractFirst / extractAll ----
 
     @Test

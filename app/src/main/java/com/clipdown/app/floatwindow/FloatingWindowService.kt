@@ -7,6 +7,8 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.graphics.PixelFormat
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
@@ -57,8 +59,12 @@ import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.ui.theme.ClipDownTheme
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
+import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.parser.core.ParserEngine
+import com.clipdown.parser.model.MediaItem
+import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
+import com.clipdown.parser.model.ParseResult
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -116,13 +122,25 @@ class FloatingWindowService : Service() {
     @Volatile
     private var manualRecognize = false
 
-    /** 下载进行中：期间任何新链接都不允许打断弹窗（视频播放会持续触发窗口扫描） */
-    @Volatile
-    private var downloadActive = false
+    /** 自动下载流水线进行中的任务：taskId → 展示行（全部在主线程读写） */
+    private val autoTasks = LinkedHashMap<String, DownloadRow>()
 
-    /** 下载完成后短时抑制同一链接的自动重弹（地址栏仍在该页面时会持续触发扫描） */
-    private var suppressedUrl: String? = null
-    private var suppressedAt = 0L
+    /** 自动路径的后台解析 Job 集（互不取消，弹窗语义让位给手动流程） */
+    private val autoParseJobs = mutableSetOf<Job>()
+
+    /** 正在解析/下载流水线中的链接：防窗口扫描在 seen_links 异步落库前重复触发解析 */
+    private val pipelineUrls = mutableSetOf<String>()
+
+    /** 下载完成后按 URL 短时抑制自动重弹（地址栏停留页面会持续触发扫描） */
+    private val suppressedUrls = HashMap<String, Long>()
+
+    /** 自动下载失败退避（IG 风控保险丝）：连续失败达阈值后暂停自动下载一段时间 */
+    private var consecutiveFailures = 0
+    private var autoDownloadSuspendedUntil = 0L
+
+    private var autoPopupEnabled: Boolean = true
+    private var autoDownloadEnabled: Boolean = true
+    private var wifiOnlyEnabled: Boolean = false
 
     private val settings by lazy { SettingsRepository(this) }
 
@@ -136,6 +154,12 @@ class FloatingWindowService : Service() {
         observeLinks()
         scope.launch {
             settings.autoPopup.collect { autoPopupEnabled = it }
+        }
+        scope.launch {
+            settings.autoDownload.collect { autoDownloadEnabled = it }
+        }
+        scope.launch {
+            settings.wifiOnly.collect { wifiOnlyEnabled = it }
         }
     }
 
@@ -170,6 +194,7 @@ class FloatingWindowService : Service() {
         recognizeTimeoutJob?.cancel()
         phaseRevertJob?.cancel()
         singleTapJob?.cancel()
+        autoParseJobs.forEach { it.cancel() }
         removePopup()
         removeBubble()
         super.onDestroy()
@@ -262,6 +287,14 @@ class FloatingWindowService : Service() {
     }
 
     private fun onBubbleClick() {
+        // 自动下载进行中：单击气泡 = 下载详情小卡（文件名/大小/进度）
+        if (autoTasks.isNotEmpty()) {
+            uiState.value = PopupUiState.Downloads(autoTasks.values.toList())
+            ensurePopupHost()
+            dismissJob?.cancel()
+            remainSeconds.value = 0
+            return
+        }
         // 气泡是纯入口：只展开迷你面板，不读剪贴板、不解析、不跳应用
         uiState.value = PopupUiState.Mini()
         ensurePopupHost()
@@ -324,7 +357,7 @@ class FloatingWindowService : Service() {
     private fun observeLinks() {
         LinkCenter.detected
             .onEach { link ->
-                // 识别记忆：检测过的链接持久化，自动弹窗只给"新面孔"
+                // 识别记忆：检测过的链接持久化，自动流程只给"新面孔"
                 val seenBefore = settings.seenLinks.first()
                 scope.launch { settings.markLinkSeen(link.url) }
 
@@ -335,22 +368,191 @@ class FloatingWindowService : Service() {
                     return@onEach
                 }
                 if (link.url in seenBefore) return@onEach
-                if (autoPopupEnabled) showAndParse(link) else pendingCount.intValue++
+                if (autoPopupEnabled) autoRecognize(link) else pendingCount.intValue++
             }
             .launchIn(scope)
     }
 
-    private fun showAndParse(link: com.clipdown.app.clip.DetectedLink) {
-        if (downloadActive) {
-            pendingCount.intValue++
-            return
-        }
-        suppressedUrl?.let { url ->
-            if (link.url == url && System.currentTimeMillis() - suppressedAt < SUPPRESS_MS) {
-                pendingCount.intValue++
-                return
+    // ---------- 自动流水线（阶段 15）：解析 → 自动下载，无 UI 确认 ----------
+
+    /**
+     * 自动路径：后台解析（气泡黄圈）→ 单资源/视频变体组直接 enqueue（绿闪→进度环→紫闪），
+     * 图集/多资源/自动下载不可用（关闭/熔断/仅WiFi）时回退到现有 Ready 选择卡，失败弹原因卡。
+     * 弹窗被用户占用（Loading/Ready/Failed）时不抢，只更新气泡相位。
+     */
+    private fun autoRecognize(link: com.clipdown.app.clip.DetectedLink) {
+        if (link.url in pipelineUrls || isSuppressed(link.url)) return
+        pipelineUrls.add(link.url)
+        setPhase(BubblePhase.Parsing)
+        val job = scope.launch {
+            val result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url) }
+            autoParseJobs.remove(currentCoroutineContext()[Job])
+            pipelineUrls.remove(link.url)
+
+            if (result.isSuccess) {
+                val parsed = result.getOrThrow()
+                LinkCenter.publishResult(parsed)
+                val candidate = autoDownloadCandidate(parsed)
+                if (candidate != null && canAutoDownload()) {
+                    startAutoDownload(link, parsed, candidate)
+                } else {
+                    setPhase(BubblePhase.ParseOk, revertMs = 1_200)
+                    if (popupFreeForAuto() && !parsed.isEmpty) {
+                        uiState.value = PopupUiState.Ready(link, parsed, selectedIndex = 0)
+                        ensurePopupHost()
+                        startDismissTimer()
+                    }
+                }
+            } else {
+                val e = result.exceptionOrNull()
+                setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+                if (popupFreeForAuto()) {
+                    val msg = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
+                    uiState.value = PopupUiState.Failed(
+                        link, msg,
+                        retryable = (e as? ParseException)?.retryable ?: true
+                    )
+                    ensurePopupHost()
+                    startDismissTimer()
+                }
             }
         }
+        autoParseJobs.add(job)
+    }
+
+    /**
+     * 自动下载候选：单资源直取；多条但全为视频（同源清晰度变体，如 reel 原画质+备选、
+     * X 多码率）取推荐首位（与选择卡默认选中一致）；图集/多图/混合形态返回 null。
+     */
+    private fun autoDownloadCandidate(result: ParseResult): MediaItem? {
+        val media = result.media
+        if (media.isEmpty()) return null
+        if (media.size == 1) return media[0]
+        val kinds = media.map { it.kind }.toSet()
+        return if (kinds.size == 1 && MediaKind.VIDEO in kinds) media.first() else null
+    }
+
+    /** 自动下载前置检查：开关、失败退避熔断、仅 WiFi 保险丝 */
+    private fun canAutoDownload(): Boolean {
+        if (!autoDownloadEnabled) return false
+        if (System.currentTimeMillis() < autoDownloadSuspendedUntil) return false
+        if (wifiOnlyEnabled && !isOnUnmetered()) return false
+        return true
+    }
+
+    private fun isOnUnmetered(): Boolean {
+        val cm = getSystemService(ConnectivityManager::class.java) ?: return false
+        val nw = cm.activeNetwork ?: return false
+        val caps = cm.getNetworkCapabilities(nw) ?: return false
+        return caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+    }
+
+    private fun startAutoDownload(link: com.clipdown.app.clip.DetectedLink, parsed: ParseResult, item: MediaItem) {
+        scope.launch {
+            runCatching {
+                val taskId = withContext(Dispatchers.IO) {
+                    DownloadController.enqueue(item, parsed.platform, parsed.title)
+                }
+                autoTasks[taskId] = DownloadRow(
+                    taskId = taskId,
+                    title = parsed.title ?: "未命名作品",
+                    platformName = parsed.platform.displayName,
+                    percent = 0
+                )
+                startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))
+                // 绿圈短闪后转入下载进度环（进度事件先到则由 watchAutoTask 直接切相位）
+                setPhase(BubblePhase.ParseOk)
+                scope.launch {
+                    delay(600)
+                    if (bubblePhase.value == BubblePhase.ParseOk) setPhase(BubblePhase.Downloading(0))
+                }
+                watchAutoTask(taskId, link.url)
+            }.onFailure {
+                setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+            }
+        }
+    }
+
+    /** 订阅自动任务进度：更新气泡进度环 + 详情卡；终态回写抑制表与退避计数 */
+    private fun watchAutoTask(taskId: String, url: String) {
+        scope.launch(Dispatchers.Main.immediate) {
+            DownloadController.engine().progress.collect { e ->
+                if (e.taskId != taskId) return@collect
+                val row = autoTasks[taskId] ?: return@collect
+                when (e.status) {
+                    DownloadStatus.COMPLETED,
+                    DownloadStatus.FAILED,
+                    DownloadStatus.CANCELED -> {
+                        autoTasks.remove(taskId)
+                        when (e.status) {
+                            DownloadStatus.COMPLETED -> {
+                                consecutiveFailures = 0
+                                autoDownloadSuspendedUntil = 0L
+                                markSuppressed(url)
+                                setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
+                            }
+                            DownloadStatus.FAILED -> {
+                                consecutiveFailures++
+                                if (consecutiveFailures >= AUTO_BACKOFF_THRESHOLD) {
+                                    autoDownloadSuspendedUntil =
+                                        System.currentTimeMillis() + AUTO_BACKOFF_MS
+                                    consecutiveFailures = 0
+                                }
+                                setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
+                            }
+                            else -> if (autoTasks.isEmpty()) setPhase(BubblePhase.Idle)
+                        }
+                        refreshDownloadsCard()
+                        currentCoroutineContext()[Job]?.cancel()
+                    }
+                    DownloadStatus.MERGING -> {
+                        autoTasks[taskId] = row.copy(percent = 99)
+                        setPhase(BubblePhase.Downloading(null))
+                        refreshDownloadsCard()
+                    }
+                    else -> {
+                        if (e.totalBytes > 0) {
+                            val pct = ((e.downloadedBytes * 100) / e.totalBytes).toInt()
+                            autoTasks[taskId] = row.copy(
+                                percent = pct,
+                                sizeText = "${MediaItem.formatSize(e.downloadedBytes)} / ${MediaItem.formatSize(e.totalBytes)}"
+                            )
+                            setPhase(BubblePhase.Downloading(pct))
+                            refreshDownloadsCard()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /** 详情卡开着时随进度实时刷新；任务清空即收起 */
+    private fun refreshDownloadsCard() {
+        val cur = uiState.value
+        if (cur !is PopupUiState.Downloads) return
+        if (autoTasks.isEmpty()) hidePopup()
+        else uiState.value = PopupUiState.Downloads(autoTasks.values.toList())
+    }
+
+    private fun markSuppressed(url: String) {
+        suppressedUrls[url] = System.currentTimeMillis()
+    }
+
+    private fun isSuppressed(url: String): Boolean {
+        val now = System.currentTimeMillis()
+        suppressedUrls.entries.removeAll { now - it.value > SUPPRESS_MS }
+        return url in suppressedUrls
+    }
+
+    /** 自动路径只在弹窗空闲（隐藏/迷你面板）时占用弹窗；用户正在看的弹窗不抢 */
+    private fun popupFreeForAuto(): Boolean = when (uiState.value) {
+        is PopupUiState.Hidden, is PopupUiState.Mini -> true
+        else -> false
+    }
+
+    /** 手动路径（迷你面板识别/重试/SHOW_LAST）：保留完整弹窗交互 */
+    private fun showAndParse(link: com.clipdown.app.clip.DetectedLink) {
         pendingCount.intValue = 0
         setPhase(BubblePhase.Parsing)
         uiState.value = PopupUiState.Loading(link)
@@ -473,7 +675,6 @@ class FloatingWindowService : Service() {
         // 下载中不自动收起弹窗：全部流程在弹窗内闭环；用户也可点空白收起，后台继续
         dismissJob?.cancel()
         remainSeconds.value = 0
-        downloadActive = true
         setPhase(BubblePhase.Downloading(0))
         uiState.value = state.copy(downloading = true, downloadPercent = 0)
 
@@ -488,18 +689,16 @@ class FloatingWindowService : Service() {
             DownloadController.engine().progress.collect { e ->
                 if (e.taskId != taskId) return@collect
                 when (e.status) {
-                    com.clipdown.downloader.model.DownloadStatus.COMPLETED,
-                    com.clipdown.downloader.model.DownloadStatus.FAILED,
-                    com.clipdown.downloader.model.DownloadStatus.CANCELED -> {
+                    DownloadStatus.COMPLETED,
+                    DownloadStatus.FAILED,
+                    DownloadStatus.CANCELED -> {
                         // 终态簿记与弹窗可见性无关：弹窗已收起时下载也在后台完成
-                        downloadActive = false
                         when (e.status) {
-                            com.clipdown.downloader.model.DownloadStatus.COMPLETED -> {
-                                suppressedUrl = state.link.url
-                                suppressedAt = System.currentTimeMillis()
+                            DownloadStatus.COMPLETED -> {
+                                markSuppressed(state.link.url)
                                 setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
                             }
-                            com.clipdown.downloader.model.DownloadStatus.FAILED ->
+                            DownloadStatus.FAILED ->
                                 setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
                             else -> setPhase(BubblePhase.Idle)
                         }
@@ -578,8 +777,6 @@ class FloatingWindowService : Service() {
             WindowManager.LayoutParams.TYPE_PHONE
         }
 
-    private var autoPopupEnabled: Boolean = true
-
     private fun startForegroundCompat() {
         val nm = getSystemService(NOTIFICATION_SERVICE) as NotificationManager
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -616,6 +813,10 @@ class FloatingWindowService : Service() {
         private const val DOUBLE_TAP_MS = 250L
         private const val EXTRA_PHASE = "phase"
         private const val EXTRA_PERCENT = "percent"
+
+        /** 自动下载失败退避（IG 风控保险丝）：连续失败 N 次暂停一段时间 */
+        private const val AUTO_BACKOFF_THRESHOLD = 3
+        private const val AUTO_BACKOFF_MS = 10 * 60_000L
 
         const val ACTION_HIDE_POPUP = "com.clipdown.app.action.HIDE_POPUP"
         const val ACTION_SHOW_LAST = "com.clipdown.app.action.SHOW_LAST"

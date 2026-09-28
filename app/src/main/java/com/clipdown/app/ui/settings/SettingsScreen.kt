@@ -53,6 +53,7 @@ fun SettingsScreen() {
 
     val floatEnabled by settings.floatEnabled.collectAsStateWithLifecycle(initialValue = true)
     val autoPopup by settings.autoPopup.collectAsStateWithLifecycle(initialValue = true)
+    val autoDownload by settings.autoDownload.collectAsStateWithLifecycle(initialValue = true)
     val wifiOnly by settings.wifiOnly.collectAsStateWithLifecycle(initialValue = false)
     val saveAlbum by settings.saveToAlbum.collectAsStateWithLifecycle(initialValue = true)
     val maxConcurrent by settings.maxConcurrent.collectAsStateWithLifecycle(initialValue = 3)
@@ -76,6 +77,14 @@ fun SettingsScreen() {
                 }
                 SwitchRow("自动弹出解析窗", "识别到支持的链接后自动弹窗（关闭后只在气泡上做角标提示）", autoPopup) { v ->
                     scope.launch { settings.setAutoPopup(v) }
+                }
+                SwitchRow(
+                    "解析后自动下载",
+                    "识别到单个视频/图片直接下载（气泡显示进度），图集等会弹窗让你挑选；" +
+                        "自动下载连续失败会自动熔断退避，配合「仅 Wi-Fi 下载」可在移动网络下暂停",
+                    autoDownload
+                ) { v ->
+                    scope.launch { settings.setAutoDownload(v) }
                 }
             }
         }

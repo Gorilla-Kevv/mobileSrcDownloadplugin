@@ -22,7 +22,7 @@
   - `clip/ClipAccessibilityService.kt`（**四通道**：复制特征借道/剪贴板直读/窗口逐节点扫描/复制提示文本；尾部合并防抖）
   - `clip/ClipGateActivity.kt`（借道前台读剪贴板，**taskAffinity="" 独占任务栈**，onWindowFocusChanged 时机）
   - `clip/LinkCenter.kt`（通道汇聚+15s 去重）、`ClipboardMonitor`、`ShareTargetActivity`、`BootReceiver`
-  - `floatwindow/FloatingWindowService.kt`（气泡=纯入口→迷你面板→解析弹窗；**BubblePhase 状态机驱动动效**：setPhase 统一入口+瞬态自动回退+卡死收口；单击/双击 View 级计时；downloadActive 守卫；suppressedUrl 抑制；ACTION_DEBUG_PHASE adb 调试通道）、`floatwindow/BubblePhase.kt`（**气泡 7 相位状态机，纯 Kotlin**）、`ClipPopupContent.kt`（毛玻璃卡/迷你面板）、`PopupUiState.kt`（Mini/Loading/Ready/Failed）
+  - `floatwindow/FloatingWindowService.kt`（**自动流水线 autoRecognize：解析→单资源/视频变体组自动下载，图集回退选择卡**；守卫=pipelineUrls/suppressedUrls Map/popupFreeForAuto；失败退避熔断+wifiOnly 保险丝；下载详情卡 autoTasks；气泡=BubblePhase 状态机驱动动效；单击/双击 View 级计时；ACTION_DEBUG_PHASE adb 调试通道）、`floatwindow/BubblePhase.kt`（**气泡 7 相位状态机，纯 Kotlin**）、`ClipPopupContent.kt`（毛玻璃卡/迷你面板/**下载详情卡**）、`PopupUiState.kt`（Mini/Loading/Ready/Failed/**Downloads**）
   - `clip/WebViewHtmlFetcher.kt`（Cookie 注入渲染抓取+轮询探针+**debug_last_page.html 落盘**）
   - `data/CookieStore.kt`（SP `clipdown_cookies`，key=platform.id）、`data/SettingsRepository.kt`（DataStore，含 `seen_links` 识别记忆）
 - 文档：`README.md`、`docs/01~05`、`PROGRESS.md`（阶段 1-13 全记录）、`PLAN.md`（阶段 14-18 开发计划）
@@ -42,7 +42,10 @@
   23. 下载引擎终态（MERGING/COMPLETED/FAILED）曾从不发进度事件（文件落盘但 UI 卡 100%）——已在 DownloadEngine execute/runTask 补发，勿删
   24. **Compose 内容加 `pointerInput` 会杀掉 View 级触摸监听**：气泡拖拽在 ComposeView 的 setOnTouchListener 实现，前提是 Compose 内容不认领事件；给气泡加任何手势修饰符（如 detectTapGestures）后 View 监听器收不到 DOWN，拖拽失效——单击/双击/拖拽全在 View 监听器内实现（双击=250ms 计时窗口，单击延迟执行）
   25. **持续相位必须显式收口**：BubblePhase 的 Parsing/Downloading 无自动回退，弹窗超时收起（hidePopup）和 parse 结果早退分支都会把 Parsing 收口回 Idle（Downloading 除外——后台下载进度环要保留）；新增流程路径时检查相位是否会卡死
-  26. **Git Bash 环境两坑**：`F:\AndroidDev\build.bat` 在 Git Bash 下必报"命令语法不正确"（UTF-8 中文注释撞 cmd 代码页）→ 直接 `export JAVA_HOME=F:\AndroidDev\jdk\jdk-17.0.20.1+1 GRADLE_USER_HOME=F:\AndroidDev\.gradle ANDROID_HOME=F:\AndroidDev\sdk` 后调 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=...`；MSYS 路径转换会改写 adb shell 里的 `/sdcard/...` 设备路径 → 命令前加 `MSYS_NO_PATHCONV=1`，adb pull 本地目标用相对路径
+  26. **Git Bash 环境两坑**：`F:\AndroidDev\build.bat` 在 Git Bash 下必报"命令语法不正确"（UTF-8 中文注释撞 cmd 代码页）→ 直接 `export JAVA_HOME=F:\AndroidDev\jdk\jdk-17.0.20.1+1 GRADLE_USER_HOME=F:\AndroidDev\.gradle ANDROID_HOME=F:\AndroidDev\sdk` 后调 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=...`；MSYS 路径转换会改写 adb shell 里的 `/sdcard/...` 设备路径 → 命令前加 `MSYS_NO_PATHCONV=1`，adb pull 本地目标用相对路径；adb shell 内脚本变量用单引号包整个命令（双引号会让本地 bash 展开掉 `$i`）
+  27. **adb `am start SEND` 在应用 task 前台时被 delivered-to-top**（result code=3，intent 投给顶部 MainActivity，ShareTargetActivity.onCreate 不执行、LinkCenter 不触发）→ 分享通道测试前必须 `am force-stop` 或 HOME 切后台；真实用户路径（其他 App 里点分享）无此问题
+  28. **修复 8（已修）**：URL_PATTERN 曾把半角 `?` 列入排除集，带 query 的链接从文本召回时 query 被截断（YouTube ?v= 丢 ID、XHS xsec_token/IG img_index 丢失）——URL_PATTERN/BARE_HOST_PATTERN 排除集已移除半角 `?` 保留全角 `？`，UrlUtilTest 有 3 个回归用例勿删
+  29. **Piped 公共实例经常性波动**（2026-09-28 全实例挂：526/301/502/500）——YouTube 解析失败文案"需要远端解析服务"是预期降级；验证 YouTube 链路前先宿主机 curl `https://<instance>/streams/<id>` 探测实例健康
 
 ## 命令
 - 构建：`F:\AndroidDev\build.bat :app:assembleDebug --console=plain`
@@ -51,11 +54,11 @@
 - 模拟器：见坑 11（启动带 `-http-proxy http://10.0.2.2:7890`）；装 APK `adb install -r`；预授权 `adb shell appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow`；无障碍 `adb shell settings put secure enabled_accessibility_services com.clipdown.app/com.clipdown.app.clip.ClipAccessibilityService` + `settings put secure accessibility_enabled 1`
 
 ## 状态
-- 当前状态：**阶段 14 气泡状态机与动效已完成**（提交见 git log）：气泡 7 相位动效（Idle 蓝呼吸/Parsing 黄旋转/ParseOk 绿闪/ParseFail 红闪/Downloading 进度环/DownloadOk 紫闪/DownloadFail 红闪）+ 左上角 pendingCount 徽标 + 单击迷你面板/双击跳主界面；8 相位模拟器截图核对全过；阶段 1-13 见 PROGRESS
-- 验收标准：`assembleDebug` + `:parser:test` 全绿；模拟器实测关键链路（阶段 14 起含各相位截图核对，可用 ACTION_DEBUG_PHASE adb 驱动）
-- 下一步（按优先级）：**阶段 15-18 详见 `PLAN.md`**：
-  1. 阶段 15 自动解析→自动下载流水线（守卫从单值改集合，autoDownload 开关，IG 风控保险丝=仅 WiFi+失败退避）
-  2. 阶段 17 reels 下载 403 修复（可与 15 并行，只依赖下载链路）
-  3. 阶段 16 并发解析队列（依赖 15 的守卫重构）
-  4. 阶段 18 图集全选/多选下载 UI（依赖 15 的批量 enqueue）
-- 旧任务（已完成或降级）：~~IG 风控解除~~（并入阶段 15 保险丝）；~~真机回归/release~~（阶段 18 后回归主线下一步；60fps 与 pendingCount 徽标的真机复验也在该项）
+- 当前状态：**阶段 15 自动解析→自动下载流水线已完成**（阶段 14 气泡状态机动效同日完成）：复制新链接→气泡黄→绿→进度环→紫全自动落盘（X 图/视频实测）；图集/多资源回退选择卡；autoDownload 开关+WiFi 保险丝+失败退避；下载详情卡；守卫已全部集合化（阶段 16 依赖就绪）。阶段 1-13 见 PROGRESS
+- 验收标准：`assembleDebug` + `:parser:test`（38 例）全绿；模拟器实测关键链路（自动流水线用 X 真实推文；YouTube 受 Piped 实例健康制约，见坑 29）
+- 下一步（按优先级）：**阶段 16-18 详见 `PLAN.md`**：
+  1. 阶段 16 并发解析队列（守卫重构已完成，LinkCenter 携带序号/徽标计数"解析中 N / 待下载 M"）
+  2. 阶段 17 reels 下载 403 修复（可与 16 并行；IG 侧待风控解除，X 变体组自动下载已验证）
+  3. 阶段 18 图集全选/多选下载 UI（依赖批量 enqueue，DownloadController.enqueueAll 已存在）
+- 真机回归累积项：60fps/掉帧、pendingCount 徽标、**下载详情卡点击分流**（模拟器下载过快无法自然触达）、wifiOnly/失败退避熔断、IG reel 全链路
+- 旧任务（已完成或降级）：~~IG 风控解除~~（并入阶段 15 保险丝，已实现）；~~真机回归/release~~（阶段 18 后回归主线）

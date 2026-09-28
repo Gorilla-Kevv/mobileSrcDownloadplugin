@@ -1,5 +1,23 @@
 # PROGRESS
 
+## 阶段 15：自动解析→自动下载流水线（已完成 · 2026-09-28）
+- 已完成（按 PLAN 阶段 15）：
+  - **自动流水线**：`autoRecognize` 接管 observeLinks 的自动路径——后台解析（气泡黄圈）→ 解析成功按资源形态分流：单资源/全视频变体组 → **自动 enqueue 下载无 UI 确认**（绿闪 600ms→进度环→紫闪）；图集/多图/混合形态或自动下载不可用 → 回退现有 Ready 选择卡；解析失败 → 红闪+Failed 卡。`autoDownloadCandidate` 判定规则：media.size==1 直取；多条但 kind 全为 VIDEO（同源清晰度变体，如 reel 原画质+备选、X 多码率）取推荐首位（与选择卡默认选中一致）；其余（图集）返回 null
+  - **守卫重构**：`downloadActive` 单值删除；`suppressedUrl` 单值 → `suppressedUrls` Map（带 SUPPRESS_MS 过期清理，markSuppressed/isSuppressed）；新增 `pipelineUrls` 防同 URL 在 seen_links 异步落库前重复触发解析；新增 `popupFreeForAuto()`——自动路径只在弹窗空闲（Hidden/Mini）时占用弹窗，用户正在看的弹窗不抢；手动路径（迷你面板识别/重试/SHOW_LAST）保留原 showAndParse 全交互
+  - **下载详情卡**：`PopupUiState.Downloads` + `DownloadRow`（taskId/title/platformName/percent/sizeText）；下载中单击气泡展示（autoTasks 非空分流），进度事件实时刷新（refreshDownloadsCard），任务清空自动收起；`autoTasks: LinkedHashMap<taskId, DownloadRow>` 主线程读写
+  - **IG 风控保险丝**：autoDownload 开关（DataStore 默认开+设置页 UI）；WiFi 保险丝复用 `wifiOnly` 设置（`isOnUnmetered` 判 WiFi/以太网，仅 WiFi 开启且在计量网络时不自动下载，回退弹卡）；**失败退避熔断**：自动下载连续失败 ≥3 次暂停 10 分钟（`autoDownloadSuspendedUntil`），成功即复位
+  - **修复 8（真 bug，阶段 15 验收中发现）**：`UrlUtil` 的 URL_PATTERN/BARE_HOST_PATTERN 字符类把半角 `?` 列入排除集——**所有带 query 的链接从文本召回时 query 被整段截断**（YouTube `?v=` 丢 ID 必挂、小红书 `xsec_token` 丢失、IG `img_index` 丢失）；此前 X/IG 实测链接恰好无 query 未暴露。修复=排除集保留全角 `？` 移除半角 `?`；新增 3 个回归用例（YouTube v 参数/XHS token/全角问号截断）
+  - 调试通道沿用 ACTION_DEBUG_PHASE；youtube 视频的 ID 提取、失败降级文案（"需要远端解析服务"）实测正确
+- 未完成/遗留：
+  - **详情卡运行时验证**：模拟器代理带宽高（10.2MB 视频 ~3s 下完），无法自然触达"下载中点击气泡"窗口；行为已反向验证（下载终态后单击正确回退迷你面板=autoTasks 清空正确），详情卡点击分流真机回归复验（真机网络慢窗口长）
+  - **保险丝运行时验证**：模拟器网络=以太网视为不限量，wifiOnly/退避熔断未自然触发，代码+构建覆盖，真机回归
+  - IG reel 自动下载全链路未测（IG 风控未解除）；**YouTube 链路 2026-09-28 当天 Piped 全实例不可用**（kavin=526/adminforge=301/reallyaweso=502/private.coffee=500），外部服务波动非代码问题，URL 修复的正确性已由失败文案变化实证（"无法提取 ID"→"需要远端解析服务"）
+- 改动文件：`floatwindow/FloatingWindowService.kt`（自动流水线核心）、`floatwindow/BubblePhase.kt`（无改动）、`floatwindow/PopupUiState.kt`（+Downloads/DownloadRow）、`floatwindow/ClipPopupContent.kt`（DownloadsBody）、`data/SettingsRepository.kt`（autoDownload）、`ui/settings/SettingsScreen.kt`（开关 UI）、`parser/core/UrlUtil.kt`（修复 8）、`parser/src/test/.../UrlUtilTest.kt`（+3 用例）
+- 测试结果：`:parser:test` **38 例全绿**（35+3）；`assembleDebug` 全绿；模拟器实测：**X 图片推文全自动落盘 `Pictures/ClipDown/`（694KB jpg，气泡黄→蓝→紫无点击）**、**X 视频推文全自动落盘 `Movies/ClipDown/`（10.2MB mp4）**、已见链接重发无任何反应（气泡 Idle 前后对比）、关 autoDownload 开关→分享新链接→Ready 选择卡弹出（连拍 24s：黄→弹卡→15s 收起）
+- 风险：Piped 公共实例持续不稳定（远端解析兜底的设置项价值上升，用户自建 cobalt 是正解）；自动路径弹卡被用户占用时静默放弃（无角标提示，阶段 16 徽标计数可补）；多任务并发下载时进度环显示最新事件（阶段 16 排队后自然消解）
+- 测试方法教训：**adb `am start SEND` 在应用 task 处于前台时会被 delivered-to-top 投给 MainActivity，ShareTargetActivity.onCreate 不执行**（logcat 证据：result code=3 + onActivityRestartAttempt MainActivity）——分享通道测试必须先 force-stop 或 HOME 切后台；真实用户路径（其他 App 里点分享）无此问题
+- 下一阶段入口：**阶段 16 并发解析队列**（依赖的守卫重构已就位）或**阶段 17 reels 403**（X 视频变体组自动下载已验证，IG 侧待风控解除）；建议 16 先行
+
 ## 阶段 14：气泡状态机与动效 + 单双击手势（已完成 · 2026-09-28）
 - 已完成（按 PLAN 阶段 14）：
   - **气泡状态机**：新增 `floatwindow/BubblePhase.kt`（纯 Kotlin 无 Compose 依赖）——7 相位：Idle（蓝呼吸）/ Parsing（黄旋转）/ ParseOk（绿闪 1.2s）/ ParseFail（红闪 1.5s）/ Downloading(percent)（进度环，percent=null 为合并中不定向弧）/ DownloadOk（紫闪 2s）/ DownloadFail（红闪 2s）。服务层 `setPhase(phase, revertMs)` 统一驱动：瞬态相位到点自动回 Idle
