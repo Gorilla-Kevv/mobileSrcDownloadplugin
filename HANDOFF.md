@@ -22,7 +22,7 @@
   - `clip/ClipAccessibilityService.kt`（**四通道**：复制特征借道/剪贴板直读/窗口逐节点扫描/复制提示文本；尾部合并防抖）
   - `clip/ClipGateActivity.kt`（借道前台读剪贴板，**taskAffinity="" 独占任务栈**，onWindowFocusChanged 时机）
   - `clip/LinkCenter.kt`（通道汇聚+15s 去重）、`ClipboardMonitor`、`ShareTargetActivity`、`BootReceiver`
-  - `floatwindow/FloatingWindowService.kt`（气泡=纯入口→迷你面板→解析弹窗；downloadActive 守卫；suppressedUrl 抑制）、`ClipPopupContent.kt`（毛玻璃卡/迷你面板）、`PopupUiState.kt`（Mini/Loading/Ready/Failed）
+  - `floatwindow/FloatingWindowService.kt`（气泡=纯入口→迷你面板→解析弹窗；**BubblePhase 状态机驱动动效**：setPhase 统一入口+瞬态自动回退+卡死收口；单击/双击 View 级计时；downloadActive 守卫；suppressedUrl 抑制；ACTION_DEBUG_PHASE adb 调试通道）、`floatwindow/BubblePhase.kt`（**气泡 7 相位状态机，纯 Kotlin**）、`ClipPopupContent.kt`（毛玻璃卡/迷你面板）、`PopupUiState.kt`（Mini/Loading/Ready/Failed）
   - `clip/WebViewHtmlFetcher.kt`（Cookie 注入渲染抓取+轮询探针+**debug_last_page.html 落盘**）
   - `data/CookieStore.kt`（SP `clipdown_cookies`，key=platform.id）、`data/SettingsRepository.kt`（DataStore，含 `seen_links` 识别记忆）
 - 文档：`README.md`、`docs/01~05`、`PROGRESS.md`（阶段 1-13 全记录）、`PLAN.md`（阶段 14-18 开发计划）
@@ -40,6 +40,9 @@
   21. PowerShell **不支持 heredoc**（`cat <<EOF`）→ git 多行提交用 `git commit -F 文件`；git 偶发不在 PATH，用完整路径 `C:\Program Files\Git\cmd\git.exe`
   22. 模拟器时钟时区为 GMT（显示差 8h，绝对时间同步，TLS 不受影响）；模拟器 ping 不通外网属正常（ICMP 不走 http_proxy）
   23. 下载引擎终态（MERGING/COMPLETED/FAILED）曾从不发进度事件（文件落盘但 UI 卡 100%）——已在 DownloadEngine execute/runTask 补发，勿删
+  24. **Compose 内容加 `pointerInput` 会杀掉 View 级触摸监听**：气泡拖拽在 ComposeView 的 setOnTouchListener 实现，前提是 Compose 内容不认领事件；给气泡加任何手势修饰符（如 detectTapGestures）后 View 监听器收不到 DOWN，拖拽失效——单击/双击/拖拽全在 View 监听器内实现（双击=250ms 计时窗口，单击延迟执行）
+  25. **持续相位必须显式收口**：BubblePhase 的 Parsing/Downloading 无自动回退，弹窗超时收起（hidePopup）和 parse 结果早退分支都会把 Parsing 收口回 Idle（Downloading 除外——后台下载进度环要保留）；新增流程路径时检查相位是否会卡死
+  26. **Git Bash 环境两坑**：`F:\AndroidDev\build.bat` 在 Git Bash 下必报"命令语法不正确"（UTF-8 中文注释撞 cmd 代码页）→ 直接 `export JAVA_HOME=F:\AndroidDev\jdk\jdk-17.0.20.1+1 GRADLE_USER_HOME=F:\AndroidDev\.gradle ANDROID_HOME=F:\AndroidDev\sdk` 后调 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=...`；MSYS 路径转换会改写 adb shell 里的 `/sdcard/...` 设备路径 → 命令前加 `MSYS_NO_PATHCONV=1`，adb pull 本地目标用相对路径
 
 ## 命令
 - 构建：`F:\AndroidDev\build.bat :app:assembleDebug --console=plain`
@@ -48,12 +51,11 @@
 - 模拟器：见坑 11（启动带 `-http-proxy http://10.0.2.2:7890`）；装 APK `adb install -r`；预授权 `adb shell appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow`；无障碍 `adb shell settings put secure enabled_accessibility_services com.clipdown.app/com.clipdown.app.clip.ClipAccessibilityService` + `settings put secure accessibility_enabled 1`
 
 ## 状态
-- 当前状态：**交互重构 + IG 解析打通已完成**（阶段 11-13，提交 580b0d3/7e543f2/fa76c43/b47f426/0fdbd03）；气泡=纯入口（用户头像 logo）→迷你面板→识别；识别记忆持久化；弹窗内下载闭环；IG reel/图集/视频帖本地解析全通
-- 验收标准：`assembleDebug` + `:parser:test` 全绿；IG/X/YouTube 真链路实测出媒体并可下载
-- 下一步（按优先级）：**阶段 14-18 开发计划见 `PLAN.md`**（2026-09-28 用户需求：气泡状态机动效/复制自动解析下载/环形进度/双击跳转/图集多选/并发解析/reels 403 修复）：
-  1. 阶段 14 气泡状态机与动效（纯视觉，先行）
-  2. 阶段 15 自动解析→自动下载流水线（守卫从单值改集合，IG 风控保险丝=仅 WiFi）
-  3. 阶段 16 并发解析队列（5 秒内连续复制多链接）
-  4. 阶段 17 reels 下载 403 修复（可提前与 15 并行）
-  5. 阶段 18 图集全选/多选下载 UI
-- 旧任务（已完成或降级）：~~IG 风控解除~~（并入阶段 15 保险丝）；~~真机回归/release~~（阶段 18 后回归主线下一步）
+- 当前状态：**阶段 14 气泡状态机与动效已完成**（提交见 git log）：气泡 7 相位动效（Idle 蓝呼吸/Parsing 黄旋转/ParseOk 绿闪/ParseFail 红闪/Downloading 进度环/DownloadOk 紫闪/DownloadFail 红闪）+ 左上角 pendingCount 徽标 + 单击迷你面板/双击跳主界面；8 相位模拟器截图核对全过；阶段 1-13 见 PROGRESS
+- 验收标准：`assembleDebug` + `:parser:test` 全绿；模拟器实测关键链路（阶段 14 起含各相位截图核对，可用 ACTION_DEBUG_PHASE adb 驱动）
+- 下一步（按优先级）：**阶段 15-18 详见 `PLAN.md`**：
+  1. 阶段 15 自动解析→自动下载流水线（守卫从单值改集合，autoDownload 开关，IG 风控保险丝=仅 WiFi+失败退避）
+  2. 阶段 17 reels 下载 403 修复（可与 15 并行，只依赖下载链路）
+  3. 阶段 16 并发解析队列（依赖 15 的守卫重构）
+  4. 阶段 18 图集全选/多选下载 UI（依赖 15 的批量 enqueue）
+- 旧任务（已完成或降级）：~~IG 风控解除~~（并入阶段 15 保险丝）；~~真机回归/release~~（阶段 18 后回归主线下一步；60fps 与 pendingCount 徽标的真机复验也在该项）

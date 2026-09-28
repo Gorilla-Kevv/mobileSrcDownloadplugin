@@ -1,5 +1,23 @@
 # PROGRESS
 
+## 阶段 14：气泡状态机与动效 + 单双击手势（已完成 · 2026-09-28）
+- 已完成（按 PLAN 阶段 14）：
+  - **气泡状态机**：新增 `floatwindow/BubblePhase.kt`（纯 Kotlin 无 Compose 依赖）——7 相位：Idle（蓝呼吸）/ Parsing（黄旋转）/ ParseOk（绿闪 1.2s）/ ParseFail（红闪 1.5s）/ Downloading(percent)（进度环，percent=null 为合并中不定向弧）/ DownloadOk（紫闪 2s）/ DownloadFail（红闪 2s）。服务层 `setPhase(phase, revertMs)` 统一驱动：瞬态相位到点自动回 Idle
+  - **挂接点**全部复用现有流程：`showAndParse` 入口（Parsing）/结果分支（ParseOk/ParseFail）、`downloadCurrent`（Downloading(0)）、`progress.collect`（DOWNLOADING→进度、MERGING→null、终态→DownloadOk/DownloadFail/Idle）
+  - **卡死防护**：Parsing 是无自动回退的持续相位——弹窗超时收起（hidePopup）与 parse 结果早退分支（弹窗已被接管）两处收口回 Idle；Downloading 相位在弹窗收起后保留（后台下载进度环继续）
+  - **BubbleContent 动效重写**：光环全 Canvas 绘制无重布局（Idle 呼吸=InfiniteTransition alpha、旋转弧=sweep 110°/700ms、进度环=360°·pct/100 + alpha0.18 淡色轨道）；描边色 animateColorAsState 0.3s 过渡；呼吸/旋转只在 draw 阶段读状态，无重组开销
+  - **hasPending 布尔 → pendingCount 计数**：下载搁置/抑制窗口/autoPopup 关闭时累加，showAndParse 消费与下载终态清零；气泡左上角徽标（>9 显示 9+），旧右上角绿点移除
+  - **单击/双击区分**：**方案修正**——PLAN 原定 Compose `pointerInput detectTapGestures`，但气泡拖拽在 View 级 `setOnTouchListener` 实现，Compose 内容一旦加 pointerInput 就会认领触摸事件导致拖拽收不到 DOWN 直接失效 → 改为 View 监听器内计时：双击窗口 250ms，单击延迟到窗口过期执行、双击到来即取消。单击=迷你面板（原行为），双击=跳主界面
+  - **调试通道**：`ACTION_DEBUG_PHASE`（`--es phase parsing|parse_ok|parse_fail|downloading|download_ok|download_fail|idle [--ei percent N]`）供 adb 直接驱动状态机做视觉验收，后续阶段复用
+- 未完成/遗留：
+  - pendingCount 徽标未做运行时触发验证（触发路径=autoPopup 关闭或下载搁置，实现仅 5 行 Compose，构建覆盖，真机回归复验）
+  - 60fps 硬指标在 swiftshader 软渲染模拟器上无法真验（50th=29ms 属软渲染瓶颈，绘制负载仅 64dp Canvas，真机回归复验）
+- 改动文件：`app/floatwindow/BubblePhase.kt`（新增）、`app/floatwindow/FloatingWindowService.kt`
+- 测试结果：`assembleDebug` 全绿；`:parser:test` 全绿（parser 无改动）；模拟器实测：8 相位截图逐个核对全对（含 IG 前台叠加场景）、双击跳主界面 ✓、单击迷你面板 ✓、点空白收回 ✓；`dumpsys gfxinfo` 采样通过
+- 风险：真实解析→ParseOk 链路未在模拟器复测（IG 风控未解除，视觉由调试通道覆盖，真实链路随阶段 15/17 复测）；`adb root` 后重装应用 uid 变为 10205（坑 19 的 uid 漂移现象延续）
+- 环境教训：**`F:\AndroidDev\build.bat` 在 Git Bash 下必报"命令语法不正确"**（UTF-8 中文注释撞 cmd 代码页）→ Git Bash 下直接 `export JAVA_HOME/GRADLE_USER_HOME/ANDROID_HOME` 后调 `gradle.bat -p . --no-daemon`；**Git Bash 的 MSYS 路径转换会改写 adb shell 里的 `/sdcard/...` 设备路径** → 加 `MSYS_NO_PATHCONV=1`，且 adb pull 本地目标用相对路径
+- 下一阶段入口：**阶段 15 自动解析→自动下载流水线**（守卫从单值改集合、autoDownload 开关、IG 风控保险丝=仅 WiFi+失败退避）；阶段 17 reels 403 可与之并行；随后 16（并发解析）、18（图集多选）
+
 ## 阶段 2：环境迁移验证（已完成 · 2026-09-27）
 - 已完成：开发环境整体迁移至 `F:\AndroidDev`（JDK17 / SDK / Gradle 8.9 / 依赖缓存）；用户级环境变量与 PATH 已确认指向 F 盘；`local.properties` 的 `sdk.dir` 与统一构建脚本 `F:\AndroidDev\build.bat` 已更新；清理了迁移带入的临时目录（wtmp / probe_tmp / cmdline-tmp）与临时脚本，保留 `install_sdk.bat`、`setup_env.ps1`、`repo.xml`、`sdk\.sdk`（sdkmanager 缓存）
 - 未完成：git 初始化与提交、单测、release/签名、真机回归（同阶段 1）

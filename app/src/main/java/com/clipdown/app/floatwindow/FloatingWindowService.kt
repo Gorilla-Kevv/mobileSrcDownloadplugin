@@ -14,6 +14,14 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,17 +31,23 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.savedstate.SavedStateRegistryOwner
@@ -41,7 +55,6 @@ import com.clipdown.app.clip.ClipGateActivity
 import com.clipdown.app.clip.LinkCenter
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.ui.theme.ClipDownTheme
-import com.clipdown.app.ui.theme.SeedBlue
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
 import com.clipdown.parser.core.ParserEngine
@@ -82,12 +95,22 @@ class FloatingWindowService : Service() {
 
     private val uiState: MutableState<PopupUiState> = mutableStateOf(PopupUiState.Hidden)
     private val remainSeconds = mutableIntStateOf(0)
-    private val hasPending = mutableStateOf(false)
+    private val bubblePhase = mutableStateOf<BubblePhase>(BubblePhase.Idle)
+
+    /** 被下载中/抑制窗口搁置、尚未处理的链接数（气泡左上角徽标） */
+    private val pendingCount = mutableIntStateOf(0)
 
     private var dismissJob: Job? = null
     private var parseJob: Job? = null
     private var downloadJob: Job? = null
     private var recognizeTimeoutJob: Job? = null
+
+    /** 瞬态相位（闪现类）的自动回 Idle 调度 */
+    private var phaseRevertJob: Job? = null
+
+    /** 单击延迟执行（等双击窗口过期）；双击到来即取消 */
+    private var singleTapJob: Job? = null
+    private var lastTapAt = 0L
 
     /** 手动识别模式：迷你面板点"识别链接"后置位，下一个链接无条件弹窗 */
     @Volatile
@@ -120,6 +143,22 @@ class FloatingWindowService : Service() {
         when (intent?.action) {
             ACTION_HIDE_POPUP -> hidePopup()
             ACTION_SHOW_LAST -> LinkCenter.last.value?.let { showAndParse(it) }
+            // 调试通道：adb 直接驱动气泡状态机（视觉验收用，不影响正常流程）
+            ACTION_DEBUG_PHASE -> intent.getStringExtra(EXTRA_PHASE)?.let { name ->
+                when (name) {
+                    "parsing" -> setPhase(BubblePhase.Parsing)
+                    "parse_ok" -> setPhase(BubblePhase.ParseOk, revertMs = 1_200)
+                    "parse_fail" -> setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+                    "downloading" -> setPhase(
+                        BubblePhase.Downloading(
+                            if (intent.hasExtra(EXTRA_PERCENT)) intent.getIntExtra(EXTRA_PERCENT, 0) else null
+                        )
+                    )
+                    "download_ok" -> setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
+                    "download_fail" -> setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
+                    "idle" -> setPhase(BubblePhase.Idle)
+                }
+            }
         }
         return START_STICKY
     }
@@ -129,6 +168,8 @@ class FloatingWindowService : Service() {
         parseJob?.cancel()
         downloadJob?.cancel()
         recognizeTimeoutJob?.cancel()
+        phaseRevertJob?.cancel()
+        singleTapJob?.cancel()
         removePopup()
         removeBubble()
         super.onDestroy()
@@ -144,7 +185,7 @@ class FloatingWindowService : Service() {
         val composeView = ComposeView(this).apply {
             setContent {
                 ClipDownTheme(darkTheme = true) {
-                    BubbleContent(hasPending.value)
+                    BubbleContent(bubblePhase.value, pendingCount.intValue)
                 }
             }
         }
@@ -191,7 +232,22 @@ class FloatingWindowService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!moved) {
-                        onBubbleClick()
+                        // 单击/双击区分：单击延迟到双击窗口过期后执行，双击到来即取消。
+                        // 手势必须在 View 监听器里做——Compose 内容一旦加 pointerInput 就会
+                        // 认领事件，View 级拖拽监听器收不到 DOWN，拖拽直接失效
+                        val now = System.currentTimeMillis()
+                        if (now - lastTapAt <= DOUBLE_TAP_MS) {
+                            lastTapAt = 0L
+                            singleTapJob?.cancel()
+                            onBubbleDoubleClick()
+                        } else {
+                            lastTapAt = now
+                            singleTapJob?.cancel()
+                            singleTapJob = scope.launch {
+                                delay(DOUBLE_TAP_MS)
+                                onBubbleClick()
+                            }
+                        }
                     } else {
                         scope.launch { settings.saveBubblePosition(params.x, params.y) }
                         lastPosition = params.x to params.y
@@ -212,6 +268,26 @@ class FloatingWindowService : Service() {
         // 迷你面板不自动收起，等用户操作或点空白回气泡
         dismissJob?.cancel()
         remainSeconds.value = 0
+    }
+
+    /** 双击气泡：直接跳主界面 */
+    private fun onBubbleDoubleClick() {
+        startActivity(
+            Intent(this, com.clipdown.app.ui.MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        )
+    }
+
+    /** 切换气泡相位；瞬态相位（revertMs 非空）到点自动回 Idle */
+    private fun setPhase(phase: BubblePhase, revertMs: Long? = null) {
+        phaseRevertJob?.cancel()
+        bubblePhase.value = phase
+        if (revertMs != null) {
+            phaseRevertJob = scope.launch {
+                delay(revertMs)
+                bubblePhase.value = BubblePhase.Idle
+            }
+        }
     }
 
     /** 迷你面板"识别链接"：借道前台读剪贴板并解析（绕过识别记忆） */
@@ -248,7 +324,6 @@ class FloatingWindowService : Service() {
     private fun observeLinks() {
         LinkCenter.detected
             .onEach { link ->
-                hasPending.value = true
                 // 识别记忆：检测过的链接持久化，自动弹窗只给"新面孔"
                 val seenBefore = settings.seenLinks.first()
                 scope.launch { settings.markLinkSeen(link.url) }
@@ -260,23 +335,24 @@ class FloatingWindowService : Service() {
                     return@onEach
                 }
                 if (link.url in seenBefore) return@onEach
-                if (autoPopupEnabled) showAndParse(link)
+                if (autoPopupEnabled) showAndParse(link) else pendingCount.intValue++
             }
             .launchIn(scope)
     }
 
     private fun showAndParse(link: com.clipdown.app.clip.DetectedLink) {
         if (downloadActive) {
-            hasPending.value = true
+            pendingCount.intValue++
             return
         }
         suppressedUrl?.let { url ->
             if (link.url == url && System.currentTimeMillis() - suppressedAt < SUPPRESS_MS) {
-                hasPending.value = true
+                pendingCount.intValue++
                 return
             }
         }
-        hasPending.value = false
+        pendingCount.intValue = 0
+        setPhase(BubblePhase.Parsing)
         uiState.value = PopupUiState.Loading(link)
         ensurePopupHost()
         startDismissTimer()
@@ -285,15 +361,21 @@ class FloatingWindowService : Service() {
         parseJob = scope.launch {
             val result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url) }
             val current = uiState.value
-            if (current !is PopupUiState.Loading) return@launch
+            if (current !is PopupUiState.Loading) {
+                // 弹窗已被超时/新流程接管：Parsing 无自动回退，需在此收口
+                if (bubblePhase.value == BubblePhase.Parsing) setPhase(BubblePhase.Idle)
+                return@launch
+            }
 
             if (result.isSuccess) {
                 val parsed = result.getOrThrow()
                 LinkCenter.publishResult(parsed)
+                setPhase(BubblePhase.ParseOk, revertMs = 1_200)
                 uiState.value = PopupUiState.Ready(link, parsed, selectedIndex = 0)
             } else {
                 val e = result.exceptionOrNull()
                 val msg = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
+                setPhase(BubblePhase.ParseFail, revertMs = 1_500)
                 uiState.value = PopupUiState.Failed(link, msg, retryable = (e as? ParseException)?.retryable ?: true)
             }
             startDismissTimer()
@@ -362,6 +444,9 @@ class FloatingWindowService : Service() {
 
     private fun hidePopup() {
         uiState.value = PopupUiState.Hidden
+        // 弹窗超时收起时解析仍在后台跑的话，Parsing 无自动回退，在这里收口；
+        // Downloading 相位不动（下载在后台继续，气泡进度环要保留）
+        if (bubblePhase.value == BubblePhase.Parsing) setPhase(BubblePhase.Idle)
         dismissJob?.cancel()
         removePopup()
     }
@@ -389,7 +474,7 @@ class FloatingWindowService : Service() {
         dismissJob?.cancel()
         remainSeconds.value = 0
         downloadActive = true
-        hasPending.value = true
+        setPhase(BubblePhase.Downloading(0))
         uiState.value = state.copy(downloading = true, downloadPercent = 0)
 
         downloadJob?.cancel()
@@ -408,9 +493,15 @@ class FloatingWindowService : Service() {
                     com.clipdown.downloader.model.DownloadStatus.CANCELED -> {
                         // 终态簿记与弹窗可见性无关：弹窗已收起时下载也在后台完成
                         downloadActive = false
-                        if (e.status == com.clipdown.downloader.model.DownloadStatus.COMPLETED) {
-                            suppressedUrl = state.link.url
-                            suppressedAt = System.currentTimeMillis()
+                        when (e.status) {
+                            com.clipdown.downloader.model.DownloadStatus.COMPLETED -> {
+                                suppressedUrl = state.link.url
+                                suppressedAt = System.currentTimeMillis()
+                                setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
+                            }
+                            com.clipdown.downloader.model.DownloadStatus.FAILED ->
+                                setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
+                            else -> setPhase(BubblePhase.Idle)
                         }
                         val cur = uiState.value
                         if (cur is PopupUiState.Ready && cur.link == state.link) {
@@ -427,10 +518,11 @@ class FloatingWindowService : Service() {
                                 else -> Unit
                             }
                         }
-                        hasPending.value = false
+                        pendingCount.intValue = 0
                         currentCoroutineContext()[Job]?.cancel()
                     }
                     com.clipdown.downloader.model.DownloadStatus.MERGING -> {
+                        setPhase(BubblePhase.Downloading(null))
                         val cur = uiState.value
                         if (cur is PopupUiState.Ready && cur.link == state.link) {
                             uiState.value = cur.copy(downloadPercent = 99)
@@ -441,6 +533,7 @@ class FloatingWindowService : Service() {
                         val cur = uiState.value
                         if (cur is PopupUiState.Ready && cur.link == state.link && pct != null) {
                             uiState.value = cur.copy(downloadPercent = pct)
+                            setPhase(BubblePhase.Downloading(pct))
                         }
                     }
                 }
@@ -519,8 +612,14 @@ class FloatingWindowService : Service() {
         private const val BLUR_RADIUS_PX = 56
         private const val SUPPRESS_MS = 10 * 60_000L
 
+        /** 双击判定窗口（ms）；单击行为延迟到窗口过期后执行 */
+        private const val DOUBLE_TAP_MS = 250L
+        private const val EXTRA_PHASE = "phase"
+        private const val EXTRA_PERCENT = "percent"
+
         const val ACTION_HIDE_POPUP = "com.clipdown.app.action.HIDE_POPUP"
         const val ACTION_SHOW_LAST = "com.clipdown.app.action.SHOW_LAST"
+        const val ACTION_DEBUG_PHASE = "com.clipdown.app.action.DEBUG_PHASE"
 
         private var lastPosition: Pair<Int, Int> = -1 to -1
 
@@ -556,23 +655,106 @@ class FloatingWindowService : Service() {
     }
 }
 
+// ---------- 气泡视觉 ----------
+
+private val HaloBlue = Color(0xFF4D9FFF)
+
+/** 相位强调色：描边与光环共用，0.3s 过渡 */
+private fun BubblePhase.accent(): Color = when (this) {
+    BubblePhase.Idle -> Color.White.copy(alpha = 0.35f)
+    BubblePhase.Parsing -> Color(0xFFFFC53D)
+    BubblePhase.ParseOk -> Color(0xFF2EB872)
+    BubblePhase.ParseFail -> Color(0xFFE5484D)
+    is BubblePhase.Downloading -> HaloBlue
+    BubblePhase.DownloadOk -> Color(0xFFA78BFA)
+    BubblePhase.DownloadFail -> Color(0xFFE5484D)
+}
+
+/**
+ * 悬浮气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 左上角待处理计数徽标。
+ *
+ * 注意：这里刻意不放任何 pointerInput——Compose 内容一旦认领触摸事件，
+ * 服务层 View 级拖拽/单击监听器就收不到事件（见 addBubble）。
+ */
 @Composable
-private fun BubbleContent(hasPending: Boolean) {
+private fun BubbleContent(phase: BubblePhase, pendingCount: Int) {
+    val infinite = rememberInfiniteTransition(label = "bubbleHalo")
+    val breathe by infinite.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 0.9f,
+        animationSpec = infiniteRepeatable(tween(900), RepeatMode.Reverse),
+        label = "breathe"
+    )
+    val spin by infinite.animateFloat(
+        initialValue = 0f,
+        targetValue = 360f,
+        animationSpec = infiniteRepeatable(tween(700, easing = LinearEasing)),
+        label = "spin"
+    )
+    val accent by animateColorAsState(phase.accent(), tween(300), label = "accent")
+
     Box(
-        modifier = Modifier.size(56.dp),
+        modifier = Modifier.size(64.dp),
         contentAlignment = Alignment.Center
     ) {
-        // 头像 logo 气泡：待处理时绿环 + 右上角绿点
+        Canvas(modifier = Modifier.size(64.dp)) {
+            val stroke = 2.5.dp.toPx()
+            val radius = size.minDimension / 2f - stroke
+            when (phase) {
+                // 空闲：蓝色呼吸光圈（alpha 呼吸只触发 draw 重绘，无重组/布局开销）
+                BubblePhase.Idle -> drawCircle(
+                    HaloBlue.copy(alpha = breathe),
+                    radius = radius,
+                    style = Stroke(stroke)
+                )
+                // 解析中：黄色旋转光弧
+                BubblePhase.Parsing -> rotate(spin) {
+                    drawArc(
+                        accent,
+                        startAngle = 0f,
+                        sweepAngle = 110f,
+                        useCenter = false,
+                        style = Stroke(stroke, cap = StrokeCap.Round)
+                    )
+                }
+                // 下载中：进度环（percent=null 时为不确定旋转弧，即合并阶段）
+                is BubblePhase.Downloading -> {
+                    val pct = phase.percent
+                    if (pct == null) {
+                        rotate(spin) {
+                            drawArc(
+                                accent,
+                                startAngle = 0f,
+                                sweepAngle = 120f,
+                                useCenter = false,
+                                style = Stroke(stroke, cap = StrokeCap.Round)
+                            )
+                        }
+                    } else {
+                        drawCircle(accent.copy(alpha = 0.18f), radius = radius, style = Stroke(stroke))
+                        drawArc(
+                            accent,
+                            startAngle = -90f,
+                            sweepAngle = 360f * pct / 100f,
+                            useCenter = false,
+                            style = Stroke(stroke, cap = StrokeCap.Round)
+                        )
+                    }
+                }
+                // 闪现类相位：静态光环，颜色即信号（描边同步变色，到点自动回 Idle）
+                BubblePhase.ParseOk,
+                BubblePhase.DownloadOk,
+                BubblePhase.ParseFail,
+                BubblePhase.DownloadFail -> drawCircle(accent, radius = radius, style = Stroke(stroke))
+            }
+        }
+        // 头像 logo：描边颜色随相位 0.3s 过渡
         Box(
             modifier = Modifier
                 .size(52.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF141824))
-                .border(
-                    1.5.dp,
-                    if (hasPending) Color(0xFF2EB872) else Color.White.copy(alpha = 0.35f),
-                    CircleShape
-                ),
+                .border(1.5.dp, accent, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Image(
@@ -581,13 +763,22 @@ private fun BubbleContent(hasPending: Boolean) {
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
-            if (hasPending) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.TopEnd)
-                        .size(14.dp)
-                        .background(Color(0xFF2EB872), CircleShape)
-                        .border(1.5.dp, Color(0xFF141824), CircleShape)
+        }
+        // 左上角待处理计数徽标（下载中/抑制窗口搁置的链接数）
+        if (pendingCount > 0) {
+            Box(
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .size(16.dp)
+                    .background(Color(0xFF2EB872), CircleShape)
+                    .border(1.5.dp, Color(0xFF141824), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    if (pendingCount > 9) "9+" else pendingCount.toString(),
+                    color = Color.White,
+                    fontSize = 9.sp,
+                    fontWeight = FontWeight.Bold
                 )
             }
         }
