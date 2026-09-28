@@ -138,13 +138,24 @@ class ClipAccessibilityService : AccessibilityService() {
             val hit = ParserEngine.quickDetect(own)
             // 跳过短链：页面内容里的 t.co 等多为媒体跳转链接，展开后落在媒体主机，
             // 无法还原作品页；用户真正要的链接由地址栏/复制气泡以完整形态提供
-            if (hit != null && !com.clipdown.parser.core.UrlUtil.isShortLink(hit.first)) return hit
+            if (hit != null && !com.clipdown.parser.core.UrlUtil.isShortLink(hit.first)) {
+                // 跳过主页/登录页等无作品路径的链接（浏览 IG/X 主页时不该弹窗）
+                if (isWorthParsing(hit.first)) return hit
+            }
         }
         for (i in 0 until node.childCount) {
             val child = runCatching { node.getChild(i) }.getOrNull() ?: continue
             walkForUrl(child, depth + 1)?.let { return it }
         }
         return null
+    }
+
+    /** 主页/登录页等无作品路径的链接不值得解析（浏览 IG/X 主页时不该弹窗） */
+    private fun isWorthParsing(url: String): Boolean {
+        val platform = com.clipdown.parser.core.UrlUtil.detectPlatform(url) ?: return false
+        if (com.clipdown.parser.core.UrlUtil.isShortLink(url)) return true
+        val path = com.clipdown.parser.core.UrlUtil.pathOf(url).lowercase()
+        return platform.pathHints.any { path.contains(it) }
     }
 
     /** 是否存在短促的"已复制"提示节点（Snackbar/横幅，长度受限以避免误伤正文） */
