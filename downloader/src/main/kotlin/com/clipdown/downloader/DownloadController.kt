@@ -69,16 +69,19 @@ object DownloadController {
      * @return 任务 ID
      */
     fun enqueue(item: MediaItem, platform: Platform, title: String?, sourceUrl: String? = null): String {
+        // 入口兜底（修复 9 的第二道防线）：不管解析哪条路径漏了转义，入库 URL 必须干净——
+        // 页面转义形态随版本变化，曾出现 video_versions 单层 \/ 残留导致 CDN 403
+        val cleanUrl = item.url.replace("\\/", "/")
         val kind = when {
             item.isPlaylist || item.container == "m3u8" ||
-                item.url.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS
+                cleanUrl.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS
             !item.audioUrl.isNullOrBlank() -> TaskKind.DASH
             else -> TaskKind.SINGLE
         }
         val ext = when (kind) {
             TaskKind.HLS -> "mp4"
             TaskKind.DASH -> "mp4"
-            TaskKind.SINGLE -> (item.container ?: guessExt(item.url)).lowercase()
+            TaskKind.SINGLE -> (item.container ?: guessExt(cleanUrl)).lowercase()
         }
         val base = UrlUtil.sanitizeFileName(title ?: item.fileNameHint ?: "clipdown")
         val fileName = "$base-${
@@ -95,7 +98,7 @@ object DownloadController {
         val task = TaskEntity(
             id = UUID.randomUUID().toString(),
             title = title ?: base,
-            url = item.url,
+            url = cleanUrl,
             audioUrl = item.audioUrl,
             headers = item.headers,
             audioHeaders = item.audioHeaders ?: item.headers,

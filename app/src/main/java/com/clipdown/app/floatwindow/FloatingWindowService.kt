@@ -184,14 +184,14 @@ class FloatingWindowService : Service() {
                 when (name) {
                     "parsing" -> setPhase(BubblePhase.Parsing)
                     "parse_ok" -> setPhase(BubblePhase.ParseOk, revertMs = 1_200)
-                    "parse_fail" -> setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+                    "parse_fail" -> setPhase(BubblePhase.ParseFail, revertMs = 4_000)
                     "downloading" -> setPhase(
                         BubblePhase.Downloading(
                             if (intent.hasExtra(EXTRA_PERCENT)) intent.getIntExtra(EXTRA_PERCENT, 0) else null
                         )
                     )
                     "download_ok" -> setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
-                    "download_fail" -> setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
+                    "download_fail" -> setPhase(BubblePhase.DownloadFail, revertMs = 6_000)
                     "idle" -> setPhase(BubblePhase.Idle)
                 }
             }
@@ -354,7 +354,7 @@ class FloatingWindowService : Service() {
         ClipGateActivity.onResult = { found ->
             if (!found) {
                 manualRecognize = false
-                uiState.value = PopupUiState.Mini(hint = "剪贴板中没有可识别的链接")
+                uiState.value = PopupUiState.Mini(hint = "未识别到链接")
                 ensurePopupHost()
             }
             // found 时由 LinkCenter.detected 接管，进入自动流水线
@@ -366,7 +366,7 @@ class FloatingWindowService : Service() {
             delay(4_000)
             if (manualRecognize && uiState.value is PopupUiState.Hidden) {
                 manualRecognize = false
-                uiState.value = PopupUiState.Mini(hint = "未能读取剪贴板，请再点一次气泡")
+                uiState.value = PopupUiState.Mini(hint = "未能读取剪贴板")
                 ensurePopupHost()
             }
         }
@@ -423,6 +423,12 @@ class FloatingWindowService : Service() {
             if (result.isSuccess) {
                 val parsed = result.getOrThrow()
                 LinkCenter.publishResult(parsed)
+                // 污染取证：识别到"别的视频"时，从这里核对解析产物的每条媒体来源 URL
+                android.util.Log.d(
+                    "FloatingWindowService",
+                    "解析成功 ${parsed.resolverId} media=${parsed.media.size} " +
+                        parsed.media.joinToString("|") { "${it.kind.name[0]}:${it.url.take(70)}" }
+                )
                 val candidate = autoDownloadCandidate(parsed)
                 if (candidate != null && canAutoDownload()) {
                     startAutoDownload(link, parsed, candidate)
@@ -440,7 +446,7 @@ class FloatingWindowService : Service() {
                 }
             } else {
                 val e = result.exceptionOrNull()
-                setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+                setPhase(BubblePhase.ParseFail, revertMs = 4_000)
                 if (popupFreeForAuto()) {
                     val msg = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
                     uiState.value = PopupUiState.Failed(
@@ -500,7 +506,7 @@ class FloatingWindowService : Service() {
                 }
                 watchAutoTask(taskId, link.url)
             }.onFailure {
-                setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+                setPhase(BubblePhase.ParseFail, revertMs = 4_000)
             }
         }
     }
@@ -531,7 +537,7 @@ class FloatingWindowService : Service() {
                                         System.currentTimeMillis() + AUTO_BACKOFF_MS
                                     consecutiveFailures = 0
                                 }
-                                setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
+                                setPhase(BubblePhase.DownloadFail, revertMs = 6_000)
                             }
                             else -> if (autoTasks.isEmpty()) setPhase(BubblePhase.Idle)
                         }
@@ -613,7 +619,7 @@ class FloatingWindowService : Service() {
             } else {
                 val e = result.exceptionOrNull()
                 val msg = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
-                setPhase(BubblePhase.ParseFail, revertMs = 1_500)
+                setPhase(BubblePhase.ParseFail, revertMs = 4_000)
                 uiState.value = PopupUiState.Failed(link, msg, retryable = (e as? ParseException)?.retryable ?: true)
             }
             startDismissTimer()
@@ -693,15 +699,15 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * 气泡侧竖向窄条窗口：贴气泡左侧、顶缘对齐气泡顶，点窗外穿透（不抢操作）、15s 自动收起。
-     * 展开的网格向下延伸；气泡拖拽时由 addBubble 的 MOVE 分支同步移动（sideBarWinParams 引用）。
+     * 气泡侧竖向窄条窗口：**气泡正下方、宽度与气泡一致**，点窗外穿透、15s 自动收起。
+     * 展开的缩略图列向下延伸；气泡拖拽时由 addBubble 的 MOVE 分支同步移动（sideBarWinParams 引用）。
      */
     private var sideBarWinParams: WindowManager.LayoutParams? = null
     private var sideBarWidthPx = 0
 
     private fun sideBarParams(): WindowManager.LayoutParams {
         val dm = resources.displayMetrics
-        sideBarWidthPx = (128 * dm.density).toInt()
+        sideBarWidthPx = (64 * dm.density).toInt()
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -713,19 +719,19 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             val (bx, by) = bubblePos
-            x = (bx - sideBarWidthPx - 8 * dm.density).toInt().coerceAtLeast(12)
-            y = (by - 20 * dm.density).toInt().coerceAtLeast(48)
+            x = bx.coerceIn(8, (dm.widthPixels - sideBarWidthPx - 8).coerceAtLeast(8))
+            y = (by + 72 * dm.density).toInt()
             sideBarWinParams = this
         }
     }
 
-    /** 拖拽气泡时竖条同步跟随（与 sideBarParams 同一相对公式，绝对对齐无漂移） */
+    /** 拖拽气泡时竖条同步跟随（气泡正下方，与 sideBarParams 同一公式） */
     private fun followBubble(bubbleX: Int, bubbleY: Int) {
         val p = sideBarWinParams ?: return
         if (popupHost == null || !popupIsBar) return
         val dm = resources.displayMetrics
-        p.x = (bubbleX - sideBarWidthPx - 8 * dm.density).toInt().coerceAtLeast(12)
-        p.y = (bubbleY - 20 * dm.density).toInt().coerceAtLeast(48)
+        p.x = bubbleX.coerceIn(8, (dm.widthPixels - sideBarWidthPx - 8).coerceAtLeast(8))
+        p.y = bubbleY + (72 * dm.density).toInt()
         runCatching { popupHost?.let { wm.updateViewLayout(it, p) } }
     }
 
@@ -810,7 +816,7 @@ class FloatingWindowService : Service() {
                                 setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
                             }
                             DownloadStatus.FAILED ->
-                                setPhase(BubblePhase.DownloadFail, revertMs = 2_000)
+                                setPhase(BubblePhase.DownloadFail, revertMs = 6_000)
                             else -> setPhase(BubblePhase.Idle)
                         }
                         val cur = uiState.value

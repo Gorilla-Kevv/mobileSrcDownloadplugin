@@ -101,4 +101,38 @@ class InstagramParserTest {
         }.exceptionOrNull()
         assertTrue(err!!.message!!.contains("解析失败"))
     }
+
+    @Test
+    fun `items0 内嵌推荐块时只提取正帖媒体（修复 10）`() {
+        // 2026-09 结构：items[0] 对象内嵌含陌生 code 的数组块（video_versions=null 的空壳），
+        // 正帖 code 与媒体数据在对象顶层——旧逻辑全段扫描会把陌生媒体/封面混进来
+        val rendered = """
+            <html><head><meta property="og:title" content="Polluted Page" /></head><body>
+            <script type="text/javascript">window.__additionalDataLoaded('extra',{"xdt_api__v1__media__shortcode__web_info":{"items":[{
+                "preview_comments":{"rows":[{"code":"StrangerA","video_versions":null,"media_type":1},
+                {"code":"StrangerB","video_versions":null,"media_type":1}],
+                "stranger_media":[{"code":"StrangerC","video_versions":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/stranger_c.mp4"}],
+                "image_versions2":{"candidates":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/cover_c.jpg"}]}}]},
+                "code":"DOwnPost99",
+                "video_versions":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/own_reel.mp4"}],
+                "image_versions2":{"candidates":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/own_cover.jpg"}]}}]}});</script>
+            </body></html>
+        """.trimIndent()
+        val http = FakeHttp { url ->
+            if (url.contains("/embed/captioned/")) ok("<html><body>no media</body></html>") else notFound()
+        }
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DOwnPost99/",
+            testContext(
+                http,
+                webFetcher = { url -> if (url.contains("DOwnPost99")) rendered else null }
+            )
+        )
+        assertTrue(
+            "媒体不应包含推荐流内容: ${result.media.map { it.url }}",
+            result.media.all { !it.url.contains("stranger") && !it.url.contains("cover_c") }
+        )
+        assertTrue("应保留正帖视频", result.media.any { it.url.contains("own_reel.mp4") })
+        assertTrue("应保留正帖图片", result.media.any { it.url.contains("own_cover.jpg") })
+    }
 }

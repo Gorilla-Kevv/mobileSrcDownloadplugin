@@ -128,22 +128,22 @@ fun ClipPopupContent(
     }
 }
 
-/** 气泡侧竖向窄条容器：128dp 宽，深色毛玻璃质感（无全屏遮罩，窗外点击穿透） */
+/** 气泡侧竖向窄条容器：**与气泡同宽（64dp）**，深色质感（无全屏遮罩，窗外点击穿透） */
 @Composable
 private fun SideBarContainer(content: @Composable () -> Unit) {
     Column(
         modifier = Modifier
-            .width(128.dp)
+            .width(64.dp)
             .clip(RoundedCornerShape(18.dp))
             .background(Color(0xF0161B29))
             .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(18.dp))
-            .padding(10.dp)
+            .padding(6.dp)
     ) {
         content()
     }
 }
 
-/** Mini 竖条：剪贴板空闲时点气泡的默认形态（logo + hint + 识别入口） */
+/** Mini 竖条：剪贴板空闲时点气泡的默认形态（logo + 短提示 + 识别入口） */
 @Composable
 private fun MiniSideBody(state: PopupUiState.Mini, onRecognize: () -> Unit) {
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -152,32 +152,30 @@ private fun MiniSideBody(state: PopupUiState.Mini, onRecognize: () -> Unit) {
             contentDescription = null,
             contentScale = ContentScale.Crop,
             modifier = Modifier
-                .size(52.dp)
+                .size(40.dp)
                 .clip(CircleShape)
                 .border(1.dp, Color.White.copy(0.2f), CircleShape)
         )
-        Spacer(Modifier.height(6.dp))
-        Text("剪存", color = Color.White, style = MaterialTheme.typography.titleSmall)
+        Spacer(Modifier.height(4.dp))
+        Text("剪存", color = Color.White, style = MaterialTheme.typography.labelMedium)
         if (state.hint != null) {
-            Spacer(Modifier.height(3.dp))
+            Spacer(Modifier.height(2.dp))
             Text(
                 state.hint!!,
                 color = Color(0xFFFFB020),
                 style = MaterialTheme.typography.labelSmall,
+                maxLines = 3,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
-        Spacer(Modifier.height(8.dp))
-        Button(
+        Spacer(Modifier.height(6.dp))
+        IconButton(
             onClick = onRecognize,
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SeedBlue),
-            modifier = Modifier.fillMaxWidth().height(36.dp),
-            contentPadding = PaddingValues(horizontal = 6.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SeedBlue, RoundedCornerShape(10.dp))
         ) {
-            Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("识别", style = MaterialTheme.typography.labelMedium)
+            Icon(Icons.Default.Search, contentDescription = "识别", tint = Color.White, modifier = Modifier.size(16.dp))
         }
     }
 }
@@ -203,22 +201,21 @@ private fun AlbumSideBody(
             contentScale = ContentScale.Crop,
             modifier = Modifier
                 .fillMaxWidth()
-                .height(84.dp)
-                .clip(RoundedCornerShape(12.dp))
+                .height(48.dp)
+                .clip(RoundedCornerShape(10.dp))
                 .background(Color.White.copy(0.08f))
         )
-        Spacer(Modifier.height(6.dp))
+        Spacer(Modifier.height(4.dp))
         Text(
             "图集 ${result.media.size} 张",
             color = Color.White,
-            style = MaterialTheme.typography.titleSmall,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis
+            style = MaterialTheme.typography.labelSmall,
+            maxLines = 1
         )
         Text(
-            "已选 ${state.selectedIndices.size} 项",
-            color = Color.White.copy(0.6f),
-            style = MaterialTheme.typography.labelMedium
+            "已选 ${state.selectedIndices.size}",
+            color = SeedBlue,
+            style = MaterialTheme.typography.labelSmall
         )
         // 全选行：勾选=全选并收起；取消=进入部分选择并向下展开
         Row(
@@ -253,17 +250,14 @@ private fun AlbumSideBody(
             Text("全选", color = Color.White.copy(0.85f), style = MaterialTheme.typography.labelMedium)
         }
 
-        Button(
+        IconButton(
             onClick = onDownload,
             enabled = state.selectedIndices.isNotEmpty(),
-            shape = RoundedCornerShape(10.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = SeedBlue),
-            modifier = Modifier.fillMaxWidth().height(36.dp),
-            contentPadding = PaddingValues(horizontal = 6.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(SeedBlue.copy(alpha = if (state.selectedIndices.isEmpty()) 0.35f else 1f), RoundedCornerShape(10.dp))
         ) {
-            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(14.dp))
-            Spacer(Modifier.width(4.dp))
-            Text("下载", style = MaterialTheme.typography.labelMedium)
+            Icon(Icons.Default.Download, contentDescription = "下载所选", tint = Color.White, modifier = Modifier.size(16.dp))
         }
 
         TextButton(
@@ -271,14 +265,13 @@ private fun AlbumSideBody(
             modifier = Modifier.fillMaxWidth(),
             contentPadding = PaddingValues(vertical = 0.dp)
         ) {
-            Text(if (expanded) "收起" else "挑图", color = Color.White.copy(0.7f), style = MaterialTheme.typography.labelMedium)
+            Text(if (expanded) "收起" else "挑图", color = Color.White.copy(0.7f), style = MaterialTheme.typography.labelSmall)
         }
 
         AnimatedVisibility(visible = expanded) {
             LazyVerticalGrid(
-                columns = GridCells.Fixed(2),
-                modifier = Modifier.heightIn(max = 300.dp),
-                horizontalArrangement = Arrangement.spacedBy(5.dp),
+                columns = GridCells.Fixed(1),
+                modifier = Modifier.heightIn(max = 260.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
                 items(result.media.size) { index ->
@@ -299,23 +292,20 @@ private fun AlbumSideBody(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(52.dp)
+                                .height(44.dp)
                         )
                         if (selected) {
-                            Box(
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color.White,
                                 modifier = Modifier
                                     .align(Alignment.TopEnd)
-                                    .padding(2.dp)
-                                    .size(14.dp)
+                                    .padding(3.dp)
+                                    .size(13.dp)
                                     .background(SeedBlue, CircleShape)
-                            ) {
-                                Icon(
-                                    Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.align(Alignment.Center).size(10.dp)
-                                )
-                            }
+                                    .padding(2.dp)
+                            )
                         }
                     }
                 }

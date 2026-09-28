@@ -239,9 +239,21 @@ class InstagramParser : PlatformParser {
         return first
     }
 
+    /**
+     * 修复 10：items[0] 内部嵌推荐块时（2026-09 结构：items[0] 含 3 个 code，正帖在最后），
+     * 按 code 切段只保留正帖 shortcode 所在段——嵌块的陌生视频/封面帧不再混入媒体列表。
+     * 找不到正帖 code 时保持原 scope（异常页面兼容）。
+     */
+    private fun ownCodeSegment(scope: String, code: String): String {
+        if (code.isBlank()) return scope
+        val codeMatches = Regex(""""code":"([^"]+)"""").findAll(scope).toList()
+        val own = codeMatches.firstOrNull { it.groupValues[1] == code } ?: return scope
+        val end = codeMatches.firstOrNull { it.range.first > own.range.first }?.range?.first ?: scope.length
+        return scope.substring(own.range.first, end)
+    }
+
     /** 括号配对截取：从 start 处的 open 起到与之配对的 close 止（含字符串状态，防数据内括号干扰） */
-    private fun balancedSlice(s: String, start: Int, open: Char, close: Char): String? {
-        var depth = 0
+    private fun balancedSlice(s: String, start: Int, open: Char, close: Char): String? {        var depth = 0
         var inStr = false
         var esc = false
         val end = minOf(s.length, start + 800_000)
@@ -276,20 +288,23 @@ class InstagramParser : PlatformParser {
         // 直接全页扫描会把推荐帖的视频/图片混进来（用户复制图集却解析出陌生人视频的根因）。
         // 正帖数据固定在 xdt_api__v1__media__shortcode__web_info.items[0]，限定在此范围内提取。
         val scope = ownPostScope(html, code)
+        // 修复 10：2026-09 起 items[0] 内部还会嵌推荐块（实测 items[0] 含 3 个 code，正帖在最后）——
+        // 按 code 切段只保留正帖段，否则嵌块的陌生视频/封面帧照样混进媒体列表
+        val segment = ownCodeSegment(scope, code)
         val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
         val media = mutableListOf<MediaItem>()
 
         val videos = linkedSetOf<String>()
         // 新版结构：video_versions:[{width,height,url}]（旧键名 video_url/playable_url 已消失）
-        Regex(""""video_versions":\[(.*?)\]""").findAll(scope).forEach { block ->
+        Regex(""""video_versions":\[(.*?)\]""").findAll(segment).forEach { block ->
             Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
                 videos.add(HtmlUtil.unescapeJsonOf(u.groupValues[1]))
             }
         }
         // 旧版键名兜底
-        HtmlUtil.jsonField(scope, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
-        HtmlUtil.jsonField(scope, "video_url").forEach { videos.add(it) }
-        HtmlUtil.jsonField(scope, "playable_url").forEach { videos.add(it) }
+        HtmlUtil.jsonField(segment, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
+        HtmlUtil.jsonField(segment, "video_url").forEach { videos.add(it) }
+        HtmlUtil.jsonField(segment, "playable_url").forEach { videos.add(it) }
         Regex("""<meta property="og:video" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(scope)?.let {
             videos.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
@@ -309,7 +324,7 @@ class InstagramParser : PlatformParser {
         val images = linkedSetOf<String>()
         // 新版结构：image_versions2.candidates:[{width,height,url}]——图集每个子项一块，
         // 每块取宽度最大的一个（candidates 是同一张图的多尺寸候选），并跳过视频首帧缩略图
-        Regex(""""image_versions2":\{"candidates":\[(.*?)\]\}""").findAll(scope).forEach { block ->
+        Regex(""""image_versions2":\{"candidates":\[(.*?)\]\}""").findAll(segment).forEach { block ->
             val pairs = Regex(""""width":(\d+),"height":\d+,"url":"([^"]+)"""")
                 .findAll(block.groupValues[1])
                 .map { it.groupValues[1].toInt() to HtmlUtil.unescapeJsonOf(it.groupValues[2]) }
@@ -321,7 +336,7 @@ class InstagramParser : PlatformParser {
                     .firstOrNull { !it.contains("video_first_frame", ignoreCase = true) }
             best?.let { images.add(it) }
         }
-        HtmlUtil.jsonField(scope, "display_url").forEach { images.add(it) }
+        HtmlUtil.jsonField(segment, "display_url").forEach { images.add(it) }
         Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(scope)?.let {
             images.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
