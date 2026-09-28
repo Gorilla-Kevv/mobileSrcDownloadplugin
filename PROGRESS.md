@@ -1,5 +1,21 @@
 # PROGRESS
 
+## 阶段 19+20：下载页分组与气泡条形选择卡（用户需求包 · 代码完成 · 2026-09-28）
+- 用户需求：①下载记录可点链接/图集整包呈现/同源分组去冗余；②图集弹窗改为气泡上方拉出的小长条（缩略图+全选/部分选择+下载）
+- 阶段 19 已完成（提交 13a92bc）：
+  - **数据模型**：TaskEntity + `sourceUrl`（来源帖子链接）；DB v1→v2 迁移（ALTER TABLE ADD COLUMN source_url，onUpgrade 分支）；toCv/toTask 同步
+  - **链路**：DownloadController.enqueue/enqueueAll + sourceUrl 参数；四个调用点全部传入（自动流水线/弹窗单选/弹窗批量/主界面），来源统一取 `ParseResult.sourceUrl`
+  - **下载页重写**：按 sourceUrl 分组——同源聚合成"整包"组卡（标题+图集 N 张+完成/失败/下载中聚合态+聚合进度条），点组头打开第一张完成图；"明细"展开逐张紧凑行（可暂停/继续/删除/打开）；每条含"打开"（MediaStore URI）与"来源"（帖子链接）双入口；无 sourceUrl 的旧记录维持平铺（历史数据无分组键，属预期）
+- 阶段 20 已完成（提交 d8bcdbc）：
+  - **条形选择卡**：图集（Ready.multiSelect）不再弹全屏居中大卡，改为**气泡上方独立小窗**（WRAP_CONTENT、320dp 宽、定位=气泡 y-96dp、x 向左让位并钳制屏内、FLAG_NOT_TOUCH_MODAL 窗外点击穿透不抢操作）；收起态=首图缩略图+"图集 N 张/已选 M"+全选 Checkbox+下载+展开箭头+关闭；**默认全选**
+  - **部分选择**：取消全选勾 → 条形向下延伸展开 3 列缩略图网格（heightIn 300dp 内滚动），点图 toggle（选中蓝描边+角标勾）；重新勾选=全选并收起；展开箭头独立控制
+  - **popupHost 双形态**：条形/居中卡窗口参数不同，ensurePopupHost 按当前 state 形态签名重建（居中卡保留 blur behind，条形不用）；气泡拖拽后条形定位跟随（bubblePos 字段）
+  - ReadyBody（居中卡）仅承载视频变体组单选；条形内的选择/下载复用既有 onSelect(toggle)/onDownload(批量 enqueueAll) 回调
+- 测试结果：`assembleDebug` + `:parser:test` 39 例全绿；已装机；下载页新 UI 渲染验证通过（旧无 sourceUrl 数据平铺显示正常）
+- 待实测（用户配合）：图集帖点气泡 → 气泡上方条形卡 → 取消全选展开网格挑图 → 下载；下载页新图集记录自动归组
+- 风险：条形展开超高图集（>7 行）在 300dp 内滚动（窗口不无限长）；AsyncImage 加载原图做缩略图（coil 下采样，弱网首帧稍慢）；NOT_TOUCH_MODAL 下条形仅 15s 自动收起（dismiss timer 沿用）
+- 下一阶段入口：真机回归（累积项）→ release 签名 → `:downloader` 单测
+
 ## 阶段 18：图集全选/多选下载 UI（代码完成 · 2026-09-28，装机待实测确认）
 - 已完成（按 PLAN 阶段 18，PLAN 阶段 14-18 至此全部实现）：
   - **判定下沉 parser 模型**：`ParseResult.isAlbumMultiSelect`（多项且非"全视频变体组"）——弹窗/主界面/自动流水线三处共用同一语义；`autoDownloadCandidate` 简化为 `if (isAlbumMultiSelect) null else firstOrNull()`
