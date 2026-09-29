@@ -1,5 +1,14 @@
 # PROGRESS
 
+## 修复 10b：embed 通道污染加固（2026-09-28，提交 13426a2，模拟器离线待装机+复测）
+- 用户复测反馈"还是识别到别的视频"（修复 10 之后）——模拟器随后被关闭无法在线取证
+- **代码层排查**：修复 10 只加固了 WebView 通道（extractFromPageHtml）；解析优先级为 登录态 GraphQL（单帖节点无污染）→ **embed（全页 jsonField 扫描，embed 页含 Related reels 推荐区）** → WebView → oEmbed——**embed 是最后一条未加固路径**（GraphQL 被 IG 风控拒绝时落到它）
+- **修复 10b**：parseEmbed 复用 ownCodeSegment 按 code 切段（embed 数据无 code 字段时保持原样兼容）；video_url/display_url 提取限定正帖段，og meta/EmbeddedMediaImage 保持全页
+- **全通道成功日志**：private/embed 成功时打 media 清单（ctx.log → ParserEngine tag），加上 -page 通道与服务层日志——污染再现时 logcat 一步定位是哪条通道混入
+- 测试：构建+40 例全绿；**模拟器离线，装机与复测待用户开启模拟器后进行**
+- 复测核对点：复现时 `adb logcat -d -s ParserEngine FloatingWindowService DownloadEngine` 三组日志可完整还原通道与媒体来源
+- 下一阶段入口：装机+复测 → 若仍污染按日志定位（已无盲区）→ 真机回归
+
 ## 修复 10 + 竖条重排（用户实测反馈修正 · 2026-09-28，提交 e7f7a95）
 - 用户实测反馈四问题：识别到别的视频、403 复现、失败/进度/完成的气泡反馈没看到、竖条应竖向且贴气泡下方同宽
 - **修复 10（识别污染根因，最高优先）**：任务库+logcat 取证——失败的"图片"实为**别的 reel 的视频封面帧**（efg 解码 `CLIPS.xpids.720.video_default_cover_frame`）、失败的 mp4 是另一个 4 秒视频；dump 实测**IG items[0] 结构已变**：容器内嵌 3 个 code（2 个推荐流空壳块 video_versions=null + 正帖在最后），阶段 13 的"items[0] 只含正帖"假设失效，全段扫描把嵌块媒体混入
