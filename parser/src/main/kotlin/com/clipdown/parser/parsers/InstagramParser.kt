@@ -209,7 +209,7 @@ class InstagramParser : PlatformParser {
             platform = platform,
             resolverId = "$id-private",
             sourceUrl = "https://www.instagram.com/p/$code/",
-            media = media,
+            media = media.sanitized(),
             title = node["caption"]?.jsonObject?.str("text")?.take(60)
                 ?: (node["edge_media_to_caption"]?.jsonObject?.get("edges") as? JsonArray)
                     ?.firstOrNull()?.jsonObject?.get("node")?.jsonObject?.str("text")?.take(60),
@@ -221,6 +221,15 @@ class InstagramParser : PlatformParser {
     }
 
     private fun urlEncode(s: String): String = java.net.URLEncoder.encode(s, "UTF-8")
+
+    /**
+     * 出口强制清洗（修复 9 的最后一道防线）：解析各通道产出的媒体 URL 统一还原页面转义
+     * （`\/` 形态无论几层残留都清除——页面转义形态随版本变化，历史上有三条提取路径各自漏网）
+     * 并按 URL 去重（同图多形态提取产生的重复项）。
+     */
+    private fun List<MediaItem>.sanitized(): List<MediaItem> =
+        map { it.copy(url = it.url.replace("\\/", "/")) }
+            .distinctBy { it.url }
 
     /**
      * 截取正帖数据范围：`xdt_api__v1__media__shortcode__web_info.items[0]`。
@@ -380,7 +389,7 @@ class InstagramParser : PlatformParser {
             platform = platform,
             resolverId = "$id-page",
             sourceUrl = sourceUrl,
-            media = media,
+            media = media.sanitized(),
             title = HtmlUtil.meta(html, "og:title")?.take(60),
             author = HtmlUtil.jsonField(html, "username").firstOrNull()
                 ?: Regex("""instagram\.com/([A-Za-z0-9_.]+)/""").find(html)?.groupValues?.getOrNull(1),
@@ -434,6 +443,10 @@ class InstagramParser : PlatformParser {
 
         ctx.log(id, "embed 成功 media=${media.size} " + media.joinToString("|") { "${it.kind.name[0]}:${it.url.take(70)}" })
 
+        // embed 通道：含视频时图片一律为封面帧/重复候选（embed 页无图集结构信息），
+        // 单视频帖不该被判为图集——只保留视频
+        val finalMedia = if (media.any { it.kind == MediaKind.VIDEO }) media.filter { it.kind == MediaKind.VIDEO } else media
+
         val title = HtmlUtil.meta(html, "og:title") ?: HtmlUtil.title(html)
         val author = HtmlUtil.jsonField(html, "username").firstOrNull()
             ?: Regex("""instagram\.com/([A-Za-z0-9_.]+)/""").find(html)?.groupValues?.getOrNull(1)
@@ -442,7 +455,7 @@ class InstagramParser : PlatformParser {
             platform = platform,
             resolverId = "$id-embed",
             sourceUrl = sourceUrl,
-            media = media,
+            media = finalMedia.sanitized(),
             title = title,
             author = author,
             cover = poster ?: images.firstOrNull(),

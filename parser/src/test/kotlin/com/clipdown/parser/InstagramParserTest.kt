@@ -53,8 +53,12 @@ class InstagramParserTest {
         )
 
         assertTrue(result.resolverId.endsWith("-embed"))
+        // embed 含视频时只保留视频（封面图是视频的帧，不应作为独立媒体——修复 10c）
         assertTrue(result.media.any { it.kind.name == "VIDEO" && it.url.contains("video_720.mp4") })
-        assertTrue(result.media.any { it.kind.name == "IMAGE" })
+        assertTrue(
+            "视频帖不应带封面图媒体: ${result.media.map { it.kind }}",
+            result.media.none { it.kind.name == "IMAGE" }
+        )
         assertEquals("Test Reel by NASA", result.title)
     }
 
