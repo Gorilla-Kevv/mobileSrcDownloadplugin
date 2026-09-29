@@ -56,7 +56,7 @@ class InstagramParser : PlatformParser {
         val embedUrl = "https://www.instagram.com/p/$code/embed/captioned/"
         val embedHtml = runCatching { ctx.http.get(embedUrl, headers).body }.getOrNull()
         if (!embedHtml.isNullOrBlank()) {
-            val parsed = parseEmbed(embedHtml, url, code)
+            val parsed = parseEmbed(embedHtml, url, code, ctx)
             if (parsed.media.any { it.kind == MediaKind.VIDEO }) return parsed
             if (!parsed.isEmpty) {
                 // embed 只有图片时，先别急着返回——WebView 渲染页可能拿到视频（见 2.5）
@@ -202,6 +202,8 @@ class InstagramParser : PlatformParser {
         }
 
         if (media.isEmpty()) throw ParseException("登录态 GraphQL 未提取到媒体", platform)
+
+        ctx.log(id, "private 成功 media=${media.size} " + media.joinToString("|") { "${it.kind.name[0]}:${it.url.take(70)}" })
 
         return ParserDsl.result(
             platform = platform,
@@ -387,11 +389,15 @@ class InstagramParser : PlatformParser {
         )
     }
 
-    private fun parseEmbed(html: String, sourceUrl: String, code: String): ParseResult {
+    private fun parseEmbed(html: String, sourceUrl: String, code: String, ctx: ParseContext): ParseResult {
         val media = mutableListOf<MediaItem>()
         val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
 
-        HtmlUtil.jsonField(html, "video_url").firstOrNull()?.let { u ->
+        // 修复 10b：embed 页面同样含推荐流区块（Related reels）——按 code 切段只取正帖数据段；
+        // embed 数据里没有 code 字段时保持原样（兼容旧结构）
+        val segment = ownCodeSegment(html, code)
+
+        HtmlUtil.jsonField(segment, "video_url").firstOrNull()?.let { u ->
             media += MediaItem(
                 id = "ig-e-v",
                 url = u,
@@ -409,7 +415,7 @@ class InstagramParser : PlatformParser {
         val images = linkedSetOf<String>()
         Regex("""<img[^>]+class="[^"]*EmbeddedMediaImage[^"]*"[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             .findAll(html).forEach { images += HtmlUtil.unescapeHtmlOf(it.groupValues[1]) }
-        HtmlUtil.jsonField(html, "display_url").forEach { images += it }
+        HtmlUtil.jsonField(segment, "display_url").forEach { images += it }
         poster?.let { images += it }
 
         images.forEachIndexed { i, u ->
@@ -425,6 +431,8 @@ class InstagramParser : PlatformParser {
         }
 
         if (media.isEmpty()) return ParserDsl.result(platform, "$id-embed", sourceUrl, emptyList())
+
+        ctx.log(id, "embed 成功 media=${media.size} " + media.joinToString("|") { "${it.kind.name[0]}:${it.url.take(70)}" })
 
         val title = HtmlUtil.meta(html, "og:title") ?: HtmlUtil.title(html)
         val author = HtmlUtil.jsonField(html, "username").firstOrNull()
