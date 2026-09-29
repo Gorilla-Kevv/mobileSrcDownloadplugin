@@ -353,6 +353,21 @@ class InstagramParser : PlatformParser {
         Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(scope)?.let {
             images.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
+
+        // 修复 10d：WebView 渲染页对图集帖可能只给首图（实测 carousel_media=null、media_type=1，
+        // 子图数据走懒加载不进 HTML）——但图集子图已在 DOM 渲染为 <img>。兜底提取：
+        // 排除头像（t51.2885-19 / s150x150 尺寸）与已提取项，剩余内容图（t51.82787-15 + e35）
+        // 追加进候选；混入风险由竖条的用户挑选兜住。视频帖不做（其 media 只有视频）。
+        if (images.size <= 1 && videos.isEmpty()) {
+            Regex("""<img[^>]+src="(https://scontent[^"]+)"[^>]*>""").findAll(html).forEach { m ->
+                val u = HtmlUtil.unescapeHtmlOf(m.groupValues[1])
+                when {
+                    u.contains("t51.2885-19") || u.contains("s150x150") -> Unit
+                    images.any { it.substringBefore('?') == u.substringBefore('?') } -> Unit
+                    else -> images.add(u)
+                }
+            }
+        }
         images.filter { it.startsWith("http") }.take(12).forEachIndexed { i, u ->
             media += MediaItem(
                 id = "ig-w-i-$i",
