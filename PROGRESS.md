@@ -1,5 +1,14 @@
 # PROGRESS
 
+## 修复 10c：embed 单视频帖媒体净化（2026-09-29，提交 3dc7e61，用户日志定位）
+- 用户复测日志（"解析成功 ig-local-v1-embed media=3"）揭示真正的"识别到别的视频"形态：**embed 通道把单视频帖解析成 1 视频 + 2 张封面帧图**（同一封面 URL 的两种提取形态：EmbeddedMediaImage img 标签 + display_url jsonField，转义形态不同未被去重）→ media=3 且混合形态 → `isAlbumMultiSelect=true` → 弹图集竖条全选 → 用户下载到"视频+2 张封面图"，观感即"串到别的视频"（封面图打开是图片）。**识别本身没串**（视频 URL 正确）
+- **修复 10c**：
+  - **embed 语义修正**：`video_url` 存在时（单视频帖）媒体只保留视频——封面帧图全部丢弃，media=1 → `isAlbumMultiSelect=false` → 走自动下载单视频闭环（图集帖无 video_url 不受影响）
+  - **出口统一清洗**：三条通道（private/page/embed）返回前统一 `sanitized()`——URL 还原 `\/` 转义（无论几层残留）+ 按 URL 去重（同图多形态提取的重复项合并）；与 DownloadController 入口清洗构成双保险
+  - 日志还确认 embed 通道确实在用（GraphQL 被拒后落到 embed）——10b 的 embed code 段隔离有效
+- 测试：40 例全绿（"无 Cookie 走 embed"用例更新为断言视频帖不带封面图媒体）；已装机，日志已清
+- 下一阶段入口：用户复测 reel（预期：竖条不再出现，黄→蓝→紫单视频自动落盘）→ 图集帖复测竖条 → 真机回归
+
 ## 修复 10b：embed 通道污染加固（2026-09-28，提交 13426a2，模拟器离线待装机+复测）
 - 用户复测反馈"还是识别到别的视频"（修复 10 之后）——模拟器随后被关闭无法在线取证
 - **代码层排查**：修复 10 只加固了 WebView 通道（extractFromPageHtml）；解析优先级为 登录态 GraphQL（单帖节点无污染）→ **embed（全页 jsonField 扫描，embed 页含 Related reels 推荐区）** → WebView → oEmbed——**embed 是最后一条未加固路径**（GraphQL 被 IG 风控拒绝时落到它）
