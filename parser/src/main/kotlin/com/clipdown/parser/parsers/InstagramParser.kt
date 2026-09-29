@@ -44,6 +44,8 @@ class InstagramParser : PlatformParser {
         val cookie = ctx.cookieProvider(platform)
         val headers = ctx.headersFor(platform, desktop = false) +
             mapOf("Referer" to "https://www.instagram.com/", "Accept" to "*/*")
+        // 通道选择取证：登录态缺失时 private 被跳过，图集子图数据（carousel）只有 GraphQL 能给全
+        ctx.log(id, "通道选择 cookie=${!cookie.isNullOrBlank()} code=$code")
 
         // 1) 登录态直连：__a=1 老接口已废，改为带 Cookie 抓帖子页 HTML，提取 og:video / video_url / sidecar
         if (!cookie.isNullOrBlank()) {
