@@ -108,7 +108,7 @@ class M3u8Downloader(
         }
     }
 
-    private fun decrypt(
+    internal fun decrypt(
         raw: ByteArray,
         segment: M3u8Segment,
         headers: Map<String, String>,
@@ -121,20 +121,27 @@ class M3u8Downloader(
         // 未显式声明 IV 时，HLS 约定使用分片序号的 16 字节大端表示
         val iv = key.ivHex?.let { hexToBytes(it) } ?: sequenceIv(index)
         return runCatching {
-            val cipher = Cipher.getInstance("AES/CBC/PKCS7Padding")
+            val cipher = aesCipher()
             cipher.init(Cipher.DECRYPT_MODE, SecretKeySpec(keyBytes, "AES"), IvParameterSpec(iv))
             cipher.doFinal(raw)
         }.getOrDefault(raw)
     }
 
-    private fun sequenceIv(sequence: Int): ByteArray = ByteArray(16).apply {
+    /**
+     * HLS 规范里 AES-128 用 PKCS7 填充；部分 JCE 提供方（桌面 JVM 的 SunJCE）只注册了 PKCS5Padding，
+     * 而两者对 16 字节块的 AES 完全等价。这里做降级，保证纯 JVM 单测与非 Android 运行时同样可解。
+     */
+    private fun aesCipher(): Cipher = runCatching { Cipher.getInstance("AES/CBC/PKCS7Padding") }
+        .getOrElse { Cipher.getInstance("AES/CBC/PKCS5Padding") }
+
+    internal fun sequenceIv(sequence: Int): ByteArray = ByteArray(16).apply {
         this[12] = (sequence ushr 24).toByte()
         this[13] = (sequence ushr 16).toByte()
         this[14] = (sequence ushr 8).toByte()
         this[15] = sequence.toByte()
     }
 
-    private fun hexToBytes(hex: String): ByteArray {
+    internal fun hexToBytes(hex: String): ByteArray {
         val s = hex.removePrefix("0x").removePrefix("0X")
         return ByteArray(16) { i ->
             if (i * 2 + 1 < s.length) s.substring(i * 2, i * 2 + 2).toInt(16).toByte() else 0

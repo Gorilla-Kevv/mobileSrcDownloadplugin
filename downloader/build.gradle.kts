@@ -20,6 +20,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+
+    // 纯 JVM 单测：Android 方法走 stub 默认值（MediaRemuxer 等路径会触达 android.media）
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {
@@ -30,4 +35,6 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.1")
+
+    testImplementation("junit:junit:4.13.2")
 }

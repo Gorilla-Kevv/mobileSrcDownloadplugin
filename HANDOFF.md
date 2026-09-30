@@ -28,16 +28,17 @@
 9. **测试注入坑**：应用 task 前台时 `am start SEND` 被 delivered-to-top（先 force-stop/HOME）；`adb shell` 内脚本用单引号防 `$i` 被本地展开；`MSYS_NO_PATHCONV=1` 防 Git Bash 改写设备路径
 10. **Git Bash 环境**：`build.bat` 不可用（中文注释撞代码页）→ 见下方命令；PowerShell 不支持 heredoc
 11. Piped 公共实例经常性波动（YouTube 解析失败文案"需要远端解析"是预期降级）；模拟器 ping 不通外网正常（ICMP）
-12. 诊断通道：日志 tag `ig-local-v1`（ctx.log：通道选择/GraphQL 失败原因/解析成功 media 清单）、`FloatingWindowService`（media 结果+污染取证）、`DownloadEngine`（终态失败+URL）；**sqlite 任务库是 403 取证位**：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"`；WebView 抓取页落盘 `/sdcard/Android/data/com.clipdown.app/files/debug_last_page.html`
+12. **HLS 解密变换的运行时差异**：`AES/CBC/PKCS7Padding` 只有 Android/BC 注册，桌面 JVM（SunJCE）会抛 `NoSuchPaddingException`——曾被 `runCatching` 静默吞成"解密失效、直接落密文"。已改为 PKCS7→PKCS5 降级；**任何 `Cipher.getInstance` 的失败都不要静默吞，至少打日志**
+13. 诊断通道：日志 tag `ig-local-v1`（ctx.log：通道选择/GraphQL 失败原因/解析成功 media 清单）、`FloatingWindowService`（media 结果+污染取证）、`DownloadEngine`（终态失败+URL）；**sqlite 任务库是 403 取证位**：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"`；WebView 抓取页落盘 `/sdcard/Android/data/com.clipdown.app/files/debug_last_page.html`
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
-- 测试：`:parser:test` **40 例**（UrlUtil/Parser/X/IG/XHS/M3u8/Registry + 修复 8/9/10 回归用例）
+- 测试：`:parser:test` **40 例**；`:downloader:testDebugUnitTest` **30 例**（HttpFileDownloader/M3u8Downloader/MediaRemuxer/TaskModels/DownloadController；自建 JDK `TestHttpServer`，无新增依赖）
 - adb：需非沙箱执行；装机后 `appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow` + `settings put secure enabled_accessibility_services ...`；服务 `am start-foreground-service -n com.clipdown.app/.floatwindow.FloatingWindowService`
 - 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
 ## 状态
-- 当前：**修复 10d 已装机，待用户复测图集竖条**（预期：图集帖点气泡弹出含全部子图的竖条，挑选下载）。本 session 已完成：PLAN 阶段 14-18 全部 + 单击气泡 toggle 交互体系 + 下载页分组 + 修复 8（URL query 截断）/9（双重转义 403）/10（items[0] 污染）/10b（embed 隔离）/10c（单视频净化）/10d（DOM 图集兜底）+ 竖条重排（正下方 64dp 同宽）
-- 验收标准：`assembleDebug` + `:parser:test`（40 例）全绿 + 模拟器/真机关键链路实测
-- 下一步：①用户复测图集竖条 ②真机回归（累积项：60fps、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值、IG GraphQL 在家宽下的表现）③release 签名+R8 ④`:downloader` 单测（可复用 FakeHttp）
+- 当前：**修复 10d 已装机，待用户复测图集竖条**（预期：图集帖点气泡弹出含全部子图的竖条，挑选下载）。本 session 已完成：PLAN 阶段 14-18 全部 + 单击气泡 toggle 交互体系 + 下载页分组 + 修复 8（URL query 截断）/9（双重转义 403）/10（items[0] 污染）/10b（embed 隔离）/10c（单视频净化）/10d（DOM 图集兜底）+ 竖条重排（正下方 64dp 同宽）+ **阶段 21 `:downloader` 单测 30 例**
+- 验收标准：`assembleDebug` + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿 + 模拟器/真机关键链路实测
+- 下一步：①用户复测图集竖条 ②真机回归（累积项：60fps、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值、IG GraphQL 在家宽下的表现）③release 签名+R8 ④`:downloader` 剩余覆盖（TaskDatabase/MediaStoreWriter/Notifier/DownloadEngine，需 Robolectric 或仪器化）
 - 文档：PROGRESS.md 全阶段记录（阶段 1-20 + 修复 8/9/10 系列）；PLAN.md（阶段 14-18 计划，已全部实现）

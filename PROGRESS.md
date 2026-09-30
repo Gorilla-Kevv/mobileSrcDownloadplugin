@@ -1,5 +1,21 @@
 # PROGRESS
 
+## 阶段 21：`:downloader` 单测（2026-10-01，代码完成 · 30 例全绿）
+- 背景：主线回归项里唯一不依赖真机/模拟器、可自主收口的一项（HANDOFF 下一步 ④）
+- **测试基建**：`downloader/build.gradle.kts` 新增 `testOptions { unitTests.isReturnDefaultValues = true }`（触达 `android.media` 的路径走 stub 默认值）+ `testImplementation("junit:junit:4.13.2")`；**未引入新依赖**——HTTP 服务端用 `TestHttpServer.kt`（纯 JDK `ServerSocket`，支持 Range 206/全量 200/任意状态码/HEAD/分块慢速响应 + 记录请求头供断言，可替代 mockwebserver，避免联网拉包）
+- **覆盖**（5 个测试类 / 30 例）：
+  - `HttpFileDownloaderTest`（7）：全量落盘、**续传 Range 头断言 `bytes=N-` 且结果完整**、服务端不支持 Range 时**从头覆盖**（脏数据不残留）、404 → `DownloadHttpException(code)`、取消 → `DownloadCanceledException` 且文件未写满、`probe()` 解析 Content-Length/Content-Type/Accept-Ranges、probe 错误码
+  - `M3u8DownloaderTest`（9）：`sequenceIv` 大端、`hexToBytes`（0x 前缀/短输入补零）、**AES-128 解密（序号 IV / 显式 IV）**、key 取不到降级直通、媒体列表分片按序拼接、主列表**选最高带宽档**、分片失败抛 `DownloadHttpException`
+  - `MediaRemuxerTest`（4）：`concatSegments` 顺序拼接/空列表失败、`concatInitAndMedia` init 在前/输入缺失失败
+  - `TaskModelsTest`（6）：终态/活跃态判定、progress（完成=1、未知总量=0、>1 钳制）、DownloadConfig 默认值
+  - `DownloadControllerTest`（4）：**修复 9 第二道防线 `sanitizeTaskUrl` 回归**（`\/` 单层/双层均清）、`guessExt`（忽略 query/回落 mp4）
+- **生产代码改动（3 处，均为可视化/可测化，无行为变更）**：`M3u8Downloader` 的 `decrypt/sequenceIv/hexToBytes` private→internal；`DownloadController.guessExt` private→internal 并抽出 `internal fun sanitizeTaskUrl`（原内联 `replace("\\/","/")`）
+- **顺带修复（真问题）**：`M3u8Downloader.decrypt` 原先硬编码 `AES/CBC/PKCS7Padding`——SunJCE（桌面 JVM）未注册该变换，`Cipher.getInstance` 抛异常后被 `runCatching` 静默吞掉，**解密静默失效、直接落密文**（Android 上正常，跨运行时必踩）。改为 PKCS7 优先、PKCS5 降级（对 16 字节块 AES 完全等价，Android 行为不变）
+- 定性记录：HLS 分片失败**不做静默降级**，异常上抛由 `DownloadEngine.runCatching` + 退避重试统一兜（与返回 false 殊途同归），测试按真实契约断言
+- 未覆盖（需 Robolectric/仪器化，暂不做）：`TaskDatabase`（SQLiteOpenHelper）、`MediaStoreWriter`、`Notifier`、`DownloadEngine` 并发调度、`remuxToMp4/mergeTracks`（MediaExtractor/MediaMuxer）
+- 测试结果：`assembleDebug` + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿
+- 下一阶段入口：用户复测图集竖条 → 真机回归（累积项）→ release 签名 + R8
+
 ## 修复 10d：WebView 图集 DOM 兜底提取（2026-09-29，提交 4827788，待用户复测）
 - 用户复测：图集帖"变成自动下载没有跳出竖条"（视频帖修复确认 ✓）
 - 取证链：解析日志 `ig-local-v1-page media=1` → dump 分析（该图集帖 items[0] `carousel_media=null`、`media_type=1`、仅 1 个 image_versions2 块=顶层首图）→ **IG 给 WebView 渲染页的图集数据残缺，子图不进 JSON** → media=1 被判单资源自动下载首图

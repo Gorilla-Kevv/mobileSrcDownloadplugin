@@ -71,7 +71,7 @@ object DownloadController {
     fun enqueue(item: MediaItem, platform: Platform, title: String?, sourceUrl: String? = null): String {
         // 入口兜底（修复 9 的第二道防线）：不管解析哪条路径漏了转义，入库 URL 必须干净——
         // 页面转义形态随版本变化，曾出现 video_versions 单层 \/ 残留导致 CDN 403
-        val cleanUrl = item.url.replace("\\/", "/")
+        val cleanUrl = sanitizeTaskUrl(item.url)
         val kind = when {
             item.isPlaylist || item.container == "m3u8" ||
                 cleanUrl.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS
@@ -121,6 +121,12 @@ object DownloadController {
     fun resume(taskId: String) = engine().resume(taskId)
     fun cancel(taskId: String) = engine().cancel(taskId)
 
-    private fun guessExt(url: String): String =
+    /**
+     * 入口 URL 兜底清洗：IG 页面数据的 JSON-in-JS 转义残留曾导致 CDN 403（修复 9 第二道防线）。
+     * 单独暴露以便单测锁定：无论解析侧漏了哪条路径，入库 URL 都不允许出现字面 `\/`。
+     */
+    internal fun sanitizeTaskUrl(url: String): String = url.replace("\\/", "/")
+
+    internal fun guessExt(url: String): String =
         url.substringBefore('?').substringAfterLast('.', "mp4").takeIf { it.length in 2..4 } ?: "mp4"
 }
