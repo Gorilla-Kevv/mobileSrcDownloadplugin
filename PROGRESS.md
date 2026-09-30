@@ -1,5 +1,16 @@
 # PROGRESS
 
+## 修复 10d：WebView 图集 DOM 兜底提取（2026-09-29，提交 4827788，待用户复测）
+- 用户复测：图集帖"变成自动下载没有跳出竖条"（视频帖修复确认 ✓）
+- 取证链：解析日志 `ig-local-v1-page media=1` → dump 分析（该图集帖 items[0] `carousel_media=null`、`media_type=1`、仅 1 个 image_versions2 块=顶层首图）→ **IG 给 WebView 渲染页的图集数据残缺，子图不进 JSON** → media=1 被判单资源自动下载首图
+- **子图实际在 DOM**：dump3 img 特征分析——头像（t51.2885-19 / s150x150）×4 + 内容图（t51.82787-15 + stp=dst-jpg_e35_tt6）×6
+- **修复**：extractFromPageHtml 图片提取后，当 `images.size<=1 && videos.isEmpty()`（疑似被简化的图集）时扫 DOM `<img>` 兜底——排除头像路径/小尺寸与已提取项，剩余内容图追加进候选；混入风险由竖条的用户挑选兜住（不再自动误下）
+- 附带诊断：GraphQL（唯一含完整图集数据的通道）本次返回 HTML 页（"GraphQL 返回异常格式"，会话-IP 绑定风控，阶段 6 定性的老问题在代理环境无 App 层解）；embed 通道已废（页面无媒体数据）；通道选择日志（cookie 状态+code，提交 f926c72）
+- 测试：构建+40 例全绿；已装机+日志清空
+- 改动文件：`parser/parsers/InstagramParser.kt`（DOM 兜底）、`parser/test/.../InstagramParserTest.kt`（无新增，既有用例回归）
+- 风险：DOM 兜底可能混入页面推荐流内容图（由竖条挑选兜住）；GraphQL 风控为环境级问题（真机+家宽大概率消失）
+- 下一阶段入口：用户复测图集竖条（预期全子图出现在竖条）→ 真机回归 → release
+
 ## 修复 10c：embed 单视频帖媒体净化（2026-09-29，提交 3dc7e61，用户日志定位）
 - 用户复测日志（"解析成功 ig-local-v1-embed media=3"）揭示真正的"识别到别的视频"形态：**embed 通道把单视频帖解析成 1 视频 + 2 张封面帧图**（同一封面 URL 的两种提取形态：EmbeddedMediaImage img 标签 + display_url jsonField，转义形态不同未被去重）→ media=3 且混合形态 → `isAlbumMultiSelect=true` → 弹图集竖条全选 → 用户下载到"视频+2 张封面图"，观感即"串到别的视频"（封面图打开是图片）。**识别本身没串**（视频 URL 正确）
 - **修复 10c**：

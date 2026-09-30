@@ -2,63 +2,42 @@
 
 ## 项目
 - 路径：`F:\schoolCompWorks\clone\mobileSrcDownloadplugin`
-- 技术栈：Kotlin 2.0.21 + Jetpack Compose (BOM 2024.10.01)，AGP 8.7.3，Gradle 8.9，minSdk 26 / target & compile 34
-- 模块：`:app`（UI/悬浮窗/剪贴板四通道）、`:parser`（纯 JVM 解析内核）、`:downloader`（Android Library 下载引擎）
-- 版本控制：`main` 分支，远程 `origin = https://github.com/Gorilla-Kevv/mobileSrcDownloadplugin.git`（私有，gh 账号 Gorilla-Kevv），已推送跟踪
-- 开发环境（**全部在 F 盘**）：JDK17 `F:\AndroidDev\jdk\jdk-17.0.20.1+1`，SDK `F:\AndroidDev\sdk`，Gradle `F:\AndroidDev\gradle-8.9`，缓存 `F:\AndroidDev\.gradle`；统一构建脚本 `F:\AndroidDev\build.bat`（内含全套环境变量）
+- 技术栈：Kotlin 2.0.21 + Compose (BOM 2024.10.01)，AGP 8.7.3，minSdk 26 / target 34
+- 模块：`:app`（UI/悬浮窗/剪贴板四通道）、`:parser`（纯 JVM 解析内核）、`:downloader`（下载引擎）
+- git：main，remote `github.com/Gorilla-Kevv/mobileSrcDownloadplugin`（私有），全部已推送
+- 环境（全在 F 盘）：JDK17 `F:\AndroidDev\jdk\jdk-17.0.20.1+1`，SDK `F:\AndroidDev\sdk`，缓存 `F:\AndroidDev\.gradle`；模拟器 AVD `clip34`（1080x2400，时钟 GMT，重启清剪贴板）
 
 ## 目标
-- 已达成：剪贴板/分享/无障碍识别 → 解析 → 悬浮窗内下载闭环；IG/X/YouTube/小红书/B站 实测（详见 PROGRESS 阶段 1-13）
-- 非目标：不内嵌 Python/yt-dlp；不引第三方下载 SDK；不绕过付费墙
+- 已达成：剪贴板四通道/分享/无障碍 → 点气泡识别 → 自动流水线（解析→单视频/图下载，图集竖条挑选）→ 下载闭环；下载页图集分组与来源回看；IG/X/YouTube 实测（详见 PROGRESS 阶段 1-20 与修复 8/9/10 系列）
+- 非目标：不内嵌 yt-dlp；不绕过付费墙
 
 ## 结构（关键路径，勿读全仓库）
-- 解析内核：`parser/src/main/kotlin/com/clipdown/parser/`
-  - `core/ParserEngine.kt`（`parse / parseText / quickDetect`，quickDetect 供悬浮窗快判）
-  - `core/UrlUtil.kt`（召回/归一化（剥 mediaViewer 变体与弯引号）/去跟踪参数/平台判定/短链判定）
-  - `parsers/InstagramParser.kt`（**ownPostScope 正帖隔离** + 新版 xdt_api 结构提取，见坑 15/16）、`parsers/HtmlUtil.kt`
-  - 其余 `parsers/*Parser.kt`、`core/PlatformRegistry.kt`、`core/RemoteResolver.kt`（cobalt 兜底）、`stream/M3u8.kt`
-- 下载引擎：`downloader/`：`DownloadController.kt`（门面）、`engine/DownloadEngine.kt`（**终态事件已补发**）、`HttpFileDownloader`（Range 续传）、`M3u8Downloader`（AES-128）、`MediaRemuxer`、`db/TaskDatabase`（手写 SQLite）、`storage/MediaStoreWriter`
-- App 层：`app/src/main/java/com/clipdown/app/`
-  - `clip/ClipAccessibilityService.kt`（**四通道**：复制特征借道/剪贴板直读/窗口逐节点扫描/复制提示文本；尾部合并防抖）
-  - `clip/ClipGateActivity.kt`（借道前台读剪贴板，**taskAffinity="" 独占任务栈**，onWindowFocusChanged 时机）
-  - `clip/LinkCenter.kt`（通道汇聚+15s 去重）、`ClipboardMonitor`、`ShareTargetActivity`、`BootReceiver`
-  - `floatwindow/FloatingWindowService.kt`（**交互：单击气泡=读剪贴板+force 自动流水线（不依赖无障碍）**；自动流水线 autoRecognize：解析→单资源/视频变体组自动下载，图集回退选择卡；守卫=pipelineUrls/suppressedUrls Map/popupFreeForAuto；失败退避熔断+wifiOnly 保险丝；下载详情卡 autoTasks；**三徽标=绿搁置/黄解析中N/蓝下载中M**（阶段 16）；气泡=BubblePhase 状态机驱动动效；单击/双击 View 级计时；ACTION_DEBUG_PHASE adb 调试通道）、`floatwindow/BubblePhase.kt`（**气泡 7 相位状态机，纯 Kotlin**）、`ClipPopupContent.kt`（毛玻璃卡/迷你提示卡/**下载详情卡**）、`PopupUiState.kt`（Mini/Loading/Ready/Failed/**Downloads**）
-  - `clip/WebViewHtmlFetcher.kt`（Cookie 注入渲染抓取+轮询探针+**debug_last_page.html 落盘**）
-  - `data/CookieStore.kt`（SP `clipdown_cookies`，key=platform.id）、`data/SettingsRepository.kt`（DataStore，含 `seen_links` 识别记忆）
-- 文档：`README.md`、`docs/01~05`、`PROGRESS.md`（阶段 1-13 全记录）、`PLAN.md`（阶段 14-18 开发计划）
+- 解析：`parser/`——`core/ParserEngine.kt`（quickDetect/parseSafe/配置热更新）、`core/UrlUtil.kt`（召回/归一化/平台判定）、`parsers/InstagramParser.kt`（**四通道降级：GraphQL→embed→WebView→oEmbed；ownPostScope+ownCodeSegment 双重隔离；DOM 图集兜底；sanitized 出口清洗**）、`parsers/HtmlUtil.kt`（unescapeJson 双层解码修复 9）
+- 下载：`downloader/`——`DownloadController.kt`（enqueue/enqueueAll 带 sourceUrl+入口 URL 清洗）、`engine/DownloadEngine.kt`（终态失败日志）、`db/TaskDatabase.kt`（v2：source_url 列）
+- App：`app/clip/`（四通道+ClipGateActivity+WebViewHtmlFetcher 轮询探针+debug_last_page.html 落盘）、`app/floatwindow/`——`FloatingWindowService.kt`（**单击气泡 toggle 竖条；BubblePhase 7 相位动效；autoRecognize 流水线+保险丝（wifiOnly/失败退避）**；`ClipPopupContent.kt`（**SideBarContainer 64dp 竖条：Mini/图集两形态**+居中卡）、`PopupUiState.kt`、`BubblePhase.kt`）、`app/ui/downloads/DownloadsScreen.kt`（图集分组/打开/来源）、`app/data/SettingsRepository.kt`（autoDownload/seen_links 等）
 
-## 决策与坑
-- 已做决策：三模块单向依赖；`:parser` 纯 JVM；手写 SQLite；DataStore 热更新；Compose 弹窗反射挂 LifecycleOwner（坑 3 勿改回）
-- 已知坑（1-13 见 PROGRESS 阶段记录，14+ 为悬浮窗/IG 专项）：
-  14. **无障碍 `packageNames=""`（空串）= 空数组 = 零事件**：不写该属性才收全部包。模拟器 `adb install -r` 或反复 `settings put` 切换后会出现「Bound 但事件永不派发」假死——卸载重装后**首次启用**可靠；彻底恢复需重启模拟器
-  15. **IG 数据结构已迁移**：`video_url/playable_url/display_url` 全消失 → `video_versions:[{width,height,url}]` / `image_versions2.candidates`（URL 含 `\/` 与 `\u0025` 双重转义）；解析范围必须限定 `xdt_api__v1__media__shortcode__web_info.items[0]`（正帖容器）——页面内嵌「更多帖子」推荐流（image_versions2 达 35 个），全页扫描会把陌生帖视频混进结果
-  16. **/p/ 与 /reel/ 服务端渲染行为不同**：WebView fetch 硬编码 /reel/ 会让 /p/ 链接白等 40s 超时；已改原路径优先。`/p/`+登录态 5.5s 即出媒体页（1556KB）
-  17. **Android 10+ 剪贴板后台读取被拒**（无障碍服务也无豁免，ClipboardService Deny）：复制特征（Toast"已复制"/窗口提示文本）→ 借道 ClipGateActivity；gate 必须在 `onWindowFocusChanged` 读（onResume 早于焦点授予必被拒）
-  18. **IG 风控**（2026-09-28）：高频登录态解析 + 模拟器 + 数据中心 IP 触发 "Your email address may not be secure" 强制页，App feed 刷新失败即此因（非网络问题；宿主 Clash→IG 200 验证过）。解法=完成验证/换号/降频/住宅 IP
-  19. **Cookie adb root 注入法**：写 `/data/data/com.clipdown.app/shared_prefs/clipdown_cookies.xml`（key=`instagram`）+ chown **当前 uid**（重装后 uid 会变 10204→10205，chown 旧 uid = 读不到，注入 0 字符）→ force-stop 重启生效。验证信号：WebView title 从 "unavailable" 变 "Instagram"
-  20. **mediaViewer 变体绕过去重**：视频播放时 X 地址栏变 `/mediaViewer`，字符串不同即重弹——normalize 已剥离；主页/登录页 URL（无 pathHints）也已过滤不弹窗
-  21. PowerShell **不支持 heredoc**（`cat <<EOF`）→ git 多行提交用 `git commit -F 文件`；git 偶发不在 PATH，用完整路径 `C:\Program Files\Git\cmd\git.exe`
-  22. 模拟器时钟时区为 GMT（显示差 8h，绝对时间同步，TLS 不受影响）；模拟器 ping 不通外网属正常（ICMP 不走 http_proxy）
-  23. 下载引擎终态（MERGING/COMPLETED/FAILED）曾从不发进度事件（文件落盘但 UI 卡 100%）——已在 DownloadEngine execute/runTask 补发，勿删
-  24. **Compose 内容加 `pointerInput` 会杀掉 View 级触摸监听**：气泡拖拽在 ComposeView 的 setOnTouchListener 实现，前提是 Compose 内容不认领事件；给气泡加任何手势修饰符（如 detectTapGestures）后 View 监听器收不到 DOWN，拖拽失效——单击/双击/拖拽全在 View 监听器内实现（双击=250ms 计时窗口，单击延迟执行）
-  25. **持续相位必须显式收口**：BubblePhase 的 Parsing/Downloading 无自动回退，弹窗超时收起（hidePopup）和 parse 结果早退分支都会把 Parsing 收口回 Idle（Downloading 除外——后台下载进度环要保留）；新增流程路径时检查相位是否会卡死
-  26. **Git Bash 环境两坑**：`F:\AndroidDev\build.bat` 在 Git Bash 下必报"命令语法不正确"（UTF-8 中文注释撞 cmd 代码页）→ 直接 `export JAVA_HOME=F:\AndroidDev\jdk\jdk-17.0.20.1+1 GRADLE_USER_HOME=F:\AndroidDev\.gradle ANDROID_HOME=F:\AndroidDev\sdk` 后调 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=...`；MSYS 路径转换会改写 adb shell 里的 `/sdcard/...` 设备路径 → 命令前加 `MSYS_NO_PATHCONV=1`，adb pull 本地目标用相对路径；adb shell 内脚本变量用单引号包整个命令（双引号会让本地 bash 展开掉 `$i`）
-  27. **adb `am start SEND` 在应用 task 前台时被 delivered-to-top**（result code=3，intent 投给顶部 MainActivity，ShareTargetActivity.onCreate 不执行、LinkCenter 不触发）→ 分享通道测试前必须 `am force-stop` 或 HOME 切后台；真实用户路径（其他 App 里点分享）无此问题
-  28. **修复 8（已修）**：URL_PATTERN 曾把半角 `?` 列入排除集，带 query 的链接从文本召回时 query 被截断（YouTube ?v= 丢 ID、XHS xsec_token/IG img_index 丢失）——URL_PATTERN/BARE_HOST_PATTERN 排除集已移除半角 `?` 保留全角 `？`，UrlUtilTest 有 3 个回归用例勿删
-  29. **Piped 公共实例经常性波动**（2026-09-28 全实例挂：526/301/502/500）——YouTube 解析失败文案"需要远端解析服务"是预期降级；验证 YouTube 链路前先宿主机 curl `https://<instance>/streams/<id>` 探测实例健康
-  30. **IG 页面数据是 JSON-in-JS 双重转义**：`/` 写作 `\\/`、`%` 写作 `\\u0025`——任何从页面 HTML 正则提取的字符串必须走 unescapeJson（已修复为双层解码，修复 9）；直接走 kotlinx/JSON 解析的路径不受影响。排查下载 403 的固定手法：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"` 看 FAILED 任务的 URL 是否带字面反斜杠
+## 决策与坑（活坑，按影响排序）
+1. **IG 页面 JSON-in-JS 双重转义**（`\/`→源码 `\\/`）：三条提取路径曾各自漏网（修复 9 unescapeJson 双层解码 + enqueue 入口清洗双保险）；**任何新提取路径必须过 unescapeJson**
+2. **IG items[0] 内嵌推荐块**（2026-09 结构：items[0] 含 3 个 code）→ 修复 10 `ownCodeSegment` 按 code 切段；**新增提取限定正帖段**
+3. **图集帖 WebView 数据残缺**：`carousel_media=null`、media_type=1，子图只渲染在 DOM → 修复 10d DOM img 兜底（排除头像 t51.2885-19/s150x150）；仅 `images.size<=1 && videos.isEmpty()` 时触发
+4. **embed 通道已废**（页面无媒体数据）且**有视频时只留视频**（修复 10c，封面帧不作独立媒体）；**GraphQL 是图集完整数据唯一来源**，但代理环境下被会话-IP 风控拒（返回 HTML，无 App 层解，真机可解）
+5. **URL query 截断**（修复 8）：URL_PATTERN 排除集勿加回半角 `?`
+6. **Compose pointerInput 会杀 View 级触摸监听**：气泡拖拽/单击双击全在 View `setOnTouchListener`（坑 24）；**BubblePhase 的 Parsing/Downloading 是持续相位，新流程路径必须显式收口**（坑 25）
+7. **无障碍**：manifest 勿写 `packageNames`；`adb install -r` 会清授权且可能假死（卸载重装首次启用或重启模拟器）；Android 10+ 后台剪贴板被拒，依赖借道 ClipGateActivity（onWindowFocusChanged 时机）
+8. **uid 漂移**：重装后 uid 变化，adb root 写 SP 后 chown 需按新 uid
+9. **测试注入坑**：应用 task 前台时 `am start SEND` 被 delivered-to-top（先 force-stop/HOME）；`adb shell` 内脚本用单引号防 `$i` 被本地展开；`MSYS_NO_PATHCONV=1` 防 Git Bash 改写设备路径
+10. **Git Bash 环境**：`build.bat` 不可用（中文注释撞代码页）→ 见下方命令；PowerShell 不支持 heredoc
+11. Piped 公共实例经常性波动（YouTube 解析失败文案"需要远端解析"是预期降级）；模拟器 ping 不通外网正常（ICMP）
+12. 诊断通道：日志 tag `ig-local-v1`（ctx.log：通道选择/GraphQL 失败原因/解析成功 media 清单）、`FloatingWindowService`（media 结果+污染取证）、`DownloadEngine`（终态失败+URL）；**sqlite 任务库是 403 取证位**：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"`；WebView 抓取页落盘 `/sdcard/Android/data/com.clipdown.app/files/debug_last_page.html`
 
 ## 命令
-- 构建：`F:\AndroidDev\build.bat :app:assembleDebug --console=plain`
-- 测试：`F:\AndroidDev\build.bat :parser:test --console=plain`（**7 套件 35 例**，全绿）
-- 产物：`app/build/outputs/apk/debug/app-debug.apk`
-- 模拟器：见坑 11（启动带 `-http-proxy http://10.0.2.2:7890`）；装 APK `adb install -r`；预授权 `adb shell appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow`；无障碍 `adb shell settings put secure enabled_accessibility_services com.clipdown.app/com.clipdown.app.clip.ClipAccessibilityService` + `settings put secure accessibility_enabled 1`
+- 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
+- 测试：`:parser:test` **40 例**（UrlUtil/Parser/X/IG/XHS/M3u8/Registry + 修复 8/9/10 回归用例）
+- adb：需非沙箱执行；装机后 `appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow` + `settings put secure enabled_accessibility_services ...`；服务 `am start-foreground-service -n com.clipdown.app/.floatwindow.FloatingWindowService`
+- 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
 ## 状态
-- 当前状态：**PLAN 阶段 14-18 全部实现**（14 气泡动效 / 15 自动流水线 / 15+ 单击识别交互 / 16 三徽标 / 17 reels 403 修复 / 18 图集多选）。阶段 18 已装机，图集批量下载待用户实测确认
-- 验收标准：`assembleDebug` + `:parser:test`（39 例）全绿；模拟器/真机实测关键链路
-- 下一步（主线回归）：
-  1. **真机回归**（累积项：60fps、下载详情卡点击分流、wifiOnly/退避熔断、双链接并发徽标峰值、图集批量下载 PLAN 验收）
-  2. release 签名 + R8 验证
-  3. `:downloader` 单测（可复用 FakeHttp 思路）
-- 旧任务（已完成或降级）：~~IG 风控解除~~（已解除并实测全通）；~~PLAN 阶段 14-18~~（全部完成）
+- 当前：**修复 10d 已装机，待用户复测图集竖条**（预期：图集帖点气泡弹出含全部子图的竖条，挑选下载）。本 session 已完成：PLAN 阶段 14-18 全部 + 单击气泡 toggle 交互体系 + 下载页分组 + 修复 8（URL query 截断）/9（双重转义 403）/10（items[0] 污染）/10b（embed 隔离）/10c（单视频净化）/10d（DOM 图集兜底）+ 竖条重排（正下方 64dp 同宽）
+- 验收标准：`assembleDebug` + `:parser:test`（40 例）全绿 + 模拟器/真机关键链路实测
+- 下一步：①用户复测图集竖条 ②真机回归（累积项：60fps、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值、IG GraphQL 在家宽下的表现）③release 签名+R8 ④`:downloader` 单测（可复用 FakeHttp）
+- 文档：PROGRESS.md 全阶段记录（阶段 1-20 + 修复 8/9/10 系列）；PLAN.md（阶段 14-18 计划，已全部实现）
