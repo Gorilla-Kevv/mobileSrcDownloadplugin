@@ -1,5 +1,14 @@
 # PROGRESS
 
+## 阶段 21：release 签名 + R8（2026-10-01，提交 ec6521f，构建验证通过 · 装机冒烟待用户图集复测后）
+- **签名**：keystore `app/signing/clipdown.jks`（RSA 2048，validity 10000 天，`*.jks` 已 ignore 不入 git）；路径与密码在 `signing.properties`（已 ignore）；`app/build.gradle.kts` 顶部 Properties 加载，文件存在时 release 挂正式签名，否则落回 debug 签名保证可构建
+- **R8**：`isMinifyEnabled=true + isShrinkResources=true`；proguard 增补 `ViewTreeLifecycleOwner`/`ViewTreeSavedStateRegistryOwner` keep（bindOwners 反射目标）；parser model 整体 keep 既有；**诊断日志保留**（不做 assumenosideeffects 剥离——个人项目诊断优先）
+- **体积：debug 18.6MB → release 1.77MB**；`apksigner verify` 证书通过（CN=ClipDown, O=Gorilla-Kevv）
+- **待办：release 装机冒烟**（同包名覆盖 debug——待用户图集复测完成后进行；冒烟清单：气泡显示/点气泡识别/单视频自动下载/图集竖条/下载页分组/设置与 SP cookie 持久化）
+- 改动文件：`app/build.gradle.kts`（signingConfig+minify）、`app/proguard-rules.pro`、`.gitignore`（signing.properties）
+- **风险/注意**：keystore 丢失则无法为同包名升级签名——**务必备份 `app/signing/clipdown.jks` 与密码（clipdown2026）**；R8 运行时行为待冒烟（序列化/反射点已有 keep，风险低）
+- 与 downloader 单测条目（下条）同属阶段 21，双会话并行完成
+
 ## 阶段 21：`:downloader` 单测（2026-10-01，代码完成 · 30 例全绿）
 - 背景：主线回归项里唯一不依赖真机/模拟器、可自主收口的一项（HANDOFF 下一步 ④）
 - **测试基建**：`downloader/build.gradle.kts` 新增 `testOptions { unitTests.isReturnDefaultValues = true }`（触达 `android.media` 的路径走 stub 默认值）+ `testImplementation("junit:junit:4.13.2")`；**未引入新依赖**——HTTP 服务端用 `TestHttpServer.kt`（纯 JDK `ServerSocket`，支持 Range 206/全量 200/任意状态码/HEAD/分块慢速响应 + 记录请求头供断言，可替代 mockwebserver，避免联网拉包）

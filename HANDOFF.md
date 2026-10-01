@@ -34,11 +34,12 @@
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
 - 测试：`:parser:test` **40 例**；`:downloader:testDebugUnitTest` **30 例**（HttpFileDownloader/M3u8Downloader/MediaRemuxer/TaskModels/DownloadController；自建 JDK `TestHttpServer`，无新增依赖）
+- **release**：`:app:assembleRelease`（minify+shrinkResources+正式签名；**体积 18.6MB→1.77MB**）；签名由根目录 `signing.properties` 驱动，keystore `app/signing/clipdown.jks` **不入 git——务必备份（密码 clipdown2026，丢失无法升级签名）**；R8 反射 keep 见 proguard-rules.pro（ViewTree* 宿主绑定）
 - adb：需非沙箱执行；装机后 `appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow` + `settings put secure enabled_accessibility_services ...`；服务 `am start-foreground-service -n com.clipdown.app/.floatwindow.FloatingWindowService`
 - 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
 ## 状态
-- 当前：**修复 10d 已装机，待用户复测图集竖条**（预期：图集帖点气泡弹出含全部子图的竖条，挑选下载）。本 session 已完成：PLAN 阶段 14-18 全部 + 单击气泡 toggle 交互体系 + 下载页分组 + 修复 8（URL query 截断）/9（双重转义 403）/10（items[0] 污染）/10b（embed 隔离）/10c（单视频净化）/10d（DOM 图集兜底）+ 竖条重排（正下方 64dp 同宽）+ **阶段 21 `:downloader` 单测 30 例**
-- 验收标准：`assembleDebug` + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿 + 模拟器/真机关键链路实测
-- 下一步：①用户复测图集竖条 ②真机回归（累积项：60fps、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值、IG GraphQL 在家宽下的表现）③release 签名+R8 ④`:downloader` 剩余覆盖（TaskDatabase/MediaStoreWriter/Notifier/DownloadEngine，需 Robolectric 或仪器化）
-- 文档：PROGRESS.md 全阶段记录（阶段 1-20 + 修复 8/9/10 系列）；PLAN.md（阶段 14-18 计划，已全部实现）
+- 当前：**阶段 21 完成（release 签名+R8、:downloader 单测 30 例，双会话合并）**；修复 10d 已装机，**待用户复测图集竖条** → 之后 **release 装机冒烟**（同包名覆盖 debug；清单见 PROGRESS 阶段 21）。本 session 已完成：PLAN 阶段 14-18 全部 + 单击气泡 toggle 交互体系 + 下载页分组 + 修复 8（URL query 截断）/9（双重转义 403）/10（items[0] 污染）/10b（embed 隔离）/10c（单视频净化）/10d（DOM 图集兜底）+ 竖条重排（正下方 64dp 同宽）
+- 验收标准：`assembleDebug` + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿 + 模拟器/真机关键链路实测 + release 冒烟
+- 下一步：①用户复测图集竖条 ②release 装机冒烟 ③真机回归（累积项：60fps、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值、IG GraphQL 在家宽下的表现）④`:downloader` 剩余覆盖（TaskDatabase/MediaStoreWriter/Notifier/DownloadEngine 调度，需仪器化）
+- 文档：PROGRESS.md 全阶段记录（阶段 1-21 + 修复 8/9/10 系列）；PLAN.md（阶段 14-18 计划，已全部实现）
