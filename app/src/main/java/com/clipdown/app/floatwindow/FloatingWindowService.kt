@@ -699,15 +699,26 @@ class FloatingWindowService : Service() {
     }
 
     /**
-     * 气泡侧竖向窄条窗口：**气泡正下方、宽度与气泡一致**，点窗外穿透、15s 自动收起。
-     * 展开的缩略图列向下延伸；气泡拖拽时由 addBubble 的 MOVE 分支同步移动（sideBarWinParams 引用）。
+     * 气泡侧竖向窄条窗口：**宽度与气泡一致**，纵向位置按屏幕边缘动态决定——
+     * 气泡靠上边缘时竖条放其正下方（向下生长）；靠下边缘时放其正上方（gravity BOTTOM 向上生长），
+     * 保证收起+完整展开都不出屏、不与气泡重叠。点窗外穿透、15s 自动收起。
+     * 气泡拖拽时由 addBubble 的 MOVE 分支同步移动（sideBarWinParams 引用）。
      */
     private var sideBarWinParams: WindowManager.LayoutParams? = null
     private var sideBarWidthPx = 0
+    private var sideBarBelowBubble = true
 
     private fun sideBarParams(): WindowManager.LayoutParams {
         val dm = resources.displayMetrics
         sideBarWidthPx = (64 * dm.density).toInt()
+        val bubbleH = (64 * dm.density).toInt()
+        val gap = (8 * dm.density).toInt()
+        // 收起(~60dp)+完整展开(260dp)所需纵向空间，用于决定放上方还是下方
+        val barFullHeight = (330 * dm.density).toInt()
+        val screenH = dm.heightPixels
+        val (bx, by) = bubblePos
+        sideBarBelowBubble = (by + bubbleH + gap + barFullHeight) <= screenH
+
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -718,20 +729,31 @@ class FloatingWindowService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            val (bx, by) = bubblePos
+            if (sideBarBelowBubble) {
+                y = by + bubbleH + gap
+            } else {
+                // 竖条放气泡上方：用 BOTTOM 锚（y=底边距），窗口高度变化时向上生长
+                gravity = gravity or Gravity.BOTTOM
+                y = screenH - by + gap
+            }
             x = bx.coerceIn(8, (dm.widthPixels - sideBarWidthPx - 8).coerceAtLeast(8))
-            y = (by + 72 * dm.density).toInt()
             sideBarWinParams = this
         }
     }
 
-    /** 拖拽气泡时竖条同步跟随（气泡正下方，与 sideBarParams 同一公式） */
+    /** 拖拽气泡时竖条同步跟随（按当前上/下模式重算，绝对对齐无漂移） */
     private fun followBubble(bubbleX: Int, bubbleY: Int) {
         val p = sideBarWinParams ?: return
         if (popupHost == null || !popupIsBar) return
         val dm = resources.displayMetrics
+        val bubbleH = (64 * dm.density).toInt()
+        val gap = (8 * dm.density).toInt()
         p.x = bubbleX.coerceIn(8, (dm.widthPixels - sideBarWidthPx - 8).coerceAtLeast(8))
-        p.y = bubbleY + (72 * dm.density).toInt()
+        if (sideBarBelowBubble) {
+            p.y = bubbleY + bubbleH + gap
+        } else {
+            p.y = dm.heightPixels - bubbleY + gap
+        }
         runCatching { popupHost?.let { wm.updateViewLayout(it, p) } }
     }
 
