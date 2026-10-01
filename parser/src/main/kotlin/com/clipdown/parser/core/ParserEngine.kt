@@ -154,10 +154,13 @@ object ParserEngine {
             if (remoteResult != null && !remoteResult.isEmpty) return remoteResult
         }
 
-        // 4) 通用网页兜底（抓 og:video / og:image）
-        val generic = runCatching { GenericParser().parse(url, context()) }.getOrNull()
-        if (generic != null && !generic.isEmpty) {
-            return generic.copy(warning = generic.warning ?: "按通用网页解析，清晰度可能受限")
+        // 4) 通用网页兜底（抓 og:video / og:image）——仅对没有专属解析器的链接；
+        // 专属平台（IG 等）失败时兜底只会抓回站点的 UI 图标/默认图（垃圾结果，修复 11 配套）
+        if (platform == Platform.GENERIC) {
+            val generic = runCatching { GenericParser().parse(url, context()) }.getOrNull()
+            if (generic != null && !generic.isEmpty) {
+                return generic.copy(warning = generic.warning ?: "按通用网页解析，清晰度可能受限")
+            }
         }
 
         if (localError is ParseException) throw localError

@@ -32,12 +32,46 @@ class InstagramParser : PlatformParser {
     override val id: String = "ig-local-v1"
 
     private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+
+    private companion object {
+        /** 连续失败 N 次进入冷却；冷却期内 parse 直接抛出，不发起任何网络请求（修复 11，账号风控保护） */
+        const val IG_COOLDOWN_THRESHOLD = 2
+        const val IG_COOLDOWN_MS = 10 * 60_000L
+    }
     private val shortcodeRegex =
         Regex("""(?:instagram\.com|instagr\.am)/(?:p|reel|reels|tv)/([A-Za-z0-9_-]{5,})""")
 
     override fun canHandle(url: String): Boolean = shortcodeRegex.containsMatchIn(url)
 
+    // ---- 风控保护（修复 11）：连续失败冷却，避免用户反复重试轰炸账号 ----
+    private var igFailStreak = 0
+    private var igCooldownUntil = 0L
+
     override fun parse(url: String, ctx: ParseContext): ParseResult {
+        val now = System.currentTimeMillis()
+        if (now < igCooldownUntil) {
+            val remainMin = ((igCooldownUntil - now) / 60_000) + 1
+            throw ParseException(
+                "Instagram 解析冷却中（连续失败保护，账号风控恢复期），约 $remainMin 分钟后自动恢复",
+                platform,
+                retryable = false
+            )
+        }
+        val result = runCatching { parseChannels(url, ctx) }
+        if (result.isSuccess) {
+            igFailStreak = 0
+            return result.getOrThrow()
+        }
+        igFailStreak++
+        if (igFailStreak >= IG_COOLDOWN_THRESHOLD) {
+            igCooldownUntil = now + IG_COOLDOWN_MS
+            ctx.log(id, "连续失败 $igFailStreak 次，冷却 ${IG_COOLDOWN_MS / 60_000} 分钟（风控保护，期间不再发起请求）")
+            igFailStreak = 0
+        }
+        throw result.exceptionOrNull() ?: ParseException("解析失败", platform)
+    }
+
+    private fun parseChannels(url: String, ctx: ParseContext): ParseResult {
         val code = shortcodeRegex.find(url)?.groupValues?.getOrNull(1)
             ?: throw ParseException("无法从链接中提取作品 ID", platform, retryable = false)
 

@@ -206,7 +206,7 @@ private fun TaskRow(
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        statusText(task, progress),
+                        statusText(task, progress) + " · " + fmtTime(task.updatedAt),
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                     )
@@ -300,12 +300,13 @@ private fun AlbumGroupCard(
                     )
                     Text(
                         buildString {
-                            append("图集 · ${tasks.size} 张")
+                            append("图集 ${tasks.size} 张")
                             when {
                                 allDone -> append(" · 全部完成 · ${MediaItem.formatSize(totalBytes)}")
                                 failed > 0 -> append(" · 完成 $done / 失败 $failed")
                                 active > 0 -> append(" · 下载中 $done/${tasks.size}")
                             }
+                            append(" · ${fmtTime(tasks.maxOf { it.updatedAt })}")
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -402,3 +403,8 @@ private fun formatSpeed(bytesPerSec: Long): String {
     val kb = bytesPerSec / 1024.0
     return if (kb >= 1024) String.format("%.1f MB/s", kb / 1024) else String.format("%.0f KB/s", kb)
 }
+
+/** 下载记录时间显示（新需求）：任务完成/更新时间 */
+private val timeFmt = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.getDefault())
+
+private fun fmtTime(millis: Long): String = timeFmt.format(java.util.Date(millis))
