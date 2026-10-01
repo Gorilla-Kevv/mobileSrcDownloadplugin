@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -5,9 +7,26 @@ plugins {
     id("org.jetbrains.kotlin.plugin.serialization")
 }
 
+// 签名配置：signing.properties 存在（含 keystore 路径与密码，不入 git）时启用正式签名
+val signingProps = Properties().apply {
+    val f = rootProject.file("signing.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
+}
+
 android {
     namespace = "com.clipdown.app"
     compileSdk = 34
+
+    signingConfigs {
+        create("release") {
+            if (signingProps.isNotEmpty()) {
+                storeFile = rootProject.file(signingProps.getProperty("storeFile"))
+                storePassword = signingProps.getProperty("storePassword")
+                keyAlias = signingProps.getProperty("keyAlias")
+                keyPassword = signingProps.getProperty("keyPassword")
+            }
+        }
+    }
 
     defaultConfig {
         applicationId = "com.clipdown.app"
@@ -41,11 +60,16 @@ android {
     }
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            // 签名：signing.properties 存在时用正式签名（keystore 不入 git），否则落回 debug 签名保证可装
+            if (rootProject.file("signing.properties").exists()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 }
