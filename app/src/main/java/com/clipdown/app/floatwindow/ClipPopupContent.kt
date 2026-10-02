@@ -87,239 +87,37 @@ fun ClipPopupContent(
     onDismiss: () -> Unit
 ) {
     val visible = state !is PopupUiState.Hidden
-    // 气泡侧竖向窄条：Mini 提示与图集多选共用（点击气泡拉开/再点收起的"组件"形态）
-    val isSideBar = state is PopupUiState.Mini || (state is PopupUiState.Ready && state.multiSelect)
+    // Mini/图集竖条已并入气泡窗口（修复 12，见 BubbleBar.kt/BubbleWindowContent）——
+    // 这里只承载全屏居中卡：Loading/单选 Ready/Failed/下载详情
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn() + slideInVertically { it / 3 },
         exit = fadeOut() + slideOutVertically { it / 3 }
     ) {
-        if (isSideBar) {
-            SideBarContainer {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(if (blurSupported) Color(0x1F000000) else Color(0xAA0A0E1A))
+                .clickable(enabled = true, onClick = onDismiss),
+            contentAlignment = Alignment.Center
+        ) {
+            GlassCard(
+                modifier = Modifier
+                    .fillMaxWidth(0.92f)
+                    .clickable(enabled = true, onClick = {})
+            ) {
                 when (state) {
-                    is PopupUiState.Mini -> MiniSideBody(state, onRecognize)
-                    is PopupUiState.Ready -> AlbumSideBody(state, onSelect, onDownload)
+                    is PopupUiState.Loading -> LoadingBody(state.link.platform.displayName, remainSeconds, onDismiss)
+                    is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
+                    is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
+                    is PopupUiState.Downloads -> DownloadsBody(state, onDismiss)
                     else -> Unit
                 }
             }
-        } else {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(if (blurSupported) Color(0x1F000000) else Color(0xAA0A0E1A))
-                    .clickable(enabled = true, onClick = onDismiss),
-                contentAlignment = Alignment.Center
-            ) {
-                GlassCard(
-                    modifier = Modifier
-                        .fillMaxWidth(0.92f)
-                        .clickable(enabled = true, onClick = {})
-                ) {
-                    when (state) {
-                        is PopupUiState.Loading -> LoadingBody(state.link.platform.displayName, remainSeconds, onDismiss)
-                        is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
-                        is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
-                        is PopupUiState.Downloads -> DownloadsBody(state, onDismiss)
-                        else -> Unit
-                    }
-                }
-            }
         }
     }
 }
 
-/** 气泡侧竖向窄条容器：**与气泡同宽（64dp）**，深色质感（无全屏遮罩，窗外点击穿透） */
-@Composable
-private fun SideBarContainer(content: @Composable () -> Unit) {
-    Column(
-        modifier = Modifier
-            .width(64.dp)
-            .clip(RoundedCornerShape(18.dp))
-            .background(Color(0xF0161B29))
-            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(18.dp))
-            .padding(6.dp)
-    ) {
-        content()
-    }
-}
-
-/** Mini 竖条：剪贴板空闲时点气泡的默认形态（logo + 短提示 + 识别入口） */
-@Composable
-private fun MiniSideBody(state: PopupUiState.Mini, onRecognize: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Image(
-            painter = painterResource(R.drawable.bubble_logo),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .size(40.dp)
-                .clip(CircleShape)
-                .border(1.dp, Color.White.copy(0.2f), CircleShape)
-        )
-        Spacer(Modifier.height(4.dp))
-        Text("剪存", color = Color.White, style = MaterialTheme.typography.labelMedium)
-        if (state.hint != null) {
-            Spacer(Modifier.height(2.dp))
-            Text(
-                state.hint!!,
-                color = Color(0xFFFFB020),
-                style = MaterialTheme.typography.labelSmall,
-                maxLines = 3,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center
-            )
-        }
-        Spacer(Modifier.height(6.dp))
-        IconButton(
-            onClick = onRecognize,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(SeedBlue, RoundedCornerShape(10.dp))
-        ) {
-            Icon(Icons.Default.Search, contentDescription = "识别", tint = Color.White, modifier = Modifier.size(16.dp))
-        }
-    }
-}
-
-/**
- * 图集竖向窄条：默认全选；点"全选"行取消全选并向下展开缩略图网格逐张挑选；
- * 点气泡可整体收起（toggle 由服务层处理）。
- */
-@Composable
-private fun AlbumSideBody(
-    state: PopupUiState.Ready,
-    onSelect: (Int) -> Unit,
-    onDownload: () -> Unit
-) {
-    val result = state.result
-    var expanded by remember { mutableStateOf(false) }
-    val allSelected = result.media.isNotEmpty() && state.selectedIndices.size == result.media.size
-
-    Column {
-        AsyncImage(
-            model = result.media.firstOrNull()?.url,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color.White.copy(0.08f))
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "图集 ${result.media.size} 张",
-            color = Color.White,
-            style = MaterialTheme.typography.labelSmall,
-            maxLines = 1
-        )
-        Text(
-            "已选 ${state.selectedIndices.size}",
-            color = SeedBlue,
-            style = MaterialTheme.typography.labelSmall
-        )
-        // 全选行：勾选=全选并收起；取消=进入部分选择并向下展开
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .clickable {
-                    if (allSelected) {
-                        state.selectedIndices.toList().forEach { onSelect(it) }
-                        expanded = true
-                    } else {
-                        result.media.indices.forEach { if (it !in state.selectedIndices) onSelect(it) }
-                        expanded = false
-                    }
-                }
-                .padding(vertical = 4.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .clip(RoundedCornerShape(4.dp))
-                    .background(if (allSelected) SeedBlue else Color.Transparent)
-                    .border(1.5.dp, if (allSelected) SeedBlue else Color.White.copy(0.4f), RoundedCornerShape(4.dp)),
-                contentAlignment = Alignment.Center
-            ) {
-                if (allSelected) {
-                    Icon(Icons.Default.Check, contentDescription = null, tint = Color.White, modifier = Modifier.size(12.dp))
-                }
-            }
-            Spacer(Modifier.width(6.dp))
-            Text("全选", color = Color.White.copy(0.85f), style = MaterialTheme.typography.labelMedium)
-        }
-
-        IconButton(
-            onClick = onDownload,
-            enabled = state.selectedIndices.isNotEmpty(),
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(SeedBlue.copy(alpha = if (state.selectedIndices.isEmpty()) 0.35f else 1f), RoundedCornerShape(10.dp))
-        ) {
-            Icon(Icons.Default.Download, contentDescription = "下载所选", tint = Color.White, modifier = Modifier.size(16.dp))
-        }
-
-        TextButton(
-            onClick = { expanded = !expanded },
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(vertical = 0.dp)
-        ) {
-            Text(if (expanded) "收起" else "挑图", color = Color.White.copy(0.7f), style = MaterialTheme.typography.labelSmall)
-        }
-
-        AnimatedVisibility(visible = expanded) {
-            LazyVerticalGrid(
-                columns = GridCells.Fixed(1),
-                modifier = Modifier.heightIn(max = 260.dp),
-                verticalArrangement = Arrangement.spacedBy(5.dp)
-            ) {
-                items(result.media.size) { index ->
-                    val selected = index in state.selectedIndices
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(8.dp))
-                            .border(
-                                if (selected) 2.dp else 1.dp,
-                                if (selected) SeedBlue else Color.White.copy(0.1f),
-                                RoundedCornerShape(8.dp)
-                            )
-                            .clickable { onSelect(index) }
-                    ) {
-                        AsyncImage(
-                            model = result.media[index].url,
-                            contentDescription = "第 ${index + 1} 张",
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(44.dp)
-                        )
-                        if (selected) {
-                            Icon(
-                                Icons.Default.Check,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier
-                                    .align(Alignment.TopEnd)
-                                    .padding(3.dp)
-                                    .size(13.dp)
-                                    .background(SeedBlue, CircleShape)
-                                    .padding(2.dp)
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/**
- * 毛玻璃卡片。
- *
- * 由三层叠加构成：半透明底色（决定"玻璃"的色调）+ 1dp 高光描边（玻璃边缘）+ 内容。
- * 真实模糊由窗口层提供，这里只负责质感。
- */
 @Composable
 fun GlassCard(
     modifier: Modifier = Modifier,

@@ -1,5 +1,28 @@
 # PROGRESS
 
+## 修复 12：气泡+竖条同窗口一体化（2026-10-01，代码完成+装机，**x 钳制已修但未装机验证**）
+- 用户反馈：竖条与气泡仍重叠（双窗口方案定位微调无法根治）→ 指定新形态：**点击气泡后竖条从气泡边缘"生长"出来，同一整体，再点气泡收起**
+- **架构重构（单窗口）**：删旧双窗口（气泡窗+sideBar 窗），改为 `BubbleWindowContent`——气泡圆 + 竖条在**同一 Compose Column** 内纵向连接，竖条开合只改窗口高度，**物理上不可能重叠**
+  - 新文件 `floatwindow/BubbleBar.kt`：BarBody（Mini 提示/图集选择两形态，64dp 宽与气泡一致、18dp 圆角匹配）
+  - `FloatingWindowService`：bubbleParams 持久引用 + `syncBubbleWindow(state)`——竖条开/关/内容变化时（LaunchedEffect 驱动）更新窗口锚点：下方空间够=TOP 锚竖条向下生长；不够=BOTTOM 锚向上生长；收起恢复 TOP 原位；x 钳制屏内（气泡拖到右缘时竖条左移）
+  - **触摸分区**：View onTouchListener 的 DOWN 按 y 判断——气泡圆区(64dp)=拖拽/单击/双击；竖条区 return false 透传给 Compose 控件（挑图/下载按钮可点）
+  - ClipPopupContent 收缩为纯居中卡（Loading/单选Ready/Failed/Downloads）；Mini/图集 Ready 的 3 处 `ensurePopupHost()` 误调删除（曾渲染空壳卡+全屏遮罩）
+- 测试：70 例全绿（parser 40 + downloader 30）；装机自测：Mini 竖条在气泡下方同宽渲染 ✓（v2 截图验证，v3 x 钳制构建通过已装机未复验）
+- **待用户复测**：①X 图集竖条挑图+下载 ②气泡拖到屏幕下半部→竖条改向上生长 ③再点气泡收起 ④IG 冷却期点气泡→失败卡文案"冷却中"
+- 已知遗留：BubbleBar 内图集缩略图加载原图 URL（coil 下采样）；竖条内容超 330dp 上限的极端图集未实测
+
+## 修复 11：解析冷却保险丝 + generic 兜底排除 + 下载时间显示（2026-10-01，提交 fffbe4f）
+- 用户反馈：账号被触发风控面临封号；解析 105 秒过长；解析出 IG 默认图标图；下载页需显示下载时间
+- **取证**：日志还原完整链条——IG 风控升级到"无法获取帖子页面"（private 第一步 GET 即拒）→ 四通道全败（105 秒慢失败）→ **GenericParser 兜底抓回 8 个 IG UI 图标**（`static.cdninstagram.com/rsrc.php/*.webp`，即"默认图片"）→ 用户重试 → 1 分钟内同一链接解析 3 次 → 请求风暴加重风控
+- **修复 11（三项）**：
+  - **解析冷却保险丝**：InstagramParser 连续失败 ≥2 次 → 冷却 10 分钟（期内 parse 直接抛"冷却中"，**零网络请求**）；成功清零。与下载退避同构，保护账号
+  - **generic 兜底排除专属平台**：ParserEngine 降级链 step4 仅对 `platform == GENERIC` 生效——专属解析器失败不再产出 UI 图标垃圾
+  - **下载页时间显示**：单任务与图集组卡均追加 `MM-dd HH:mm`（updated_at）
+- 测试：parser 40 + downloader 30 例全绿；已装机
+- 改动文件：`parser/parsers/InstagramParser.kt`（冷却）、`parser/core/ParserEngine.kt`（generic 条件）、`app/ui/downloads/DownloadsScreen.kt`（时间）
+- **测试策略（账号风控期）**：①暂停 IG 自动化实测（agent 不再触发识别）②用户验证间隔 ≥10 分钟（冷却期外）③失败后**不要反复重试**（冷却会自动拦截）④优先用 X/YouTube 链接验证非 IG 功能 ⑤IG App 若刷新异常先完成平台验证流程再测
+- 下一阶段入口：风控期过后的图集竖条复测 → release 装机冒烟 → 真机回归
+
 ## 阶段 21：release 签名 + R8（2026-10-01，提交 ec6521f，构建验证通过 · 装机冒烟待用户图集复测后）
 - **签名**：keystore `app/signing/clipdown.jks`（RSA 2048，validity 10000 天，`*.jks` 已 ignore 不入 git）；路径与密码在 `signing.properties`（已 ignore）；`app/build.gradle.kts` 顶部 Properties 加载，文件存在时 release 挂正式签名，否则落回 debug 签名保证可构建
 - **R8**：`isMinifyEnabled=true + isShrinkResources=true`；proguard 增补 `ViewTreeLifecycleOwner`/`ViewTreeSavedStateRegistryOwner` keep（bindOwners 反射目标）；parser model 整体 keep 既有；**诊断日志保留**（不做 assumenosideeffects 剥离——个人项目诊断优先）

@@ -28,12 +28,14 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.ui.Alignment
@@ -96,11 +98,14 @@ class FloatingWindowService : Service() {
     private var bubbleView: View? = null
     private var popupHost: View? = null
 
-    /** 气泡当前位置（条形选择卡定位在其上方）；addBubble 时初始化 */
+    /** 气泡顶部位置的屏幕绝对坐标；addBubble 时初始化，拖拽时更新 */
     private var bubblePos: Pair<Int, Int> = -1 to -1
 
-    /** 当前弹窗形态：true=气泡上方条形（图集选择），false=全屏居中卡 */
-    private var popupIsBar = false
+    /** 气泡窗口参数（竖条开合/延伸方向切换时由 syncBubbleWindow 更新 gravity/y） */
+    private var bubbleParams: WindowManager.LayoutParams? = null
+
+    /** 竖条是否在气泡上方（气泡靠屏幕下缘时 true）；驱动触摸分区与布局排列 */
+    private val barOnTop = mutableStateOf(false)
 
     private var bubbleLifecycle: OverlayLifecycleOwner? = null
     private var popupLifecycle: OverlayLifecycleOwner? = null
@@ -222,11 +227,32 @@ class FloatingWindowService : Service() {
         val composeView = ComposeView(this).apply {
             setContent {
                 ClipDownTheme(darkTheme = true) {
-                    BubbleContent(
-                        bubblePhase.value,
-                        pendingCount.intValue,
-                        parsingCount.intValue,
-                        downloadingCount.intValue
+                    BubbleWindowContent(
+                        phase = bubblePhase.value,
+                        pendingCount = pendingCount.intValue,
+                        parsingCount = parsingCount.intValue,
+                        downloadingCount = downloadingCount.intValue,
+                        barState = uiState.value.takeIf {
+                            it is PopupUiState.Mini || (it is PopupUiState.Ready && it.multiSelect)
+                        },
+                        barOnTop = barOnTop.value,
+                        onRecognize = { startManualRecognize() },
+                        onSelect = { index ->
+                            val s = uiState.value
+                            if (s is PopupUiState.Ready) {
+                                uiState.value = s.copy(
+                                    selectedIndices = if (index in s.selectedIndices) {
+                                        s.selectedIndices - index
+                                    } else {
+                                        s.selectedIndices + index
+                                    }
+                                )
+                                startDismissTimer()
+                            }
+                        },
+                        onDownload = { downloadCurrent() },
+                        onToggle = { onBubbleClick() },
+                        onBarStateChanged = { syncBubbleWindow(it ?: PopupUiState.Hidden) }
                     )
                 }
             }
@@ -247,32 +273,39 @@ class FloatingWindowService : Service() {
             this.x = if (x >= 0) x else resources.displayMetrics.widthPixels - 140
             this.y = if (y >= 0) y else resources.displayMetrics.heightPixels / 3
         }
+        bubbleParams = params
         bubblePos = params.x to params.y
 
         var startX = 0
-        var startY = 0
+        var startTopY = 0
         var startTouchX = 0f
         var startTouchY = 0f
         var moved = false
+        var gestureInBubble = false
+        val bubblePartH = (64 * resources.displayMetrics.density).toInt()
 
         @Suppress("DEPRECATION")
-        composeView.setOnTouchListener { _, event ->
+        composeView.setOnTouchListener { v, event ->
+            if (event.action == MotionEvent.ACTION_DOWN) {
+                // 触摸分区：气泡圆区域（64dp）处理拖拽/点击；竖条延伸区透传给 Compose 控件
+                gestureInBubble = if (barOnTop.value) event.y >= v.height - bubblePartH else event.y <= bubblePartH
+                if (!gestureInBubble) return@setOnTouchListener false
+                startX = params.x
+                startTopY = bubblePos.second
+                startTouchX = event.rawX
+                startTouchY = event.rawY
+                moved = false
+                return@setOnTouchListener true
+            }
+            if (!gestureInBubble) return@setOnTouchListener false
             when (event.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    startX = params.x
-                    startY = params.y
-                    startTouchX = event.rawX
-                    startTouchY = event.rawY
-                    moved = false
-                }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - startTouchX).toInt()
                     val dy = (event.rawY - startTouchY).toInt()
                     if (abs(dx) > 8 || abs(dy) > 8) moved = true
-                    params.x = startX + dx
-                    params.y = startY + dy
-                    runCatching { wm.updateViewLayout(composeView, params) }
-                    followBubble(params.x, params.y)
+                    bubblePos = startX + dx to startTopY + dy
+                    params.x = bubblePos.first
+                    syncBubbleWindow(uiState.value)
                 }
                 MotionEvent.ACTION_UP -> {
                     if (!moved) {
@@ -293,9 +326,8 @@ class FloatingWindowService : Service() {
                             }
                         }
                     } else {
-                        scope.launch { settings.saveBubblePosition(params.x, params.y) }
-                        lastPosition = params.x to params.y
-                        bubblePos = params.x to params.y
+                        scope.launch { settings.saveBubblePosition(bubblePos.first, bubblePos.second) }
+                        lastPosition = bubblePos
                     }
                 }
             }
@@ -304,6 +336,40 @@ class FloatingWindowService : Service() {
 
         runCatching { wm.addView(composeView, params) }
         bubbleView = composeView
+    }
+
+    /**
+     * 修复 12：竖条与气泡同窗口一体化，这里只负责窗口锚点与延伸方向：
+     * 气泡靠上边缘 → 竖条向下延伸（TOP 锚，向下生长）；靠下边缘 → 竖条向上延伸
+     * （BOTTOM 锚，向上生长）；收起态恢复 TOP 锚原位。拖拽时实时重算（可跨中线翻转）。
+     */
+    private fun syncBubbleWindow(state: PopupUiState) {
+        val view = bubbleView ?: return
+        val params = bubbleParams ?: return
+        val dm = resources.displayMetrics
+        val bubbleH = (64 * dm.density).toInt()
+        val gap = (6 * dm.density).toInt()
+        val barFull = (330 * dm.density).toInt()
+        val barW = (64 * dm.density).toInt()
+        params.x = bubblePos.first.coerceIn(8, (dm.widthPixels - barW - 8).coerceAtLeast(8))
+        val barOpen = state is PopupUiState.Mini || (state is PopupUiState.Ready && state.multiSelect)
+        if (!barOpen) {
+            barOnTop.value = false
+            params.gravity = Gravity.TOP or Gravity.START
+            params.y = bubblePos.second
+            runCatching { wm.updateViewLayout(view, params) }
+            return
+        }
+        val belowSpace = dm.heightPixels - bubblePos.second - bubbleH - gap
+        barOnTop.value = belowSpace < barFull
+        if (barOnTop.value) {
+            params.gravity = Gravity.BOTTOM or Gravity.START
+            params.y = dm.heightPixels - (bubblePos.second + bubbleH)
+        } else {
+            params.gravity = Gravity.TOP or Gravity.START
+            params.y = bubblePos.second
+        }
+        runCatching { wm.updateViewLayout(view, params) }
     }
 
     private fun onBubbleClick() {
@@ -355,7 +421,6 @@ class FloatingWindowService : Service() {
             if (!found) {
                 manualRecognize = false
                 uiState.value = PopupUiState.Mini(hint = "未识别到链接")
-                ensurePopupHost()
             }
             // found 时由 LinkCenter.detected 接管，进入自动流水线
         }
@@ -367,7 +432,6 @@ class FloatingWindowService : Service() {
             if (manualRecognize && uiState.value is PopupUiState.Hidden) {
                 manualRecognize = false
                 uiState.value = PopupUiState.Mini(hint = "未能读取剪贴板")
-                ensurePopupHost()
             }
         }
     }
@@ -440,7 +504,6 @@ class FloatingWindowService : Service() {
                             selectedIndices = setOf(0),
                             multiSelect = parsed.isAlbumMultiSelect
                         )
-                        ensurePopupHost()
                         startDismissTimer()
                     }
                 }
@@ -627,22 +690,11 @@ class FloatingWindowService : Service() {
     }
 
     private fun ensurePopupHost() {
-        // 气泡侧竖向窄条：Mini 提示与图集多选；其余（失败/详情/变体组）仍为全屏居中卡。
-        // 窗口参数不同，形态切换需重建窗口。
-        val desiredBar = when (val s = uiState.value) {
-            is PopupUiState.Mini -> true
-            is PopupUiState.Ready -> s.multiSelect
-            else -> false
-        }
-        if (popupHost != null) {
-            if (popupIsBar == desiredBar) return
-            removePopup()
-        }
-        popupIsBar = desiredBar
+        if (popupHost != null) return
         val lifecycleOwner = OverlayLifecycleOwner()
         popupLifecycle = lifecycleOwner
 
-        val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && !desiredBar
+        val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         val view = ComposeView(this).apply {
             setContent {
                 ClipDownTheme(darkTheme = true) {
@@ -676,7 +728,7 @@ class FloatingWindowService : Service() {
         bindOwners(view, lifecycleOwner)
         lifecycleOwner.attach()
 
-        val params = if (desiredBar) sideBarParams() else WindowManager.LayoutParams(
+        val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
             WindowManager.LayoutParams.MATCH_PARENT,
             overlayType(),
@@ -696,65 +748,6 @@ class FloatingWindowService : Service() {
 
         runCatching { wm.addView(view, params) }
         popupHost = view
-    }
-
-    /**
-     * 气泡侧竖向窄条窗口：**宽度与气泡一致**，纵向位置按屏幕边缘动态决定——
-     * 气泡靠上边缘时竖条放其正下方（向下生长）；靠下边缘时放其正上方（gravity BOTTOM 向上生长），
-     * 保证收起+完整展开都不出屏、不与气泡重叠。点窗外穿透、15s 自动收起。
-     * 气泡拖拽时由 addBubble 的 MOVE 分支同步移动（sideBarWinParams 引用）。
-     */
-    private var sideBarWinParams: WindowManager.LayoutParams? = null
-    private var sideBarWidthPx = 0
-    private var sideBarBelowBubble = true
-
-    private fun sideBarParams(): WindowManager.LayoutParams {
-        val dm = resources.displayMetrics
-        sideBarWidthPx = (64 * dm.density).toInt()
-        val bubbleH = (64 * dm.density).toInt()
-        val gap = (8 * dm.density).toInt()
-        // 收起(~60dp)+完整展开(260dp)所需纵向空间，用于决定放上方还是下方
-        val barFullHeight = (330 * dm.density).toInt()
-        val screenH = dm.heightPixels
-        val (bx, by) = bubblePos
-        sideBarBelowBubble = (by + bubbleH + gap + barFullHeight) <= screenH
-
-        return WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
-                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            if (sideBarBelowBubble) {
-                y = by + bubbleH + gap
-            } else {
-                // 竖条放气泡上方：用 BOTTOM 锚（y=底边距），窗口高度变化时向上生长
-                gravity = gravity or Gravity.BOTTOM
-                y = screenH - by + gap
-            }
-            x = bx.coerceIn(8, (dm.widthPixels - sideBarWidthPx - 8).coerceAtLeast(8))
-            sideBarWinParams = this
-        }
-    }
-
-    /** 拖拽气泡时竖条同步跟随（按当前上/下模式重算，绝对对齐无漂移） */
-    private fun followBubble(bubbleX: Int, bubbleY: Int) {
-        val p = sideBarWinParams ?: return
-        if (popupHost == null || !popupIsBar) return
-        val dm = resources.displayMetrics
-        val bubbleH = (64 * dm.density).toInt()
-        val gap = (8 * dm.density).toInt()
-        p.x = bubbleX.coerceIn(8, (dm.widthPixels - sideBarWidthPx - 8).coerceAtLeast(8))
-        if (sideBarBelowBubble) {
-            p.y = bubbleY + bubbleH + gap
-        } else {
-            p.y = dm.heightPixels - bubbleY + gap
-        }
-        runCatching { popupHost?.let { wm.updateViewLayout(it, p) } }
     }
 
     private fun removePopup() {
@@ -1012,14 +1005,46 @@ private fun BubblePhase.accent(): Color = when (this) {
 }
 
 /**
- * 悬浮气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 三个计数徽标。
+ * 气泡窗口整体：圆形气泡（含徽标/动效）+ 可延伸竖条（Mini/图集），同一窗口纵向连接——
+ * 竖条开合只改窗口高度，永不遮挡气泡（修复 12）。barOnTop=true 时竖条渲染在气泡上方。
+ * 触摸分区在 addBubble 的 View 监听器：气泡圆区域=拖拽/toggle，竖条区=Compose 控件。
+ */
+@Composable
+private fun BubbleWindowContent(
+    phase: BubblePhase,
+    pendingCount: Int,
+    parsingCount: Int,
+    downloadingCount: Int,
+    barState: PopupUiState?,
+    barOnTop: Boolean,
+    onToggle: () -> Unit,
+    onRecognize: () -> Unit,
+    onSelect: (Int) -> Unit,
+    onDownload: () -> Unit,
+    onBarStateChanged: (PopupUiState?) -> Unit
+) {
+    // 竖条开合/内容变化 → 同步窗口锚点与延伸方向（Compose 状态驱动，替代 Flow）
+    LaunchedEffect(barState) { onBarStateChanged(barState) }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        if (barOnTop && barState != null) {
+            BarBody(state = barState, onRecognize = onRecognize, onSelect = onSelect, onDownload = onDownload)
+        }
+        BubbleCircle(phase, pendingCount, parsingCount, downloadingCount)
+        if (!barOnTop && barState != null) {
+            BarBody(state = barState, onRecognize = onRecognize, onSelect = onSelect, onDownload = onDownload)
+        }
+    }
+}
+
+/**
+ * 圆形气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 三个计数徽标。
  * 左上绿 = 搁置待处理；左下黄 = 解析中 N；右下蓝 = 下载中 M（阶段 16 并发可见性）。
  *
  * 注意：这里刻意不放任何 pointerInput——Compose 内容一旦认领触摸事件，
  * 服务层 View 级拖拽/单击监听器就收不到事件（见 addBubble）。
  */
 @Composable
-private fun BubbleContent(
+private fun BubbleCircle(
     phase: BubblePhase,
     pendingCount: Int,
     parsingCount: Int,

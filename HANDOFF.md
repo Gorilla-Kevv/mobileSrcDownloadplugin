@@ -14,7 +14,7 @@
 ## 结构（关键路径，勿读全仓库）
 - 解析：`parser/`——`core/ParserEngine.kt`（quickDetect/parseSafe/配置热更新）、`core/UrlUtil.kt`（召回/归一化/平台判定）、`parsers/InstagramParser.kt`（**四通道降级：GraphQL→embed→WebView→oEmbed；ownPostScope+ownCodeSegment 双重隔离；DOM 图集兜底；sanitized 出口清洗**）、`parsers/HtmlUtil.kt`（unescapeJson 双层解码修复 9）
 - 下载：`downloader/`——`DownloadController.kt`（enqueue/enqueueAll 带 sourceUrl+入口 URL 清洗）、`engine/DownloadEngine.kt`（终态失败日志）、`db/TaskDatabase.kt`（v2：source_url 列）
-- App：`app/clip/`（四通道+ClipGateActivity+WebViewHtmlFetcher 轮询探针+debug_last_page.html 落盘）、`app/floatwindow/`——`FloatingWindowService.kt`（**单击气泡 toggle 竖条；BubblePhase 7 相位动效；autoRecognize 流水线+保险丝（wifiOnly/失败退避）**；`ClipPopupContent.kt`（**SideBarContainer 64dp 竖条：Mini/图集两形态**+居中卡）、`PopupUiState.kt`、`BubblePhase.kt`）、`app/ui/downloads/DownloadsScreen.kt`（图集分组/打开/来源）、`app/data/SettingsRepository.kt`（autoDownload/seen_links 等）
+- App：`app/clip/`（四通道+ClipGateActivity+WebViewHtmlFetcher 轮询探针+debug_last_page.html 落盘）、`app/floatwindow/`——`FloatingWindowService.kt`（**修复 12：气泡+竖条同窗口一体化 BubbleWindowContent/syncBubbleWindow/touch 分区**；BubblePhase 7 相位动效；autoRecognize 流水线+保险丝）、`floatwindow/BubbleBar.kt`（**竖条内容：Mini/图集两形态，64dp 与气泡同宽**）、`ClipPopupContent.kt`（纯居中卡：Loading/单选Ready/Failed/Downloads）、`PopupUiState.kt`、`BubblePhase.kt`）、`app/ui/downloads/DownloadsScreen.kt`（图集分组/打开/来源/**时间显示**）、`app/data/SettingsRepository.kt`（autoDownload/seen_links 等）
 
 ## 决策与坑（活坑，按影响排序）
 1. **IG 页面 JSON-in-JS 双重转义**（`\/`→源码 `\\/`）：三条提取路径曾各自漏网（修复 9 unescapeJson 双层解码 + enqueue 入口清洗双保险）；**任何新提取路径必须过 unescapeJson**
@@ -40,7 +40,7 @@
 - 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
 ## 状态
-- 当前：**阶段 21 完成（release 签名+R8、:downloader 单测 30 例，双会话合并）**；修复 10d 已装机，**待用户复测图集竖条** → 之后 **release 装机冒烟**（同包名覆盖 debug；清单见 PROGRESS 阶段 21）。本 session 已完成：PLAN 阶段 14-18 全部 + 单击气泡 toggle 交互体系 + 下载页分组 + 修复 8（URL query 截断）/9（双重转义 403）/10（items[0] 污染）/10b（embed 隔离）/10c（单视频净化）/10d（DOM 图集兜底）+ 竖条重排（正下方 64dp 同宽）
+- 当前：**修复 12（气泡+竖条同窗口一体化）代码完成+装机**，待用户复测（清单见 PROGRESS 修复 12 节：X 图集竖条/下半屏向上生长/再点收起/冷却文案）。修复 10d 图集 DOM 兜底待风控恢复后复测。本 session 累计：PLAN 14-18 + 阶段 21（release 签名+R8、downloader 单测）+ 修复 8/9/10 系列 + 修复 11（冷却保险丝/generic 排除/下载时间）+ 修复 12
 - 验收标准：`assembleDebug` + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿 + 模拟器/真机关键链路实测 + release 冒烟
-- 下一步：①用户复测图集竖条 ②release 装机冒烟 ③真机回归（累积项：60fps、下载详情卡点击分流、wifiOnly/失败退避熔断、双链接并发徽标峰值、IG GraphQL 在家宽下的表现）④`:downloader` 剩余覆盖（TaskDatabase/MediaStoreWriter/Notifier/DownloadEngine 调度，需仪器化）
-- 文档：PROGRESS.md 全阶段记录（阶段 1-21 + 修复 8/9/10 系列）；PLAN.md（阶段 14-18 计划，已全部实现）
+- 下一步：①用户复测修复 12 四项 ②release 装机冒烟（keystore 备份提醒见命令节）③真机回归（60fps、详情卡点击分流、wifiOnly/退避熔断、并发徽标、IG GraphQL 家宽）④IG 风控恢复期测试纪律见坑 13
+- 文档：PROGRESS.md 全阶段记录（阶段 1-21 + 修复 8-12）；PLAN.md（阶段 14-18 计划，已全部实现）
