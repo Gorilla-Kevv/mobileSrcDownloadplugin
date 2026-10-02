@@ -13,3 +13,4 @@ captures/
 *.jks
 *.keystore
 signing.properties
+.zcode/
