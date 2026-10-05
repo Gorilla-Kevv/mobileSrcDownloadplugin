@@ -8,20 +8,20 @@
 - 环境（全在 F 盘）：JDK17 `F:\AndroidDev\jdk\jdk-17.0.20.1+1`，SDK `F:\AndroidDev\sdk`，缓存 `F:\AndroidDev\.gradle`；模拟器 AVD `clip34`（1080x2400，时钟 GMT，重启清剪贴板）
 
 ## 目标
-- 已达成：剪贴板四通道/分享/无障碍 → 点气泡识别 → 自动流水线（解析→单视频/图下载，图集竖条挑选）→ 下载闭环；下载页图集分组与来源回看；IG/X/YouTube 实测（详见 PROGRESS 阶段 1-20 与修复 8/9/10 系列）
+- 已达成：剪贴板四通道/分享/无障碍 → 点气泡识别 → 自动流水线（解析→单视频/图下载，图集竖条挑选）→ 下载闭环；下载页图集分组与来源回看；IG/X/YouTube 实测（详见 PROGRESS 阶段 1-29（旧修复 8/9/10 系列已并入阶段 16/18/22-25））
 - 非目标：不内嵌 yt-dlp；不绕过付费墙
 
 ## 结构（关键路径，勿读全仓库）
-- 解析：`parser/`——`core/ParserEngine.kt`（quickDetect/parseSafe/配置热更新）、`core/UrlUtil.kt`（召回/归一化/平台判定）、`parsers/InstagramParser.kt`（**四通道降级：GraphQL→embed→WebView→oEmbed；ownPostScope+ownCodeSegment 双重隔离；DOM 图集兜底；sanitized 出口清洗**）、`parsers/HtmlUtil.kt`（unescapeJson 双层解码修复 9）
+- 解析：`parser/`——`core/ParserEngine.kt`（quickDetect/parseSafe/配置热更新）、`core/UrlUtil.kt`（召回/归一化/平台判定）、`parsers/InstagramParser.kt`（**四通道降级：GraphQL→embed→WebView→oEmbed；ownPostScope+ownCodeSegment 双重隔离；DOM 图集兜底；sanitized 出口清洗**）、`parsers/HtmlUtil.kt`（unescapeJson 双层解码（修复 9→阶段 18））
 - 下载：`downloader/`——`DownloadController.kt`（enqueue/enqueueAll 带 sourceUrl+入口 URL 清洗）、`engine/DownloadEngine.kt`（终态失败日志）、`db/TaskDatabase.kt`（v2：source_url 列）
-- App：`app/clip/`（四通道+ClipGateActivity+WebViewHtmlFetcher 轮询探针+debug_last_page.html 落盘）、`app/floatwindow/`——`FloatingWindowService.kt`（**修复 12：气泡+竖条同窗口一体化 BubbleWindowContent/syncBubbleWindow/touch 分区**；BubblePhase 7 相位动效；autoRecognize 流水线+保险丝）、`floatwindow/BubbleBar.kt`（**竖条内容：Mini/图集两形态，64dp 与气泡同宽**）、`ClipPopupContent.kt`（纯居中卡：Loading/单选Ready/Failed/Downloads）、`PopupUiState.kt`、`BubblePhase.kt`）、`app/ui/downloads/DownloadsScreen.kt`（图集分组/打开/来源/**时间显示**）、`app/data/SettingsRepository.kt`（autoDownload/seen_links 等）
+- App：`app/clip/`（四通道+ClipGateActivity+WebViewHtmlFetcher 轮询探针+debug_last_page.html 落盘）、`app/floatwindow/`——`FloatingWindowService.kt`（**修复 12（阶段 29）：气泡+竖条同窗口一体化 BubbleWindowContent/syncBubbleWindow/touch 分区**；BubblePhase 7 相位动效；autoRecognize 流水线+保险丝）、`floatwindow/BubbleBar.kt`（**竖条内容：Mini/图集两形态，64dp 与气泡同宽**）、`ClipPopupContent.kt`（纯居中卡：Loading/单选Ready/Failed/Downloads）、`PopupUiState.kt`、`BubblePhase.kt`）、`app/ui/downloads/DownloadsScreen.kt`（图集分组/打开/来源/**时间显示**）、`app/data/SettingsRepository.kt`（autoDownload/seen_links 等）
 
 ## 决策与坑（活坑，按影响排序）
-1. **IG 页面 JSON-in-JS 双重转义**（`\/`→源码 `\\/`）：三条提取路径曾各自漏网（修复 9 unescapeJson 双层解码 + enqueue 入口清洗双保险）；**任何新提取路径必须过 unescapeJson**
-2. **IG items[0] 内嵌推荐块**（2026-09 结构：items[0] 含 3 个 code）→ 修复 10 `ownCodeSegment` 按 code 切段；**新增提取限定正帖段**
-3. **图集帖 WebView 数据残缺**：`carousel_media=null`、media_type=1，子图只渲染在 DOM → 修复 10d DOM img 兜底（排除头像 t51.2885-19/s150x150）；仅 `images.size<=1 && videos.isEmpty()` 时触发
-4. **embed 通道已废**（页面无媒体数据）且**有视频时只留视频**（修复 10c，封面帧不作独立媒体）；**GraphQL 是图集完整数据唯一来源**，但代理环境下被会话-IP 风控拒（返回 HTML，无 App 层解，真机可解）
-5. **URL query 截断**（修复 8）：URL_PATTERN 排除集勿加回半角 `?`
+1. **IG 页面 JSON-in-JS 双重转义**（`\/`→源码 `\\/`）：三条提取路径曾各自漏网（阶段 18 unescapeJson 双层解码 + enqueue 入口清洗双保险）；**任何新提取路径必须过 unescapeJson**
+2. **IG items[0] 内嵌推荐块**（2026-09 结构：items[0] 含 3 个 code）→ 阶段 22 `ownCodeSegment` 按 code 切段；**新增提取限定正帖段**
+3. **图集帖 WebView 数据残缺**：`carousel_media=null`、media_type=1，子图只渲染在 DOM → 阶段 25 DOM img 兜底（排除头像 t51.2885-19/s150x150）；仅 `images.size<=1 && videos.isEmpty()` 时触发
+4. **embed 通道已废**（页面无媒体数据）且**有视频时只留视频**（阶段 24，封面帧不作独立媒体）；**GraphQL 是图集完整数据唯一来源**，但代理环境下被会话-IP 风控拒（返回 HTML，无 App 层解，真机可解）
+5. **URL query 截断**（修复 8→阶段 16）：URL_PATTERN 排除集勿加回半角 `?`
 6. **Compose pointerInput 会杀 View 级触摸监听**：气泡拖拽/单击双击全在 View `setOnTouchListener`（坑 24）；**BubblePhase 的 Parsing/Downloading 是持续相位，新流程路径必须显式收口**（坑 25）
 7. **无障碍**：manifest 勿写 `packageNames`；`adb install -r` 会清授权且可能假死（卸载重装首次启用或重启模拟器）；Android 10+ 后台剪贴板被拒，依赖借道 ClipGateActivity（onWindowFocusChanged 时机）
 8. **uid 漂移**：重装后 uid 变化，adb root 写 SP 后 chown 需按新 uid
@@ -29,7 +29,7 @@
 10. **Git Bash 环境**：`build.bat` 不可用（中文注释撞代码页）→ 见下方命令；PowerShell 不支持 heredoc
 11. Piped 公共实例经常性波动（YouTube 解析失败文案"需要远端解析"是预期降级）；模拟器 ping 不通外网正常（ICMP）
 12. **HLS 解密变换的运行时差异**：`AES/CBC/PKCS7Padding` 只有 Android/BC 注册，桌面 JVM（SunJCE）会抛 `NoSuchPaddingException`——曾被 `runCatching` 静默吞成"解密失效、直接落密文"。已改为 PKCS7→PKCS5 降级；**任何 `Cipher.getInstance` 的失败都不要静默吞，至少打日志**
-13. **IG 风控保护（修复 11）**：InstagramParser 连续失败 ≥2 次自动冷却 10 分钟（期内 parse 零请求直接抛）；generic 兜底仅对 GENERIC 平台生效——**专属平台失败不再落 generic 抓图标垃圾**；**账号风控期测试纪律：间隔 ≥10 分钟、失败不重试（冷却自动拦）、优先非 IG 平台验证**
+13. **IG 风控保护（修复 11→阶段 28）**：InstagramParser 连续失败 ≥2 次自动冷却 10 分钟（期内 parse 零请求直接抛）；generic 兜底仅对 GENERIC 平台生效——**专属平台失败不再落 generic 抓图标垃圾**；**账号风控期测试纪律：间隔 ≥10 分钟、失败不重试（冷却自动拦）、优先非 IG 平台验证**
 13. 诊断通道：日志 tag `ig-local-v1`（ctx.log：通道选择/GraphQL 失败原因/解析成功 media 清单）、`FloatingWindowService`（media 结果+污染取证）、`DownloadEngine`（终态失败+URL）；**sqlite 任务库是 403 取证位**：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"`；WebView 抓取页落盘 `/sdcard/Android/data/com.clipdown.app/files/debug_last_page.html`
 
 ## 命令
@@ -40,7 +40,7 @@
 - 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
 ## 状态
-- 当前：**修复 12（气泡+竖条同窗口一体化）代码完成+装机**，待用户复测（清单见 PROGRESS 修复 12 节：X 图集竖条/下半屏向上生长/再点收起/冷却文案）。修复 10d 图集 DOM 兜底待风控恢复后复测。本 session 累计：PLAN 14-18 + 阶段 21（release 签名+R8、downloader 单测）+ 修复 8/9/10 系列 + 修复 11（冷却保险丝/generic 排除/下载时间）+ 修复 12
+- 当前：**阶段 29（修复 12：气泡+竖条同窗口一体化）代码完成+装机**，待用户复测（清单见 PROGRESS 阶段 29：X 图集竖条/下半屏向上生长/再点收起/冷却文案）。阶段 25 之 DOM 兜底待风控恢复后复测。本 session 累计：阶段 15-29（含 PLAN 14-18 全部、修复 8-12 系列、release 签名+R8、downloader 单测 30 例）
 - 验收标准：`assembleDebug` + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿 + 模拟器/真机关键链路实测 + release 冒烟
-- 下一步：①用户复测修复 12 四项 ②release 装机冒烟（keystore 备份提醒见命令节）③真机回归（60fps、详情卡点击分流、wifiOnly/退避熔断、并发徽标、IG GraphQL 家宽）④IG 风控恢复期测试纪律见坑 13
-- 文档：PROGRESS.md 全阶段记录（阶段 1-21 + 修复 8-12）；PLAN.md（阶段 14-18 计划，已全部实现）
+- 下一步：①用户复测阶段 29 四项 ②release 装机冒烟（keystore 备份提醒见命令节）③真机回归（60fps、详情卡点击分流、wifiOnly/退避熔断、并发徽标、IG GraphQL 家宽）④IG 风控恢复期测试纪律见坑 13
+- 文档：PROGRESS.md 全阶段记录（阶段 1-29，头部进度看板，含旧编号对照）；PLAN.md（阶段 14-18 计划，已全部实现）
