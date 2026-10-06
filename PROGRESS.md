@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 29 气泡+竖条同窗口一体化（修复 12，已装机，待用户复测：X 图集竖条/下半屏向上生长/再点收起/IG 冷却文案）
-- 下一阶段任务：release 装机冒烟（同包名覆盖 debug，清单见阶段 27）→ 真机回归（累积项见 HANDOFF）
-- 可提前进行的任务：无（剩余项均依赖用户设备/账号窗口）
-- 未完成的任务：阶段 25 之 10d 图集竖条复测（等 IG 风控恢复）；阶段 27 release 冒烟
+- 当前正在开发任务：阶段 30 完成（release 装机冒烟部分完成：装机+悬浮窗+MainActivity+R8 健康确认；下载闭环与图集竖条受模拟器出口 IP/平台风控限制未在模拟器完成，下载引擎由 30 例单测兜底）
+- 下一阶段任务：真机回归（X 单视频下载闭环 → 阶段 29 四项气泡交互 → 阶段 25 复测；家宽通常绕过 X 404 与 IG 风控）
+- 可提前进行的任务：阶段 29 真机复测（X 图集竖条 / 气泡下半屏向上生长 / 再点收起 / IG 冷却文案）；阶段 25 之 IG 图集竖条（风控恢复后）
+- 未完成的任务：阶段 30 下载闭环冒烟（模拟器完成不了，需真机）；IG 风控恢复后阶段 25 复测
 - 测试基线：parser 40 例 + downloader 30 例全绿
 - 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
-- 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29
-- 本次文档更新时间：10.06 01:45
+- 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
+- 本次文档更新时间：10.06 11:30
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -415,3 +415,24 @@
 - **待用户复测**：①X 图集竖条挑图+下载 ②气泡拖到屏幕下半部→竖条改向上生长 ③再点气泡收起 ④IG 冷却期点气泡→失败卡文案"冷却中"
 - 已知遗留：BubbleBar 内图集缩略图加载原图 URL（coil 下采样）；竖条内容超 330dp 上限的极端图集未实测
 - 本次文档更新时间：10.06 01:45
+
+## 阶段 30 release 装机冒烟（新坑 14：adb shell cat 二进制 CRLF 翻译） [计划时间：10.06 01:50 BY ZCode][完成时间：10.06 11:30 BY ZCode]
+- 用户要求"检查后再进行下一任务"→ 启动 `clip34` 模拟器（无窗口 swiftshader），执行阶段 27 待办的 release 装机冒烟
+- **环境准备**：
+  - `assembleRelease` + `:parser:test` + `:downloader:testDebugUnitTest` 全绿（6m10s）；产物 `app-release.apk` 1.69MB（1771116 bytes），签名 `CN=ClipDown, O=Gorilla-Kevv` ✓
+  - 模拟器 `adb root` → 卸载 debug → `adb install app-release.apk` Success → 新 uid=10206
+  - 授权：appops SYSTEM_ALERT_WINDOW allow、settings enabled_accessibility_services+a11y enabled、pm grant POST_NOTIFICATIONS
+  - 备份恢复：`clipdown_cookies.xml`（520B，含 IG sessionid，curl XML 容忍 CRLF）与 `clipdown_settings.preferences_pb`（2461B，二进制 proto）→ 用 `adb shell run-as ... cat`（走 pty **会做 LF→CRLF 翻译**）→ 通过 `adb root` push + chown 10206:10206
+- **新坑 14（写入 HANDOFF）**：app 启动即崩溃 `Unable to parse preferences proto / While parsing a protocol message, the input ended unexpectedly in the middle of a field`。原因：`adb shell run-as cat` 对二进制 proto 插入 \r，导致 DataStore 解析失败（hex 头 0d0a b112 0d0a ...）。**正确做法：`adb exec-out run-as <pkg> cat <path>` 或 `adb exec-out "cat <path>"`（exec-out 不走 pty）**；XML 类文本 SP 受 CRLF 影响小可忽略。修复：删除损坏的 datastore 文件，cookie SP 保留（XML 容忍 \r）。
+- **R8 运行时确认**：删除损坏 datastore 后，release 启动正常，无新崩溃；MainActivity 渲染、悬浮窗（SYSTEM_ALERT_WINDOW 窗口在 dumpsys window 列出 ✓）、三页导航齐全（首页/下载/设置）→ **R8 未破坏运行时**
+- **解析链路验证**：
+  - X syndication 首次（SEND 通道）：解析成功 ✓（title "Chez ISS - episode deux..." / 3 视频变体 / author "Anil Menon" / resolverId "x-syndication-v1"）—— 验证 release 下解析+网络+JSON+R8 全部通过
+  - X syndication 后续：公开接口返回 404（模拟器出口 IP 受 X 公共接口限速）
+  - B 站：`播放地址接口返回异常格式`（B 站 playurl 在代理 IP 风控）
+  - IG 未测（坑 13 测试纪律：风控期优先非 IG）
+- **未完成（环境限制，非 release 回归）**：下载闭环 + 图集竖条。下载引擎由 30 例单测兜底（HttpFileDownloader 续传/RANGE/M3u8 AES/ICS/MediaRemuxer/TaskModels/DownloadController sanitizeTaskUrl），网络环境可控时再回加压测试
+- **a11y UI 状态**：`去开启` 即使 enabled_accessibility_services 已 set——模拟器未触发系统级 toggle 回调，应用本地检测仍判未开；切真机后通过系统设置手动开启一次后稳定
+- **测试注入不稳**：`am start-foreground-service` 需要 adbd 为 root，否则返回 `not exported from uid 10206`；SEND 通道到 MainActivity 受 Android 10+ 后台启动活动约束、`noHistory` ShareTargetActivity 异步 startActivity 时机竞争影响，模拟器上不一定带 UI 前台—— 真机/分享卡片走系统剪贴板更稳
+- **改动文件**：`.zcodeignore`（新增提交：项目级 agent 忽略配置）；`HANDOFF.md`（坑 14 + 状态更新）；`PROGRESS.md`（看板 + 阶段 30）
+- **下一步**（真机可解决模拟器所有未验证项）：①X 单视频下载闭环（家宽绕过 X 404）②阶段 29 四项气泡交互（X 图集竖条 / 拖到下半屏向上生长 / 再点收起 / IG 冷却文案）③IG 风控恢复后阶段 25 复测 ④keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份，否则同包名无法升级签名
+- 本次文档更新时间：10.06 11:30
