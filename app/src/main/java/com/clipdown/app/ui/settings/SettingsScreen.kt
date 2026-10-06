@@ -36,6 +36,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clipdown.app.ClipDownApp
 import com.clipdown.app.data.CookieStore
 import com.clipdown.app.floatwindow.FloatingWindowService
+import com.clipdown.app.update.UpdateSection
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.Platform
 import kotlinx.coroutines.launch
@@ -223,6 +224,8 @@ fun SettingsScreen() {
                 )
             }
         }
+
+        item { UpdateSection() }
     }
 }
 

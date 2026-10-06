@@ -481,3 +481,23 @@
 - **未完成**：视频帖在**设备上**的端到端下载仍被环境反爬挡住（与阶段 32 同因：App 侧请求落 `/login`）→ 需 Cookie 或真机
 - 下一步入口：拿到 Cookie / 真机 → 单图（1 张）+ 多图（3 张）+ 视频帖（无竖条、直接自动下载）三例一起复测
 - 本次文档更新时间：10.06 15:45
+
+## 阶段 34 远程快速更新链路（一键发布脚本 + 应用内检查更新） [计划时间：10.06 15:41 BY ZCode][完成时间：10.06 16:05 BY ZCode]
+- 用户需求：测试期需频繁更新，要求"推流更新 / GitHub Release，支持远程快速更新"
+- **版本号外置**：新建 `version.properties`（versionCode/versionName），`app/build.gradle.kts` 读取；发布脚本自增（不再硬编码在 gradle 里）
+- **更新通道可配置**：`gradle.properties` 的 `clipdown.updateRepo` / `clipdown.apkAssetName` → 生成 `BuildConfig.UPDATE_MANIFEST_URL` / `UPDATE_APK_URL`；**改发布仓库不用改代码**
+- **清单走"最新发布固定链接"**：`releases/latest/download/update.json` —— 不调 GitHub API、不需要 token、无匿名速率限制；**代价是发布仓库必须公开**（私有仓库 Release 资产无法匿名下载），源码仓库可保持私有
+- **一键发布脚本** `scripts/publish-release.sh`：自增版本号 → `assembleRelease` + parser/downloader/app 全量单测 → 生成 `build/dist/clipdown-release.apk` 与 `update.json`（versionCode/versionName/notes/apkUrl/sha256/sizeBytes/mandatory）→ `gh release create --latest` 上传。支持 `--bump/--notes/--repo/--dry-run/--skip-build/--create-repo`；已跑 `--dry-run` 验证（版本 1.0.1(2)→1.0.2(3)、sha256/体积/JSON 均正确）
+- **CI** `.github/workflows/release.yml`：手动 dispatch（可选自增方式+说明）或 `git tag v*` 触发；还原 keystore secrets → 构建+全量单测 → 生成资产 → `gh release create --latest`；未配 secrets 时明确告警（会落 debug 签名导致老用户无法覆盖安装）
+- **应用内更新（新增 4 个文件）**：
+  - `update/UpdateManifest.kt`：清单模型 + `UpdateInfo`（`isNewerThan` 只看 versionCode、`sizeText()`）
+  - `update/UpdateRepository.kt`：OkHttp 拉清单（404 = 尚无发布 → 视为无更新而非报错）+ `parse()` 独立可测 + 当前版本读取
+  - `update/ApkInstaller.kt`：下载到 `cacheDir/update/`（已存在且体积匹配则复用）→ 可选 sha256 校验 → FileProvider + `ACTION_VIEW(application/vnd.android.package-archive)` 拉起系统安装器；含"安装未知应用"权限检查与跳转设置
+  - `update/UpdateCenter.kt` + `update/UpdateUi.kt`：进程级单例状态（Compose state）供设置页与启动提示共用；设置页新增「关于与更新」区块（当前版本/通道/检查更新/下载并安装/进度条/首次需开安装权限引导）；启动静默自检 + 发现新版本弹一次提示框（可"稍后"）
+- **接线**：`ClipDownApp.onCreate` → `UpdateCenter.install(this)`；`MainActivity` → 启动 `check()` + `UpdateLaunchDialog()`；`SettingsScreen` → `item { UpdateSection() }`；Manifest 增 `REQUEST_INSTALL_PACKAGES` + FileProvider；新增 `res/xml/file_paths.xml`
+- **覆盖安装前提**：新旧 APK 签名一致（同一 keystore）→ 系统原地升级并保留数据；签名不同会提示"应用未安装"
+- 测试：`:app:testDebugUnitTest` **4 例**（清单完整解析 / apkUrl 缺省回落固定链接 / 忽略未知字段 / 版本比较只看 versionCode）+ `:app:assembleDebug` 全绿
+- 改动文件：`version.properties`（新建）、`gradle.properties`、`app/build.gradle.kts`、`app/src/main/AndroidManifest.xml`、`app/src/main/res/xml/file_paths.xml`（新建）、`app/.../update/{UpdateManifest,UpdateRepository,ApkInstaller,UpdateCenter,UpdateUi}.kt`（新建）、`app/.../ClipDownApp.kt`、`app/.../ui/MainActivity.kt`、`app/.../ui/settings/SettingsScreen.kt`、`app/src/test/.../UpdateManifestTest.kt`（新建）、`scripts/publish-release.sh`（新建）、`.github/workflows/release.yml`（新建）
+- **待用户决策（阻塞首次发布）**：发布仓库 `Gorilla-Kevv/clipdown-dist` 尚不存在。**必须是公开仓库**应用侧才能匿名下载；创建公开仓库属于对外可见操作，需用户确认（或改为把主仓库转公开）。确认后 `bash scripts/publish-release.sh --create-repo` 一步完成建仓+首发
+- 下一步入口：①确认发布仓库方案并首发 ②真机安装首发 APK ③后续每次更新只需 `bash scripts/publish-release.sh --notes "…"`，测试机在应用内一键覆盖安装
+- 本次文档更新时间：10.06 16:05

@@ -52,6 +52,16 @@
 - adb：需非沙箱执行；装机后 `appops set com.clipdown.app SYSTEM_ALERT_WINDOW allow` + `settings put secure enabled_accessibility_services ...`；服务 `am start-foreground-service -n com.clipdown.app/.floatwindow.FloatingWindowService`
 - 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
+## 发布与更新（远程快速更新链路）
+- **版本号唯一来源**：根目录 `version.properties`（`versionCode`/`versionName`），`app/build.gradle.kts` 读取它；**不要在别处再写死版本号**。发布脚本会自动自增 `versionCode`（单调递增是更新器的唯一比较依据）
+- **更新通道**：`gradle.properties` → `clipdown.updateRepo`（默认 `Gorilla-Kevv/clipdown-dist`）+ `clipdown.apkAssetName`（默认 `clipdown-release.apk`）。构建时生成 `BuildConfig.UPDATE_MANIFEST_URL` / `UPDATE_APK_URL`，**改发布仓库只需改 gradle.properties，不必动代码**
+- **清单地址用"最新发布固定链接"**：`https://github.com/<repo>/releases/latest/download/update.json` —— 不走 GitHub API，**不需要 token、不吃匿名速率限制**。代价是**发布仓库必须公开**（私有仓库的 Release 资产无法匿名下载）；源码仓库可继续私有
+- **一键发布**：`bash scripts/publish-release.sh`（`--bump patch|minor|major|none`、`--notes "…"`、`--repo owner/name`、`--dry-run`、`--skip-build`、`--create-repo`）。它自增版本号 → `assembleRelease`+全量单测 → 生成 `build/dist/{clipdown-release.apk,update.json}`（含 sha256/sizeBytes）→ `gh release create --latest` 上传
+- **CI**：`.github/workflows/release.yml`（手动 dispatch 或 `git tag v1.0.3 && git push origin v1.0.3` 触发）。需配置 secrets `KEYSTORE_BASE64/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD`，否则落回 debug 签名 → 老用户无法覆盖安装
+- **应用内更新**：`update/UpdateCenter`（进程级单例状态）+ `UpdateRepository`（拉清单比对 versionCode）+ `ApkInstaller`（下载 → FileProvider → 系统安装器）+ `UpdateUi`（设置页「关于与更新」区块 + 启动提示框）。Manifest 需 `REQUEST_INSTALL_PACKAGES` 与 `${applicationId}.fileprovider`（路径见 `res/xml/file_paths.xml`）
+- **覆盖安装前提**：新旧 APK **签名一致**（同一 keystore）。签名一致时系统原地升级、保留数据；不一致会提示"应用未安装"
+- 单测：`:app:testDebugUnitTest`（更新清单契约 4 例）
+
 ## 状态
 - 当前：**阶段 32（小红书真实链接联调）完成代码侧**：`xhslink.cn` 路由、短链 `<a href>` 展开、移动端 UA/结构适配、fileId 去重、视频帖净化、失效/登录墙守卫、WebView 提前收口；parser 单测 **56 例**全绿。**小红书图集真实成功下载被环境挡住**（App 侧 OkHttp/WebView 均被 302 到 /login，主机 curl 同参数得 200，反爬含客户端指纹）→ 需用户提供 `web_session` Cookie 或改用真机
 - 阶段 31（小红书链路测试与修复）完成：4 项修复（图集去重 / 视频帖净化 / 短链中转页 / WebView 收口 + 失效页守卫）

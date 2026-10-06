@@ -12,6 +12,8 @@ import androidx.compose.runtime.LaunchedEffect
 import com.clipdown.app.clip.ClipboardMonitor
 import com.clipdown.app.ui.nav.AppNav
 import com.clipdown.app.ui.theme.ClipDownTheme
+import com.clipdown.app.update.UpdateCenter
+import com.clipdown.app.update.UpdateLaunchDialog
 
 class MainActivity : ComponentActivity() {
 
@@ -31,6 +33,9 @@ class MainActivity : ComponentActivity() {
         setContent {
             ClipDownTheme {
                 LaunchedEffect(Unit) { ClipboardMonitor.readAndSubmit(com.clipdown.app.clip.LinkSource.FOREGROUND_CLIP) }
+                // 启动静默检查更新：有新版时弹一次提示框（用户点"稍后"本次启动不再打扰）
+                LaunchedEffect(Unit) { runCatching { UpdateCenter.check() } }
+                UpdateLaunchDialog()
                 AppNav(openParse = openParse)
             }
         }

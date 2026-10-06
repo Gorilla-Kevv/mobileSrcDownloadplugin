@@ -9,6 +9,7 @@ import com.clipdown.app.clip.WebViewHtmlFetcher
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.model.DownloadConfig
 import com.clipdown.parser.core.ParserEngine
+import com.clipdown.app.update.UpdateCenter
 import kotlinx.coroutines.MainScope
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
@@ -47,6 +48,9 @@ class ClipDownApp : Application() {
         )
 
         ClipboardMonitor.install(this)
+
+        // 应用内更新：安装到公开分发仓库（GitHub Release 固定链接，见 gradle.properties）
+        UpdateCenter.install(this)
 
         appScope.launch {
             settings.maxConcurrent.collect { max ->
