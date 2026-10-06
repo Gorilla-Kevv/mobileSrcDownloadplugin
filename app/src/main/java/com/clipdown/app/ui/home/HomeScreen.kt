@@ -68,6 +68,7 @@ import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
 import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
+import com.clipdown.parser.core.ProfileUrls
 import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.ParseResult
@@ -100,6 +101,12 @@ fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) 
         if (autoFocusParse) {
             val link = lastLink ?: return@LaunchedEffect
             input = link.url
+            // 分享/VIEW 进来的也可能是主页链接：同样走主页链路，不能塞进单篇解析
+            if (withContext(Dispatchers.IO) { ParserEngine.linkKind(link.url) } == LinkKind.PROFILE) {
+                ProfileCenter.open(link.url)
+                onOpenProfile()
+                return@LaunchedEffect
+            }
             parsing = true
             error = null
             result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url).getOrNull() }
@@ -138,8 +145,9 @@ fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) 
         }
     }
 
+    // 仅本地判断（不展开短链、不发网络）：用于输入框下方的提示条
     val isProfileInput = remember(input) {
-        input.isNotBlank() && runCatching { ParserEngine.linkKind(input) == LinkKind.PROFILE }.getOrDefault(false)
+        input.isNotBlank() && runCatching { ProfileUrls.match(input) != null }.getOrDefault(false)
     }
 
     LazyColumn(

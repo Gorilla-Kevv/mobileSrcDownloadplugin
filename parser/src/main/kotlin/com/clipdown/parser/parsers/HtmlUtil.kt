@@ -88,11 +88,25 @@ object HtmlUtil {
         return null
     }
 
-    /** 抓取形如 "key":"value" 的 JSON 字段（含转义写法 \"key\":\"value\"，值中允许 \uXXXX 与 \/ 等转义序列） */
+    /**
+     * 抓取形如 "key":"value" 的 JSON 字段（含转义写法 \"key\":\"value\"，值中允许 \uXXXX 与 \/ 等转义序列）。
+     *
+     * 分两段匹配，**先带引号、再无引号**：
+     * 1. 带引号的值：惰性 `[^"\\]|\\.` + 要求值后紧跟分隔符（`,`/`}`/`]` 或文本结尾）。
+     *    `"`/`\` 被排除在字符类外，`\"` 这类转义引号由 `\\.` 吃掉，不会被误判为值结尾；
+     *    后瞻分隔符保证不会提前收尾——曾因"结尾引号可选 + 惰性"把含引号的标题截断成前半段。
+     * 2. 无引号的值（数字/布尔/null，如 SSR 的 `"posted":4127`）：**必须单独一段**。
+     *    否则第 1 段的可选结尾引号会吃掉下一个键的开引号，后瞻随即失败，整条匹配作废——
+     *    实测 `"posted":4127,"liked":...` 取不到值。
+     */
     fun jsonField(text: String, key: String): List<String> {
         val escaped = Regex.escape(key)
-        val pattern = Regex("""\\?"${escaped}\\?"\s*:\s*\\?"((?:[^"\\]|\\.)+?)\\?"""")
-        return pattern.findAll(text).map { it.groupValues[1].unescapeJson() }.toList()
+        val quoted = Regex("""\\?"${escaped}\\?"\s*:\s*\\?"((?:[^"\\]|\\.)*?)\\?"\s*(?=[,}\]]|$)""")
+        val hits = quoted.findAll(text).map { it.groupValues[1] }.toList()
+        if (hits.isNotEmpty()) return hits.map { it.unescapeJson() }
+
+        val bare = Regex("""\\?"${escaped}\\?"\s*:\s*([^,}\]\s"]+)\s*(?=[,}\]]|$)""")
+        return bare.findAll(text).map { it.groupValues[1] }.toList()
     }
 
     /** 普通函数形态的 HTML 反转义，便于跨类调用（避免成员扩展函数的调用歧义） */
@@ -122,5 +136,12 @@ object HtmlUtil {
         .replace("\\\\", "\\")
         .replace(Regex("""\\u([0-9a-fA-F]{4})""")) { it.groupValues[1].toInt(16).toChar().toString() }
         .replace("\\/", "/")
+        // 常规 JSON 字符串转义：不还原会让标题/正文里带出字面的 \" \n（曾导致标题显示为"…坦承\"…"）
+        .replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
+        .replace("\\b", "\b")
+        .replace("\\f", "\u000C")
+        .replace("\\\"", "\"")
         .replace("&amp;", "&")
 }

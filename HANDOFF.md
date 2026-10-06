@@ -46,6 +46,11 @@
 17. **小红书反爬含客户端指纹维度（阶段 32 结论）**：同一 URL、同一移动端 UA、同一请求头，**主机 curl 得 200（含 imageList），App 内 OkHttp 与 WebView 都被 302 到 `/login`**（日志 `直连结果：code=200 finalUrl=.../login?redirectPath=... imageList=false`）。已排除：xsec_token 过期（1.5h 后主机仍 200）、`apptime`/`share_id` 被 normalize 剥离、UA 与 client hints 不一致、WebView 残留 cookie、请求头组合。**剩余唯一可行动路径：用户提供登录态 Cookie（`web_session`）**——设置页「小红书 Cookie」入口已支持，`CookieStore` → `headersFor` 注入。**小红书图集的真实成功下载必须在真机或带 Cookie 的环境验证**
 18. **模拟器代理残留会静默破坏应用网络（阶段 34/35 踩坑）**：`settings put global http_proxy 10.0.2.2:14047` 会被 Android 拆成 `global_http_proxy_host` / `global_http_proxy_port` 两个键，**只 delete `http_proxy` 无效**；且已生效的代理会缓存在网络配置里，必须**两个键都删 + 重启**才复位。症状是应用内所有 OkHttp 请求都报 `SocketTimeoutException: failed to connect to /10.0.2.2 (port 14047)`。另外**模拟器 DNS 解析不了 github.com**（`UnknownHostException: Unable to resolve host "github.com"`）——本机所在网络直连 GitHub 亦超时（需代理），故**应用内更新在模拟器上必然失败，只能真机验证**
 19. **Compose 里做网络请求必须切 IO 线程**：`LaunchedEffect` 跑在主线程，直接调阻塞式 OkHttp 会抛 `NetworkOnMainThreadException`（阶段 35 在设置页「检查更新」实测到，表现为"检查失败：NetworkOnMainThreadException"）。已改为 `withContext(Dispatchers.IO)`
+20. **小红书主页：SSR 需要「桌面 UA + Cookie」，且短链展开要防"登录页陷阱"**（阶段 37 实测取证）：
+    - 主页 `user/profile/<userId>` 三种组合实测：**桌面 UA + Cookie → 200/292KB，`userPageData` + `noteCard`×32 完整 SSR**；移动 UA + Cookie → 53KB 客户端渲染空壳；无 Cookie → 302 `/login`。原因：浏览器导出的 Cookie 是 **PC 网页版会话**（`xsecappid=xhs-pc-web`），与移动 UA 客户端不一致。故 `XiaohongshuProfileParser` 走 **桌面 UA → 移动 UA → WebView** 三级降级
+    - **每篇笔记 URL 必须带 SSR 里的 `xsecToken`**（裸 `/explore/<id>` 被判无效链接）
+    - **短链展开的登录页陷阱**：`expand()` 跟随重定向会落到 `/login?redirectPath=<真实地址>`，若直接返回 final 就会把登录页当目标（实测导致主页链接被判成笔记页、整条链路进不去）→ 已用 `loginRedirectTarget()` 从 `redirectPath` 还原
+21. **`HtmlUtil.jsonField` 的两个边界（阶段 37 修复，影响所有平台）**：①含**转义引号**的值曾被截断（标题「…坦承\"毕生最大遗憾\"…」只取前半段）；②**无引号数字**（`"posted":4127`）因可选结尾引号吃掉下一个键的引号而取不到。现为"先带引号（惰性 + 后瞻分隔符）、再退无引号"两段式；`unescapeJson` 也补齐了 `\"` `\n` `\t` 等常规转义
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`

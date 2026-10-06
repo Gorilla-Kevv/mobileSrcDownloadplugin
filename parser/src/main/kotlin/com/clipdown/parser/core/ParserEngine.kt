@@ -120,8 +120,33 @@ object ParserEngine {
         return parse(url)
     }
 
-    /** 链接形态（主页 / 作品页）：UI 据此决定是打开主页还是走单篇解析 */
-    fun linkKind(rawUrl: String): LinkKind = ProfileUrls.kindOf(UrlUtil.normalize(rawUrl))
+    /**
+     * 链接形态（主页 / 作品页）：UI 据此决定是打开主页还是走单篇解析。
+     *
+     * **注意：短链需要网络展开**（`xhslink.cn/o/xxx` 这类看不出是主页还是笔记），
+     * 因此本方法可能阻塞，必须在 IO 线程调用；只要本地判定的场景请直接用
+     * [ProfileUrls.kindOf]（不展开短链）。
+     */
+    fun linkKind(rawUrl: String): LinkKind {
+        val normalized = UrlUtil.normalize(rawUrl)
+        var url = normalized
+        var expandedNote = "-"
+        if (UrlUtil.isShortLink(url)) {
+            runCatching { expand(url) }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    url = UrlUtil.normalize(it)
+                    expandedNote = url
+                }
+        }
+        val kind = ProfileUrls.kindOf(url)
+        logger?.invoke(
+            "ParserEngine",
+            "linkKind: kind=$kind platform=${UrlUtil.detectPlatform(url)} short=${UrlUtil.isShortLink(normalized)} " +
+                "url=$url expandedFrom=$expandedNote"
+        )
+        return kind
+    }
 
     /**
      * 主页解析：与单篇作品解析**平行的独立入口**。
@@ -227,7 +252,12 @@ object ParserEngine {
                     http.get(current, mapOf("User-Agent" to config.userAgents.desktop))
                 }.getOrNull()
                 val final = getResp?.finalUrl
-                if (!final.isNullOrBlank() && final != current) return final
+                if (!final.isNullOrBlank() && final != current) {
+                    // 平台常把"未登录访问"跳到 /login?redirectPath=<真实地址>：
+                    // 直接返回 final 会把登录页当成目标（实测短链展开因此把主页链接判成了笔记页）
+                    loginRedirectTarget(final)?.let { return UrlUtil.normalize(it) }
+                    return final
+                }
                 // 小红书 xhslink 等短链常返回 200 的中转页（meta refresh / JS 跳转 / 纯 <a href>）
                 // 而不是 3xx，OkHttp 不会跟随，此时必须从页面里把真实地址抠出来
                 val fromHtml = redirectFromHtml(getResp?.body, current)
@@ -240,7 +270,19 @@ object ParserEngine {
     }
 
     /**
-     * 从中转页里提取跳转目标，按可靠性依次尝试：
+     * 登录跳转还原：`/login?redirectPath=<真实地址>` → 真实地址。
+     *
+     * 未登录时平台（小红书等）会把作品页/主页跳到登录页，并把原地址放在 `redirectPath` 里。
+     * 展开短链或判断链接形态时若直接采用最终 URL，就会把"登录页"当成目标。
+     */
+    internal fun loginRedirectTarget(url: String): String? {
+        if (!url.contains("/login")) return null
+        val m = Regex("""[?&]redirectPath=([^&]+)""").find(url) ?: return null
+        val decoded = UrlUtil.decode(m.groupValues[1])
+        return decoded.takeIf { it.startsWith("http") }
+    }
+
+    /** 从中转页里提取跳转目标，按可靠性依次尝试：
      * 1. `meta refresh`（content="0;url=..."）
      * 2. `location.href=` / `location.replace(...)`
      * 3. 页面里第一个指向**其它已知平台域名**的绝对链接——xhslink.cn 的短链页就是

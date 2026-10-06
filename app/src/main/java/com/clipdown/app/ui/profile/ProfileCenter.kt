@@ -77,6 +77,17 @@ object ProfileCenter {
         }
     }
 
+    /**
+     * 直接采用已解析好的结果。
+     *
+     * 用途：悬浮气泡识别到主页链接时会先解析一次，用户点「打开主页」后
+     * 页面直接展示这份结果，避免重复请求（主页解析较慢，重复请求也更容易触发风控）。
+     */
+    fun adopt(url: String, result: ProfileResult) {
+        lastUrl = url
+        state = ProfileUiState.Loaded(result)
+    }
+
     fun retry() {
         lastUrl?.let { url -> state = ProfileUiState.Idle }
     }

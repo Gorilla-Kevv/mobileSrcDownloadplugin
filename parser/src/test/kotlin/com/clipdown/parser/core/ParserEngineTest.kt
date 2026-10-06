@@ -2,6 +2,7 @@ package com.clipdown.parser.core
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 /**
@@ -67,6 +68,27 @@ class ParserEngineTest {
     fun `中转页 忽略指向自身域名的链接`() {
         val body = """<html><body><a href="https://xhslink.cn/o/other">x</a></body></html>"""
         assertNull(ParserEngine.redirectFromHtml(body, "https://xhslink.cn/o/7mDR2JlydL0"))
+    }
+
+    /**
+     * 未登录时平台把作品页/主页跳到 `/login?redirectPath=<真实地址>`。
+     * 短链展开若直接采用最终 URL，就会把**登录页**当成目标——
+     * 实测导致主页链接被判成"笔记页"，整条主页链路进不去。
+     */
+    @Test
+    fun `登录跳转还原出真实地址`() {
+        val login = "https://www.xiaohongshu.com/login?redirectPath=" +
+            "http%3A%2F%2Fwww.xiaohongshu.com%2Fuser%2Fprofile%2F561d336a33f60c555d600dec" +
+            "%3Fxsec_token%3DABC%253D%26xsec_source%3Dapp_share"
+        val target = ParserEngine.loginRedirectTarget(login)
+        assertTrue("应还原出真实地址: $target", target!!.startsWith("http://www.xiaohongshu.com/user/profile/"))
+        assertTrue("应保留 xsec_token: $target", target.contains("xsec_token"))
+    }
+
+    @Test
+    fun `非登录跳转不做处理`() {
+        assertNull(ParserEngine.loginRedirectTarget("https://www.xiaohongshu.com/explore/abc"))
+        assertNull(ParserEngine.loginRedirectTarget("https://www.xiaohongshu.com/login"))
     }
 
     @Test

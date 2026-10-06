@@ -36,6 +36,18 @@ sealed interface PopupUiState {
     /** 解析失败，展示原因与补救入口 */
     data class Failed(val link: DetectedLink, val message: String, val retryable: Boolean = true) : PopupUiState
 
+    /**
+     * 识别到博主主页：主页是"1 作者 + N 笔记"的集合形态，不能在气泡里逐篇下载，
+     * 因此这里只做"确认 + 入口"，点「打开主页」进独立页面（[com.clipdown.app.ui.profile.ProfileScreen]）。
+     */
+    data class ProfileReady(
+        val link: DetectedLink,
+        val nickname: String,
+        val postCount: Int,
+        val platformName: String,
+        val warning: String? = null
+    ) : PopupUiState
+
     /** 自动下载详情小卡：下载中单击气泡展示，进度随事件实时刷新 */
     data class Downloads(val tasks: List<DownloadRow>) : PopupUiState
 }

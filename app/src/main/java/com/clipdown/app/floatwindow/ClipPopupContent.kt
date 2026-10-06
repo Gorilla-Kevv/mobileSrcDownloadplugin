@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Button
@@ -65,6 +66,7 @@ import coil.compose.AsyncImage
 import com.clipdown.app.R
 import com.clipdown.app.ui.theme.GlassBase
 import com.clipdown.app.ui.theme.SeedBlue
+import com.clipdown.app.ui.theme.WarningAmber
 import com.clipdown.parser.model.MediaKind
 
 /**
@@ -84,6 +86,7 @@ fun ClipPopupContent(
     onDownload: () -> Unit,
     onRetry: () -> Unit,
     onOpenApp: () -> Unit,
+    onOpenProfile: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val visible = state !is PopupUiState.Hidden
@@ -109,6 +112,7 @@ fun ClipPopupContent(
                 when (state) {
                     is PopupUiState.Loading -> LoadingBody(state.link.platform.displayName, remainSeconds, onDismiss)
                     is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
+                    is PopupUiState.ProfileReady -> ProfileBody(state, onOpenProfile, onDismiss)
                     is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
                     is PopupUiState.Downloads -> DownloadsBody(state, onDismiss)
                     else -> Unit
@@ -372,13 +376,86 @@ private fun ReadyBody(
     }
 }
 
+/**
+ * 博主主页确认卡。
+ *
+ * 主页是"1 作者 + N 笔记"的集合形态，气泡里无法逐篇挑选，
+ * 所以这里只做"确认识别 + 进入独立页面"的入口，真正的挑选与下载在主页页完成。
+ */
+@Composable
+private fun ProfileBody(
+    state: PopupUiState.ProfileReady,
+    onOpenProfile: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Column(modifier = Modifier.padding(18.dp)) {
+        HeaderRow(
+            title = state.platformName,
+            subtitle = "识别到博主主页",
+            remainSeconds = 0,
+            onDismiss = onDismiss
+        )
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = 0.10f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Person,
+                    contentDescription = null,
+                    tint = Color.White.copy(alpha = 0.9f),
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    state.nickname,
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+                Text(
+                    "共 ${state.postCount} 篇笔记，可在页面内挑选下载",
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = MaterialTheme.typography.labelMedium
+                )
+            }
+        }
+        state.warning?.let {
+            Spacer(Modifier.height(8.dp))
+            Text(it, color = WarningAmber, style = MaterialTheme.typography.labelMedium)
+        }
+        Spacer(Modifier.height(14.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            TextButton(onClick = onDismiss) {
+                Text("忽略", color = Color.White.copy(alpha = 0.8f), style = MaterialTheme.typography.labelLarge)
+            }
+            Spacer(Modifier.weight(1f))
+            Button(
+                onClick = onOpenProfile,
+                shape = RoundedCornerShape(14.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
+            ) {
+                Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("打开主页")
+            }
+        }
+    }
+}
+
 @Composable
 private fun FailedBody(
     state: PopupUiState.Failed,
     onRetry: () -> Unit,
     onDismiss: () -> Unit
-) {
-    Column(modifier = Modifier.padding(18.dp)) {
+) {    Column(modifier = Modifier.padding(18.dp)) {
         HeaderRow(
             title = state.link.platform.displayName,
             subtitle = "解析失败",

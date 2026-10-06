@@ -59,9 +59,11 @@ import com.clipdown.app.clip.ClipGateActivity
 import com.clipdown.app.clip.LinkCenter
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.ui.theme.ClipDownTheme
+import com.clipdown.app.ui.profile.ProfileCenter
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
 import com.clipdown.downloader.model.DownloadStatus
+import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.MediaItem
 import com.clipdown.parser.model.ParseException
@@ -479,6 +481,13 @@ class FloatingWindowService : Service() {
         pendingCount.intValue = 0
         setPhase(BubblePhase.Parsing)
         val job = scope.launch {
+            // 博主主页：不做自动下载（集合形态没有"单个资源"可下），只提示打开主页
+            if (tryProfilePath(link, force = false)) {
+                autoParseJobs.remove(currentCoroutineContext()[Job])
+                pipelineUrls.remove(link.url)
+                parsingCount.intValue--
+                return@launch
+            }
             val result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url) }
             autoParseJobs.remove(currentCoroutineContext()[Job])
             pipelineUrls.remove(link.url)
@@ -652,6 +661,62 @@ class FloatingWindowService : Service() {
         else -> false
     }
 
+    /**
+     * 博主主页专用分支：识别 → 解析 → 进入"确认 + 打开主页"状态。
+     *
+     * 主页是"1 作者 + N 笔记"的集合形态，气泡里无法逐篇挑选，
+     * 所以这里只负责把结果准备好（存进 [ProfileCenter]）并提示用户进页面。
+     *
+     * @param force true=手动路径（用户点了气泡，弹窗状态一定由我们接管）；
+     *              false=自动路径（只在弹窗空闲时占用，避免抢用户正在看的弹窗）
+     * @return 是否命中主页链路（false 表示这是普通作品链接，调用方继续走原逻辑）
+     */
+    private suspend fun tryProfilePath(
+        link: com.clipdown.app.clip.DetectedLink,
+        force: Boolean
+    ): Boolean {
+        val kind = withContext(Dispatchers.IO) {
+            runCatching { ParserEngine.linkKind(link.url) }.getOrDefault(LinkKind.UNKNOWN)
+        }
+        if (kind != LinkKind.PROFILE) return false
+
+        val r = withContext(Dispatchers.IO) { runCatching { ParserEngine.parseProfile(link.url) } }
+        val profile = r.getOrNull()
+        val e = r.exceptionOrNull()
+        android.util.Log.d(
+            "FloatingWindowService",
+            "主页链路：url=${link.url.take(80)} ok=${profile != null} posts=${profile?.posts?.size} err=${e?.message}"
+        )
+
+        if (profile != null) {
+            ProfileCenter.adopt(link.url, profile)
+            setPhase(BubblePhase.ParseOk, revertMs = 1_200)
+            if (force || popupFreeForAuto()) {
+                uiState.value = PopupUiState.ProfileReady(
+                    link = link,
+                    nickname = profile.displayName,
+                    postCount = profile.posts.size,
+                    platformName = profile.platform.displayName,
+                    warning = profile.warning
+                )
+                ensurePopupHost()
+                startDismissTimer()
+            }
+        } else {
+            setPhase(BubblePhase.ParseFail, revertMs = 4_000)
+            if (force || popupFreeForAuto()) {
+                val msg = (e as? ParseException)?.message ?: e?.message ?: "主页解析失败"
+                uiState.value = PopupUiState.Failed(
+                    link, msg,
+                    retryable = (e as? ParseException)?.retryable ?: true
+                )
+                ensurePopupHost()
+                startDismissTimer()
+            }
+        }
+        return true
+    }
+
     /** 手动路径（迷你面板识别/重试/SHOW_LAST）：保留完整弹窗交互 */
     private fun showAndParse(link: com.clipdown.app.clip.DetectedLink) {
         pendingCount.intValue = 0
@@ -662,6 +727,9 @@ class FloatingWindowService : Service() {
 
         parseJob?.cancel()
         parseJob = scope.launch {
+            // 博主主页：集合形态，不走单篇解析链路，只做"确认 + 打开主页"
+            if (tryProfilePath(link, force = true)) return@launch
+
             val result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url) }
             val current = uiState.value
             if (current !is PopupUiState.Loading) {
@@ -687,6 +755,18 @@ class FloatingWindowService : Service() {
             }
             startDismissTimer()
         }
+    }
+
+    /** 打开博主主页页：解析结果已在 [ProfileCenter] 里，页面直接展示，不再重复请求 */
+    private fun openProfilePage() {
+        runCatching {
+            startActivity(
+                com.clipdown.app.ui.MainActivity
+                    .intent(this, openProfile = true)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        }
+        hidePopup()
     }
 
     private fun ensurePopupHost() {
@@ -720,6 +800,7 @@ class FloatingWindowService : Service() {
                         onDownload = { downloadCurrent() },
                         onRetry = { LinkCenter.last.value?.let { showAndParse(it) } },
                         onOpenApp = { openApp() },
+                        onOpenProfile = { openProfilePage() },
                         onDismiss = { hidePopup() }
                     )
                 }

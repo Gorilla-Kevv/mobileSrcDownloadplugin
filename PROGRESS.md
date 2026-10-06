@@ -1,11 +1,11 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 36 完成（博主主页功能：独立解析链路 + 独立页面 + 自由下载；设计文档 docs/06）
-- 下一阶段任务：拿到可用主页数据环境（真机或 Cookie）→ 联调小红书主页；补气泡弹窗入口；按《接入步骤》逐个补平台
-- 可提前进行的任务：真机看 UI 实际观感并微调；小红书三例复测（需 Cookie）；阶段 29 真机复测；X 单视频下载闭环
-- 未完成的任务：各平台主页解析器接入；应用内更新的真机端到端验证（模拟器 DNS 解析不了 github.com）；IG 风控恢复后阶段 25 复测
-- 测试基线：parser **67 例** + downloader 30 例 + app **4 例**全绿
+- 当前正在开发任务：阶段 37 完成（小红书主页**真实跑通**：桌面 UA+Cookie → SSR 32 篇；三个入口补齐；修 4 个真 bug）
+- 下一阶段任务：其他平台主页按同模式接入（IG/X/抖音/TikTok 需登录；微博/B站需过风控）；主页「加载更多」
+- 可提前进行的任务：真机看 UI 实际观感；阶段 29 真机复测；X 单视频下载闭环
+- 未完成的任务：主页分页加载；其他平台主页解析；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
+- 测试基线：parser **74 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
 - 本次文档更新时间：10.06 11:30
@@ -547,3 +547,26 @@
 - **未完成**：①各平台主页解析器的逐个接入（小红书需 Cookie/有效网络联调；IG/X/抖音/TikTok 需登录；微博/B站需过风控）②气泡弹窗入口（当前入口在首页，气泡侧仍是"识别为链接→单篇解析失败"，需在 `FloatingWindowService` 加主页分支）
 - 下一步入口：拿到可用的主页数据环境（真机/Cookie）→ 联调小红书主页 → 再按《接入步骤》逐个补平台
 - 本次文档更新时间：10.06 17:05
+
+## 阶段 37 小红书主页真实跑通（用户提供 Cookie）+ 补齐三个入口 + 修 4 个真 bug [计划时间：10.06 23:02 BY ZCode][完成时间：10.07 00:05 BY ZCode]
+- 用户提供小红书 Cookie 与主页短链 `xhslink.cn/o/3IM6hoYFl84`，并问"主页解析页面做了吗，模拟器上怎么没看到"
+- **先回答"为什么没看到"**：页面在阶段 36 就做了，但**入口只接了首页**——复制链接点气泡、分享进入这两条路没接，所以在模拟器上表现为"解析失败"。本轮补齐**三个入口**：①首页粘贴+解析 ②气泡（`tryProfilePath`：`FloatingWindowService` 识别主页→`PopupUiState.ProfileReady` 确认卡→「打开主页」）③分享/VIEW 进 MainActivity 的自动解析路径
+- **Cookie 注入**：从浏览器 cookie 表提取 8 项（`web_session`/`webId`/`websectiga`/`xsecappid=xhs-pc-web` 等）写入 `CookieStore` SP（root push + `chown -R` + 校验 SELinux 上下文）
+- **关键发现：主页 SSR 需要「桌面 UA + Cookie」**（2026-10 实测对照）：
+  - 桌面 UA + Cookie → **200 / 292KB / `userPageData` + `noteCard`×32**（完整 SSR）
+  - 移动 UA + Cookie → 53KB 客户端渲染外壳（无笔记数据）
+  - 无 Cookie → 302 `/login`
+  - 原因：这份 Cookie 是 **PC 网页版会话**（`xsecappid=xhs-pc-web`），与移动 UA 客户端不一致
+  - 故解析器改为 **桌面 UA 直连 → 移动 UA → WebView** 三级降级；解析从"DOM 提取"重写为 **SSR 提取**（`userPageData` 取昵称/头像/简介/统计，`notes` 二维数组里的 `noteCard` 块取标题/封面/时间/`xsecToken`/type）
+  - 每篇 URL 必须带 SSR 里的 **`xsecToken`**（裸 `/explore/<id>` 会被判无效）
+- **修 4 个真 bug（都由测试/实测暴露）**：
+  1. **短链展开把登录页当目标（阻塞级）**：`expand()` 跟随重定向落到 `/login?redirectPath=<真实地址>`，返回 final 后 `linkKind` 判成 POST → 主页链路进不去。新增 `loginRedirectTarget()` 从 `redirectPath` 还原真实地址
+  2. **`HtmlUtil.jsonField` 值截断**：结尾引号可选 + 惰性匹配 → 含转义引号的标题被截断（「…坦承\"毕生最大遗憾\"…」只取前半段）。改为"先带引号（惰性+后瞻分隔符）、再退无引号"两段式
+  3. **无引号数字取不到**：`"posted":4127` 因可选结尾引号吃掉下一个键的引号而匹配失败 → 同上两段式修复
+  4. **`unescapeJson` 缺常规转义**：`\"` `\n` `\t` 等未还原 → 标题/正文带出字面反斜杠
+  - 另修统计**跨对象串值**：`interactions` 键序不固定，就近找 `count` 会把"粉丝 3293"读成"关注 36" → 改为按对象切开、对象内读 name+count
+- **端到端验证（模拟器 + 真实数据）**：`linkKind: kind=PROFILE` → `xhs-profile-v1: via=desktop 笔记=32` → 页面显示 **lindazq / 4127 笔记 / 3293 粉丝 / 36 关注 + 32 篇真实封面与标题**（标题含转义引号显示正确）→ 点开单篇 `via=okhttp code=200 imageList=true` → 详情面板显示**完整正文 + 媒体 17 项（可逐项勾选）**
+- 测试：parser **74 例全绿**（+`loginRedirectTarget` 2、+`HtmlUtilTest` 6）
+- 改动文件：`parser/parsers/XiaohongshuProfileParser.kt`（重写为 SSR 提取）、`parser/parsers/HtmlUtil.kt`（jsonField 两段式 + unescapeJson 补转义）、`parser/core/ParserEngine.kt`（linkKind 展开短链 + loginRedirectTarget + 诊断日志）、`app/floatwindow/{PopupUiState,ClipPopupContent,FloatingWindowService}.kt`（气泡主页卡）、`app/ui/home/HomeScreen.kt`（三个入口分流）、`app/ui/MainActivity.kt`（openProfile extra）、`app/ui/profile/ProfileCenter.kt`（adopt）、测试与夹具
+- **待办**：①其他平台主页按同模式接入（IG/X/抖音/TikTok 需登录；微博/B站需过风控）②主页"加载更多"（当前仅第一页 30 篇）③Cookie 是 PC 会话，若用户换移动端 Cookie 需相应改 UA 策略
+- 本次文档更新时间：10.07 00:05
