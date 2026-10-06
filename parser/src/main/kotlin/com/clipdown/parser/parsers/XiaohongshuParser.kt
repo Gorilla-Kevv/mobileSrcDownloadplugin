@@ -17,8 +17,10 @@ import com.clipdown.parser.spi.ParserDsl
  * 之所以不用严格 JSON 解析：小红书的 SSR 数据里存在 `undefined` 字面量与尾随逗号，
  * 严格解析会整体失败；用字段级正则反而更稳，代价是页面结构大改时需要同步更新正则。
  *
- * 视频：stream.h264[].masterUrl（1080p/720p/480p 依次降级）
- * 图集：imageList[].urlDefault，去掉 `?imageView2...` 裁剪参数即为原图
+ * 视频：stream.h264[].masterUrl（1080p/720p/480p 依次降级）；
+ *   **有视频时丢弃 imageList 封面帧**（与 IG 修复 10c 同源，避免"视频+封面图"被判图集）
+ * 图集：imageList[].urlDefault（默认画质）；**按文件 ID 去重**——
+ *   同图的 urlPre（预览画质）与 urlDefault 文件 ID 相同，按 URL 去重会让每张图出现两次
  */
 class XiaohongshuParser : PlatformParser {
 
@@ -57,11 +59,40 @@ class XiaohongshuParser : PlatformParser {
         if (respCode == 404) throw ParseException("笔记不存在或已删除", platform, retryable = false)
         if (respCode >= 400) throw ParseException("页面返回 $respCode", platform)
 
+        // 失效笔记守卫：小红书对已删除 / 缺 xsec_token / 失效的笔记并不返回 4xx，
+        // 而是渲染一张"你访问的页面不见了"的页或跳到探索页（title="小红书 - 你的生活兴趣社区"）。
+        // 这两类页面的 SSR 里塞的是推荐流，没有这道校验会把推荐流的封面图当成图集返回。
+        val pageTitle = HtmlUtil.meta(html, "og:title") ?: HtmlUtil.title(html)
+        if (pageTitle != null && (
+            pageTitle.contains("你访问的页面不见了") || pageTitle.contains("你的生活兴趣社区")
+            )
+        ) {
+            throw ParseException(
+                "笔记不存在或链接已失效（小红书返回了失效页/探索页，可尝试重新复制带 xsec_token 的分享链接）",
+                platform,
+                retryable = false
+            )
+        }
+
         val state = HtmlUtil.inlineJson(html, "__INITIAL_STATE__")
         val blob = state ?: html
 
+        // 笔记详情页守卫：小红书对"已删除 / 缺 xsec_token / 失效"的笔记会跳到 /404 或探索页，
+        // 页面里塞的是推荐流——没有这道校验会把推荐流的图当成图集返回（用户下到一堆无关图）。
+        // 只在拿到 __INITIAL_STATE__ 时校验；没拿到（WAF 拦截页）仍走下面的媒体提取失败分支。
+        if (state != null && !state.contains("noteDetailMap")) {
+            throw ParseException(
+                "链接不是笔记详情页：笔记可能已删除、链接失效或缺少 xsec_token（小红书已跳转到首页/探索页）",
+                platform,
+                retryable = false
+            )
+        }
+
         val videos = extractVideos(blob)
-        val images = extractImages(blob)
+        // 视频笔记的 imageList 是封面帧：与 IG 修复 10c 同源，有视频时图片一律丢弃，
+        // 否则 media=[视频, 封面图] → isAlbumMultiSelect=true → 弹图集竖条、跳过自动下载，
+        // 用户最终下到"视频 + 封面图"。图文笔记无 masterUrl，不受影响。
+        val images = if (videos.isEmpty()) extractImages(blob) else emptyList()
 
         val title = HtmlUtil.meta(html, "og:title")?.substringBefore(" - 小红书")
             ?: HtmlUtil.jsonField(blob, "displayTitle").firstOrNull()
@@ -137,14 +168,38 @@ class XiaohongshuParser : PlatformParser {
         return out.filter { it.startsWith("http") }.distinct()
     }
 
+    /**
+     * 图集提取。
+     *
+     * 同一张图小红书会同时下发 `urlPre`（预览画质）与 `urlDefault`（默认画质）——
+     * 两者只有路径 hash 段和 `!nd_prv_/!nd_dft_` 后缀不同，**文件 ID 相同**。
+     * 因此按 URL 字符串去重不够（每张图会产出 2 项），必须按文件 ID 去重并优先保留 urlDefault。
+     */
     private fun extractImages(blob: String): List<String> {
-        val out = linkedSetOf<String>()
-        HtmlUtil.jsonField(blob, "urlDefault").forEach { out.add(it.substringBefore("?")) }
-        HtmlUtil.jsonField(blob, "urlPre").forEach { out.add(it.substringBefore("?")) }
+        val byFileId = linkedMapOf<String, String>()
+        // 先灌 urlDefault：同 ID 先到先得，urlPre 只能补空缺，保证留下来的是更高画质那份
+        HtmlUtil.jsonField(blob, "urlDefault").forEach { u ->
+            val url = u.substringBefore("?")
+            byFileId.putIfAbsent(imageFileId(url), url)
+        }
+        HtmlUtil.jsonField(blob, "urlPre").forEach { u ->
+            val url = u.substringBefore("?")
+            byFileId.putIfAbsent(imageFileId(url), url)
+        }
         Regex("""(https://sns-webpic[a-z0-9\-.]*\.xhscdn\.com/[^"'\s\\]+?)(\?[^"'\s\\]*)?""")
-            .findAll(blob).forEach { out.add(it.groupValues[1]) }
-        return out.filter { it.startsWith("http") }.distinct().take(18)
+            .findAll(blob).forEach { m ->
+                val url = m.groupValues[1]
+                byFileId.putIfAbsent(imageFileId(url), url)
+            }
+        return byFileId.values.filter { it.startsWith("http") }.distinct().take(18)
     }
+
+    /**
+     * 图片去重键：`.../notes_pre_post/<fileId>!nd_dft_wlteh_jpg_3` 中的 <fileId>。
+     * 取路径最后一段并去掉 `!` 之后的画质变换后缀。
+     */
+    private fun imageFileId(url: String): String =
+        url.substringBefore("?").substringAfterLast('/').substringBefore('!').ifBlank { url }
 
     private fun guessExt(u: String): String =
         u.substringBefore('?').substringAfterLast('.', "jpg").takeIf { it.length in 3..4 } ?: "jpg"

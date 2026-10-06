@@ -32,6 +32,12 @@
 13. **IG 风控保护（修复 11→阶段 28）**：InstagramParser 连续失败 ≥2 次自动冷却 10 分钟（期内 parse 零请求直接抛）；generic 兜底仅对 GENERIC 平台生效——**专属平台失败不再落 generic 抓图标垃圾**；**账号风控期测试纪律：间隔 ≥10 分钟、失败不重试（冷却自动拦）、优先非 IG 平台验证**
 13. 诊断通道：日志 tag `ig-local-v1`（ctx.log：通道选择/GraphQL 失败原因/解析成功 media 清单）、`FloatingWindowService`（media 结果+污染取证）、`DownloadEngine`（终态失败+URL）；**sqlite 任务库是 403 取证位**：`sqlite3 /data/data/com.clipdown.app/databases/clipdown_tasks.db "SELECT status,url FROM tasks"`；WebView 抓取页落盘 `/sdcard/Android/data/com.clipdown.app/files/debug_last_page.html`
 14. **`adb shell cat` 对二进制文件做 LF→CRLF 翻译**（Git Bash + adb.exe 路径）：备份恢复 `/data/data/.../files/datastore/*.preferences_pb` 后，应用启动立刻崩溃 `Unable to parse preferences proto / While parsing a protocol message, the input ended unexpectedly in the middle of a field`。**正确做法：用 `adb exec-out run-as <pkg> cat <path>` 或 `adb exec-out "cat <path>"`（exec-out 不走 pty 翻译）；xml 类文本 SP 受 CRLF 影响小可忽略**。本指纹为阶段 30 踩坑（release 装机冒烟：uninstall→install→恢复 cookie 与 datastore，启动即崩）
+15. **root push 文件进 `/data/data/<pkg>` 会留下权限污染**：只 chown 文件不够，DataStore 往目录写 `.tmp` 时会 `EACCES` → **主线程 FATAL** → 进程被杀 → 正在进行的 WebView 抓取永久挂起（日志停在 `fetch 开始`，无后续）。**恢复数据后必须 `chown -R <uid>:<uid> /data/data/<pkg>`（或干脆 `pm clear` 后只恢复 xml 类 cookie），并确认 `ls -lZ` 的 SELinux 上下文是 `u:object_r:app_data_file:s0:c<uid>,...`**。阶段 31 由小红书链路实测暴露
+16. **小红书结构要点（阶段 31 实测，设备落盘 `debug_last_page.html` 取证）**：
+    - 图集同一张图同时下发 `urlPre`（预览）与 `urlDefault`（默认画质），**文件 ID 相同**（`.../notes_pre_post/<fileId>!nd_xxx`），只按 URL 去重会让每张图出现两次 → 必须按文件 ID 去重并优先保留 urlDefault
+    - 视频笔记同时有 `masterUrl` 与 `imageList`（封面帧）→ **有视频时必须丢弃图片**（与 IG 修复 10c 同源，否则 "视频+封面图" 被判图集、跳过自动下载）
+    - **失效笔记不返回 4xx**：渲染 title=「小红书 - 你访问的页面不见了」或跳探索页（title=「小红书 - 你的生活兴趣社区」），SSR 里塞的是推荐流 → 必须按 title 判定失败，否则把推荐流封面当图集返回
+    - 笔记详情页的 SSR 标志是 `noteDetailMap`；探索页没有
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
@@ -41,7 +47,8 @@
 - 调试：`ACTION_DEBUG_PHASE`（--es phase parsing|parse_ok|... [--ei percent N]）直接驱动气泡状态机
 
 ## 状态
-- 当前：**阶段 30（release 装机冒烟部分完成）已落档**：release APK 装机成功、R8 无运行时崩溃、X syndication 解析成功一次确认网络/解析链路；下载闭环与图集竖条受模拟器出口 IP 限制（X 404 / B 站异常格式 / IG 冷却保护）未完成（环境，非 release 回归），下载引擎由 30 例单测兜底。本 session 累计：阶段 30（**新坑 14：`adb shell cat` 二进制 CRLF 翻译损坏 DataStore proto，阶段 30 中由 release 装机恢复 datastore 触发**）
+- 当前：**阶段 31（小红书链路测试与修复）完成**：4 项修复（图集按文件 ID 去重 / 视频帖丢弃封面图 / 短链中转页解析 / WebView 提前收口 + 失效页守卫），parser 单测 48 例全绿，设备端端到端验证通过（WebView ~8s 收口、失效笔记明确文案、0 崩溃）。小红书图集与视频的**真实成功下载仍待用户提供带 xsec_token 的有效笔记链接**（测试夹具的笔记 ID 已被小红书判为失效页）
+- 阶段 30（release 装机冒烟部分完成）已落档：release APK 装机成功、R8 无运行时崩溃、X syndication 解析成功一次确认网络/解析链路；下载闭环与图集竖条受模拟器出口 IP 限制（X 404 / B 站异常格式 / IG 冷却保护）未完成（环境，非 release 回归），下载引擎由 30 例单测兜底。本 session 累计：阶段 30（**新坑 14：`adb shell cat` 二进制 CRLF 翻译损坏 DataStore proto，阶段 30 中由 release 装机恢复 datastore 触发**）
 - 验收标准：`assembleRelease` 全绿 + `:parser:test`（40 例）+ `:downloader:testDebugUnitTest`（30 例）全绿 + 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①真机回归（优先 X 单视频下载闭环 + X 图集竖条；家宽 IP 通常绕过 X 风控）②IG 风控恢复后复测阶段 25 ③阶段 29 四项气泡交互（X 图集竖条 / 拖到下半屏向上生长 / 再点收起 / IG 冷却文案）
 - 文档：PROGRESS.md 全阶段记录（阶段 1-30，头部进度看板，含旧编号对照）；PLAN.md（阶段 14-18 计划，已全部实现）

@@ -100,11 +100,23 @@ object WebViewHtmlFetcher {
         return html
     }
 
-    /** 独立于页面回调的无状态轮询：每 2.5s 直接抓 outerHTML，命中媒体标记即回调；超时兜底 */
+    /**
+     * 独立于页面回调的无状态轮询：每 2.5s 直接抓 outerHTML，命中媒体标记即回调。
+     *
+     * 修复（小红书链路实测）：原实现**只在命中视频标记时才回调**，
+     * 而小红书图集页根本没有视频标记（媒体在 `__INITIAL_STATE__` 的 imageList 里），
+     * 于是必然白等 40s 超时、html=null，再退回被阿里云 WAF 拦掉的 OkHttp → 图集永远解析失败。
+     * 现在改为三种收口：
+     *  1. 命中媒体标记 —— 立即返回（IG 视频页原路径不变）
+     *  2. 页面长度连续两次不再变化 —— 判定已渲染稳定，提前返回（省掉几十秒干等）
+     *  3. 兜底：最后一次轮询无论如何都把当前页面交出去，不再丢弃
+     */
     private fun startPolling(v: WebView, onResult: (String) -> Unit) {
         val h = Handler(Looper.getMainLooper())
         val task = object : Runnable {
             var attempt = 0
+            var lastLen = -1
+            var stable = 0
             override fun run() {
                 attempt++
                 v.evaluateJavascript("document.documentElement.outerHTML") { raw ->
@@ -113,13 +125,27 @@ object WebViewHtmlFetcher {
                         val hasMedia = page.contains("video_versions") || page.contains("video_url") ||
                             page.contains("playable_url") || page.contains("og:video") || page.contains("<video")
                         val title = Regex("""<title[^>]*>([^<]{0,80})""").find(page)?.groupValues?.getOrNull(1)
-                        android.util.Log.d(TAG, "轮询 $attempt：len=${page.length} media=$hasMedia title=$title")
-                        if (hasMedia) {
-                            onResult(page)
-                            return@evaluateJavascript
+                        stable = if (page.length == lastLen) stable + 1 else 0
+                        lastLen = page.length
+                        android.util.Log.d(
+                            TAG,
+                            "轮询 $attempt：len=${page.length} media=$hasMedia stable=$stable title=$title"
+                        )
+                        when {
+                            hasMedia -> {
+                                onResult(page)
+                                return@evaluateJavascript
+                            }
+                            // 已渲染稳定（长度不再变化）→ 提前收口，不再死等超时
+                            stable >= 2 && attempt >= 3 -> {
+                                android.util.Log.d(TAG, "页面已稳定，提前返回渲染结果")
+                                onResult(page)
+                                return@evaluateJavascript
+                            }
                         }
                     }
                     if (attempt <= 14) h.postDelayed(this, 2500)
+                    else page?.let { onResult(it) }   // 兜底：超时前把最后一次页面交出去
                 }
             }
         }

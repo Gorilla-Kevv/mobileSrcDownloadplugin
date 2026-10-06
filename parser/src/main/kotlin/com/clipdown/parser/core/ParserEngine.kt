@@ -185,11 +185,31 @@ object ParserEngine {
                     http.get(current, mapOf("User-Agent" to config.userAgents.desktop))
                 }.getOrNull()
                 val final = getResp?.finalUrl
-                return if (final.isNullOrBlank() || final == current) current else final
+                if (!final.isNullOrBlank() && final != current) return final
+                // 小红书 xhslink 等短链常返回 200 的中转页（meta refresh / JS 跳转）而不是 3xx，
+                // OkHttp 不会跟随，此时必须从页面里把真实地址抠出来
+                val fromHtml = redirectFromHtml(getResp?.body)
+                if (!fromHtml.isNullOrBlank()) return UrlUtil.normalize(fromHtml)
+                return current
             }
             current = if (location.startsWith("http")) location else UrlUtil.normalize(location)
         }
         return current
+    }
+
+    /** 从中转页里提取跳转目标：meta refresh → location.href / location.replace 两种写法 */
+    internal fun redirectFromHtml(body: String?): String? {
+        if (body.isNullOrBlank()) return null
+        Regex(
+            """<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*?content\s*=\s*["'][^"']*?url\s*=\s*([^"'\s>]+)""",
+            RegexOption.IGNORE_CASE
+        ).find(body)?.groupValues?.getOrNull(1)
+            ?.let { return UrlUtil.decode(it.trim().trim('\'')) }
+        Regex("""location(?:\.href)?\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(body)?.groupValues?.getOrNull(1)?.let { return it }
+        Regex("""location\.replace\(\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            .find(body)?.groupValues?.getOrNull(1)?.let { return it }
+        return null
     }
 
     /** 仅做平台判定，不做网络请求：供悬浮窗做"是否值得弹窗"的快速判断 */

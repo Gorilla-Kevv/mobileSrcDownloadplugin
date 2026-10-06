@@ -1,6 +1,7 @@
 package com.clipdown.parser
 
 import com.clipdown.parser.http.HttpResponse
+import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.Platform
 import com.clipdown.parser.parsers.XiaohongshuParser
 import okhttp3.Headers.Companion.headersOf
@@ -77,13 +78,116 @@ class XiaohongshuParserTest {
         assertTrue(noteCookie!!.contains("a1=abc"))
     }
 
+    /**
+     * 小红书同一张图会同时下发 urlPre（预览）与 urlDefault（默认画质）——
+     * 两者只有路径 hash 段与 `!nd_prv_/!nd_dft_` 后缀不同，**文件 ID 相同**。
+     * 修复前按 URL 字符串去重 → 每张图产出 2 项，图集竖条里每张图重复一次。
+     */
+    @Test
+    fun `图集去重 同图 urlPre 与 urlDefault 只保留一份`() {
+        val fixture = fixture("xhs_note.html")
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(fixture)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/explore/6ab7ffb0000000000b006b27?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        // 夹具实际是 2 张图（urlDefault/urlPre 各 4 条），去重后应为 2
+        assertEquals("图集不应出现重复图: ${images.map { it.url }}", 2, images.size)
+        assertTrue("应保留默认画质 urlDefault: ${images.map { it.url }}", images.all { it.url.contains("nd_dft") })
+    }
+
+    /**
+     * 视频笔记的 SSR 里同时有 masterUrl（视频）与 imageList（封面帧）。
+     * 与 IG 修复 10c 同源：封面图混入会让 media 变成 [视频, 图] → isAlbumMultiSelect=true
+     * → 弹图集竖条、跳过自动下载，用户下载到"视频 + 封面图"。
+     */
+    @Test
+    fun `视频笔记只保留视频 封面图不落媒体`() {
+        val state = """
+            window.__INITIAL_STATE__={"noteDetailMap":{"n1":{"note":{"video":{"media":{"stream":{"h264":[
+            {"masterUrl":"https://sns-video.xhscdn.com/main.mp4","height":1080},
+            {"masterUrl":"https://sns-video.xhscdn.com/backup.mp4","height":720}
+            ]}}},"imageList":[{"urlDefault":"https://sns-webpic-qc.xhscdn.com/a/notes_pre_post/FILEID!nd_dft_wlteh_jpg_3"}]}}}}
+        """.trimIndent()
+        val html = "<html><head><meta property=\"og:title\" content=\"V\" /></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/explore/abc?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals(2, videos.size)
+        assertTrue("封面图不应作为独立媒体: ${images.map { it.url }}", images.isEmpty())
+        assertTrue("单视频帖应判为单选（走自动下载）", !result.isAlbumMultiSelect)
+    }
+
+    /**
+     * 小红书失效笔记不返回 4xx，而是渲染 title="小红书 - 你访问的页面不见了" 的页
+     * （设备实测落盘页确认）；跳到探索页时 title 是"小红书 - 你的生活兴趣社区"。
+     * 两者都必须直接判定失败，不能落进媒体提取。
+     */
+    @Test
+    fun `失效笔记页 直接判定笔记不存在`() {
+        val html = "<html><head><title>小红书 - 你访问的页面不见了</title></head><body>" +
+            "<script>window.__INITIAL_STATE__={\"noteDetailMap\":{}}</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val err = runCatching {
+            parser.parse(
+                "https://www.xiaohongshu.com/explore/6ab7ffb0000000000b006b27",
+                testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+            )
+        }.exceptionOrNull()
+        assertTrue("应判定笔记不存在: $err", err is ParseException)
+        assertTrue("文案应说明链接失效: ${err?.message}", err!!.message!!.contains("链接已失效"))
+    }
+
+    /**
+     * 小红书对"已删除 / 缺 xsec_token / 失效"的笔记会跳到 /404 或探索页，
+     * 此时页面里是推荐流；没有守卫会把推荐流的封面图当成图集返回。
+     */
+    @Test
+    fun `非笔记详情页 不把推荐流当图集返回`() {
+        val feed = """
+            window.__INITIAL_STATE__={"feed":{"feeds":[{"noteCard":{"cover":{"urlDefault":"https://sns-webpic-qc.xhscdn.com/f/notes_pre_post/FEED1!nd_dft_wlteh_jpg_3"}}}]}}
+        """.trimIndent()
+        // 标题刻意不落在"失效页/探索页"判定里，单独验证 noteDetailMap 守卫
+        val html = "<html><head><meta property=\"og:title\" content=\"发现你感兴趣的内容 - 小红书\" /></head><body><script>$feed</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val err = runCatching {
+            parser.parse(
+                "https://www.xiaohongshu.com/explore/abc",
+                testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+            )
+        }.exceptionOrNull()
+        assertTrue("应拒绝非笔记详情页: $err", err is ParseException)
+        assertTrue("错误文案应提示链接失效: ${err?.message}", err!!.message!!.contains("笔记详情页"))
+    }
+
     @Test
     fun `视频笔记的 masterUrl 提取`() {
         val state = """
-            window.__INITIAL_STATE__={"note":{"video":{"media":{"stream":{"h264":[
+            window.__INITIAL_STATE__={"noteDetailMap":{"n1":{"note":{"video":{"media":{"stream":{"h264":[
             {"masterUrl":"https://sns-video.xhscdn.com/main.mp4","height":1080},
             {"masterUrl":"https://sns-video.xhscdn.com/backup.mp4","height":720}
-            ]}}}}}
+            ]}}}}}}}
         """.trimIndent()
         val html = "<html><head><meta property=\"og:title\" content=\"V\" /></head><body><script>$state</script></body></html>"
         val http = FakeHttp { url ->
