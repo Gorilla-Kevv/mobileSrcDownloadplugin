@@ -7,6 +7,7 @@ import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.ParseResult
 import com.clipdown.parser.model.ParseSource
 import com.clipdown.parser.model.Platform
+import com.clipdown.parser.model.ProfileResult
 import com.clipdown.parser.parsers.BilibiliParser
 import com.clipdown.parser.parsers.DouyinParser
 import com.clipdown.parser.parsers.FacebookParser
@@ -16,9 +17,11 @@ import com.clipdown.parser.parsers.TiktokParser
 import com.clipdown.parser.parsers.WeiboParser
 import com.clipdown.parser.parsers.XParser
 import com.clipdown.parser.parsers.XiaohongshuParser
+import com.clipdown.parser.parsers.XiaohongshuProfileParser
 import com.clipdown.parser.parsers.YoutubeParser
 import com.clipdown.parser.spi.ParseContext
 import com.clipdown.parser.spi.PlatformParser
+import com.clipdown.parser.spi.ProfileParser
 
 /**
  * 解析内核门面。
@@ -72,6 +75,7 @@ object ParserEngine {
         this.webFetcher = webFetcher
         if (!bootstrapped) {
             PlatformRegistry.registerAll(defaultParsers())
+            ProfileRegistry.registerAll(defaultProfileParsers())
             bootstrapped = true
         }
         androidContext?.let { this.logger?.invoke("ParserEngine", "bootstrapped with ${System.identityHashCode(it)}") }
@@ -98,6 +102,14 @@ object ParserEngine {
         GenericParser()
     )
 
+    /**
+     * 主页解析器（与作品页解析器平行的一套 SPI）。
+     * 新增平台主页支持：实现 [com.clipdown.parser.spi.ProfileParser] 并加到这里即可。
+     */
+    fun defaultProfileParsers(): List<ProfileParser> = listOf(
+        XiaohongshuProfileParser()
+    )
+
     private fun context(): ParseContext = ParseContext(config, http, cookieProvider, logger, webFetcher)
 
     /** 从剪贴板文本中解析：先抽链接，再走完整链路 */
@@ -106,6 +118,36 @@ object ParserEngine {
             UrlUtil.extractFirst(text) ?: throw ParseException("剪贴板中没有可识别的链接", retryable = false)
         )
         return parse(url)
+    }
+
+    /** 链接形态（主页 / 作品页）：UI 据此决定是打开主页还是走单篇解析 */
+    fun linkKind(rawUrl: String): LinkKind = ProfileUrls.kindOf(UrlUtil.normalize(rawUrl))
+
+    /**
+     * 主页解析：与单篇作品解析**平行的独立入口**。
+     *
+     * 刻意不复用 [parse] 的降级链——主页是集合形态，用作品页的降级链
+     * （远端兜底 / 通用网页解析）只会抓回一页垃圾。非主页链接直接抛明确异常。
+     */
+    fun parseProfile(rawUrl: String): ProfileResult {
+        var url = UrlUtil.normalize(rawUrl)
+        if (UrlUtil.isShortLink(url)) {
+            runCatching { expand(url) }.getOrNull()
+                ?.takeIf { it.isNotBlank() }
+                ?.let { url = UrlUtil.normalize(it) }
+        }
+        val match = ProfileUrls.match(url)
+            ?: throw ParseException("这不是博主主页链接：$url", retryable = false)
+        if (!config.isEnabled(match.platform)) {
+            throw ParseException("${match.platform.displayName} 未开启监听", match.platform, retryable = false)
+        }
+        val parser = ProfileRegistry.resolveForUrl(url, match.platform)
+            ?: throw ParseException(
+                "${match.platform.displayName} 的主页解析暂未支持",
+                match.platform,
+                retryable = false
+            )
+        return parser.parseProfile(url, match.handle, context())
     }
 
     /**

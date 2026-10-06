@@ -30,13 +30,19 @@ class MainActivity : ComponentActivity() {
         }
 
         val openParse = intent?.getBooleanExtra(EXTRA_OPEN_PARSE, false) ?: false
+        // 演示入口：注入主页演示数据并直接打开主页页，用于无网络/无 Cookie 时走查版式
+        //   adb shell am start -n com.clipdown.app/.ui.MainActivity --ez demo_profile true
+        val demoProfile = intent?.getBooleanExtra(EXTRA_DEMO_PROFILE, false) ?: false
+        if (demoProfile) {
+            com.clipdown.app.ui.profile.ProfileCenter.injectDemo()
+        }
         setContent {
             ClipDownTheme {
                 LaunchedEffect(Unit) { ClipboardMonitor.readAndSubmit(com.clipdown.app.clip.LinkSource.FOREGROUND_CLIP) }
                 // 启动静默检查更新：有新版时弹一次提示框（用户点"稍后"本次启动不再打扰）
                 LaunchedEffect(Unit) { runCatching { UpdateCenter.check() } }
                 UpdateLaunchDialog()
-                AppNav(openParse = openParse)
+                AppNav(openParse = openParse, openProfile = demoProfile)
             }
         }
     }
@@ -54,6 +60,9 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val EXTRA_OPEN_PARSE = "extra_open_parse"
+
+        /** 演示用：注入主页演示数据并直接进入主页页（版式走查） */
+        const val EXTRA_DEMO_PROFILE = "demo_profile"
 
         fun intent(context: Context, openParse: Boolean = false): Intent =
             Intent(context, MainActivity::class.java)

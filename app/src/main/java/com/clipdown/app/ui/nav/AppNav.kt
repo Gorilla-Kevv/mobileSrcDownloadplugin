@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -20,6 +21,7 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -32,19 +34,28 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.clipdown.app.ui.downloads.DownloadsScreen
 import com.clipdown.app.ui.home.HomeScreen
+import com.clipdown.app.ui.profile.ProfileScreen
 import com.clipdown.app.ui.settings.SettingsScreen
 
 sealed class Route(val path: String, val label: String, val icon: ImageVector) {
     data object Home : Route("home", "首页", Icons.Default.Home)
     data object Downloads : Route("downloads", "下载", Icons.Default.Download)
     data object Settings : Route("settings", "设置", Icons.Default.Settings)
+
+    /** 博主主页页：二级页面，不进底部导航 */
+    data object Profile : Route("profile", "博主主页", Icons.Default.Person)
 }
 
 private val routes = listOf(Route.Home, Route.Downloads, Route.Settings)
 
 @Composable
-fun AppNav(openParse: Boolean) {
+fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
     val navController = rememberNavController()
+
+    // 从首页/气泡入口打开博主主页页
+    LaunchedEffect(openProfile) {
+        if (openProfile) navController.navigate(Route.Profile.path)
+    }
 
     Scaffold(
         bottomBar = {
@@ -94,9 +105,15 @@ fun AppNav(openParse: Boolean) {
             startDestination = Route.Home.path,
             modifier = Modifier.fillMaxSize().padding(padding)
         ) {
-            composable(Route.Home.path) { HomeScreen(autoFocusParse = openParse) }
+            composable(Route.Home.path) {
+                HomeScreen(
+                    autoFocusParse = openParse,
+                    onOpenProfile = { navController.navigate(Route.Profile.path) }
+                )
+            }
             composable(Route.Downloads.path) { DownloadsScreen() }
             composable(Route.Settings.path) { SettingsScreen() }
+            composable(Route.Profile.path) { ProfileScreen(onBack = { navController.popBackStack() }) }
         }
     }
 }

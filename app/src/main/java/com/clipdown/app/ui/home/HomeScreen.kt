@@ -59,12 +59,14 @@ import com.clipdown.app.ui.components.SecondaryButton
 import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
+import com.clipdown.app.ui.profile.ProfileCenter
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.ui.theme.BrandContainer
 import com.clipdown.app.ui.theme.OnBrandContainer
 import com.clipdown.app.ui.theme.SuccessFg
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
+import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
@@ -82,7 +84,7 @@ import kotlinx.coroutines.withContext
  * 卡片间距、内边距、标题字号全部取自 [AppTheme]，不再各写各的。
  */
 @Composable
-fun HomeScreen(autoFocusParse: Boolean = false) {
+fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -111,6 +113,15 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
         val url = text.trim()
         if (url.isBlank()) return
         scope.launch {
+            // 博主主页链接走独立页面（主页是集合形态，不能混进单篇解析链路）
+            if (withContext(Dispatchers.IO) { ParserEngine.linkKind(url) } == LinkKind.PROFILE) {
+                parsing = true
+                error = null
+                ProfileCenter.open(url)
+                parsing = false
+                onOpenProfile()
+                return@launch
+            }
             parsing = true
             error = null
             result = null
@@ -125,6 +136,10 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
                 error = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
             }
         }
+    }
+
+    val isProfileInput = remember(input) {
+        input.isNotBlank() && runCatching { ParserEngine.linkKind(input) == LinkKind.PROFILE }.getOrDefault(false)
     }
 
     LazyColumn(
@@ -182,6 +197,10 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
                         enabled = input.isNotBlank() && !parsing,
                         onClick = { parse(input) }
                     )
+                }
+                if (isProfileInput) {
+                    VSpace(AppTheme.spacing.sm)
+                    NoticeBar("识别到博主主页链接，点「解析」将打开主页页", Tone.Info)
                 }
             }
         }

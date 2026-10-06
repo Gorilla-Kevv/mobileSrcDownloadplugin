@@ -1,11 +1,11 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 35 完成（应用 UI 与设置页重设计：设计令牌 + 共享组件 + 首页/下载/设置三屏重构；顺带修掉「检查更新」主线程网络请求 bug）
-- 下一阶段任务：真机看实际观感并微调（模拟器与真机 DPI/字体有差异）；如需深色模式则统一悬浮窗配色
-- 可提前进行的任务：小红书三例复测（需 Cookie 或真机）；阶段 29 真机复测（X 图集竖条 / 气泡下半屏向上生长 / 再点收起 / IG 冷却文案）；X 单视频下载闭环
-- 未完成的任务：应用内更新的**真机端到端**验证（模拟器 DNS 解析不了 github.com）；小红书设备端真实下载；IG 风控恢复后阶段 25 复测
-- 测试基线：parser **58 例** + downloader 30 例 + app **4 例**全绿
+- 当前正在开发任务：阶段 36 完成（博主主页功能：独立解析链路 + 独立页面 + 自由下载；设计文档 docs/06）
+- 下一阶段任务：拿到可用主页数据环境（真机或 Cookie）→ 联调小红书主页；补气泡弹窗入口；按《接入步骤》逐个补平台
+- 可提前进行的任务：真机看 UI 实际观感并微调；小红书三例复测（需 Cookie）；阶段 29 真机复测；X 单视频下载闭环
+- 未完成的任务：各平台主页解析器接入；应用内更新的真机端到端验证（模拟器 DNS 解析不了 github.com）；IG 风控恢复后阶段 25 复测
+- 测试基线：parser **67 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
 - 本次文档更新时间：10.06 11:30
@@ -526,3 +526,24 @@
 - 未动：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）——独立的深色玻璃层，若要统一需单独一轮
 - 下一步入口：①真机看实际观感（模拟器 DPI/字体与真机有差异）②如需深色模式，把 `ClipDownTheme` 默认值改为 `isSystemInDarkTheme()` 并统一悬浮窗配色
 - 本次文档更新时间：10.06 16:40
+
+## 阶段 36 博主主页功能（独立链路 + 独立页面 + 自由下载） [计划时间：10.06 16:34 BY ZCode][完成时间：10.06 17:05 BY ZCode]
+- 用户需求：复制博主主页链接 → 解析 → **应用内新建独立页面**完整展示主页内容（笔记列表/标题/图片/正文）→ 自由下载；并要求说明页面结构与交互流程
+- **设计文档**：`docs/06-博主主页功能设计.md`（页面结构图、交互流程、状态与边界、平台数据源表、接入步骤）
+- **为什么单开链路**：现有链路是"单篇作品"模型（1 作品 + N 媒体），主页是集合模型（1 作者 + N 笔记）；塞进现有链路会被"远端兜底/通用网页解析"当成一篇作品抓垃圾（IG 曾踩坑），且一次展开 N 篇媒体必触发风控。故新增**平行链路**：`ProfileUrls.match → ProfileRegistry(ProfileParser) → ProfileResult(posts[])`
+- **解析侧（新增 5 文件 + 引擎入口）**：
+  - `model/ProfileResult.kt`：`ProfileResult`/`ProfilePost`/`ProfileStats`/`PostKind`
+  - `core/ProfileUrls.kt`：8 平台主页识别 + **保留段白名单**（IG 的 `/p/`、X 的 `/status/` 等一律判作品页）+ `LinkKind`
+  - `spi/ProfileParser.kt` + `core/ProfileRegistry.kt`：可插拔 SPI（与作品页解析器平行）
+  - `ParserEngine.parseProfile()` / `linkKind()`：独立降级链，非主页链接直接抛明确异常
+  - `parsers/XiaohongshuProfileParser.kt`（参考实现）：主页列表不是 SSR 而是 JS 带签名 XHR 拉取后渲染，故走 **WebView 渲染 → DOM 提取**（与笔记链路同机制），直连（移动端 UA）兜底；含登录墙守卫与 id 去重
+- **应用侧（新增 2 文件 + 3 处接线）**：
+  - `ui/profile/ProfileCenter.kt`：进程级状态（加载/筛选/勾选/**批量下载进度**）；下载策略 = 逐篇解析取原图/原视频后以 `sourceUrl=笔记链接` 入队（下载页自动按笔记分组）
+  - `ui/profile/ProfileScreen.kt`：新页面 = 顶栏(返回/刷新) + 博主信息卡(头像/昵称/平台/简介/三项统计) + 筛选行(全部/视频/图文 + 全选/清空 + 已选) + **两列笔记网格**(封面/选择圈/类型角标/标题) + 吸底「下载所选 N 项」；点封面开 `ModalBottomSheet` 详情面板（解析该篇 → 正文 + 媒体清单可逐项勾选 → 下载本篇）
+  - 接线：`AppNav` 新增 `profile` 二级路由（不进底栏）；`HomeScreen` 解析时用 `linkKind` 分流（主页链接→开页面）并在识别到主页链接时给出提示条；`MainActivity` 增演示入口
+- **测试**：parser **67 例全绿**（58 + 主页识别 4 + 主页提取 5）；其中重点覆盖"作品页不得被误判为主页"（IG `/p/`、`/reel/`、X `/status/`、小红书 `/explore/`、B站 `/video/`、YouTube `/watch`、平台首页等 12 条反例）
+- **验证限制（重要）**：本环境**所有平台的主页数据都拿不到**——小红书主页为 XHR（需签名+登录）、微博接口 432 风控、B站 space 接口 -352 风控，主机与模拟器均如此。故：解析器用夹具单测锁定行为；**UI 用演示入口注入数据走查**（`--ez demo_profile true`），已核对信息卡/筛选/网格/吸底条/详情面板全部版式
+- 改动文件：`parser/model/ProfileResult.kt`、`parser/core/ProfileUrls.kt`、`parser/core/ProfileRegistry.kt`、`parser/spi/ProfileParser.kt`、`parser/parsers/XiaohongshuProfileParser.kt`、`parser/core/ParserEngine.kt`、`app/ui/profile/ProfileCenter.kt`、`app/ui/profile/ProfileScreen.kt`、`app/ui/nav/AppNav.kt`、`app/ui/home/HomeScreen.kt`、`app/ui/MainActivity.kt`、`app/ui/components/AppUi.kt`（AppChip 参数顺序修正）、`parser/test/.../ProfileUrlsTest.kt`、`parser/test/.../XiaohongshuProfileParserTest.kt`、`parser/test/resources/xhs_profile.html`、`docs/06-博主主页功能设计.md`
+- **未完成**：①各平台主页解析器的逐个接入（小红书需 Cookie/有效网络联调；IG/X/抖音/TikTok 需登录；微博/B站需过风控）②气泡弹窗入口（当前入口在首页，气泡侧仍是"识别为链接→单篇解析失败"，需在 `FloatingWindowService` 加主页分支）
+- 下一步入口：拿到可用的主页数据环境（真机/Cookie）→ 联调小红书主页 → 再按《接入步骤》逐个补平台
+- 本次文档更新时间：10.06 17:05
