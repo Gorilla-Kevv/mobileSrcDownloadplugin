@@ -1,11 +1,11 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 33 完成（小红书视频帖结构取证 + 真实夹具；masterUrl 实测 200/video/mp4/支持 Range）
-- 下一阶段任务：用户提供小红书 `web_session` Cookie（或改用真机）→ 三例一起复测：单图 1 张 / 多图 3 张 / 视频帖无竖条直接自动下载
-- 可提前进行的任务：阶段 29 真机复测（X 图集竖条 / 气泡下半屏向上生长 / 再点收起 / IG 冷却文案）；阶段 25 之 IG 图集竖条（风控恢复后）；X 单视频下载闭环（家宽绕过 X 404）
-- 未完成的任务：小红书设备端真实成功下载（环境反爬，需 Cookie/真机）；阶段 30 下载闭环冒烟（需真机）；IG 风控恢复后阶段 25 复测
-- 测试基线：parser **58 例** + downloader 30 例全绿
+- 当前正在开发任务：阶段 34 完成（远程快速更新链路：一键发布脚本 + GitHub Release 通道 + 应用内检查更新；已首发 v1.0.2/v1.0.3，匿名下载与通道配置验证通过）
+- 下一阶段任务：真机安装 v1.0.3 → 在应用内点「检查更新」验证（真机网络可达 GitHub 时）；若不可达则改指国内托管
+- 可提前进行的任务：小红书三例复测（需 Cookie 或真机）；阶段 29 真机复测（X 图集竖条 / 气泡下半屏向上生长 / 再点收起 / IG 冷却文案）；X 单视频下载闭环
+- 未完成的任务：应用内更新的**真机端到端**验证（模拟器网络到不了 GitHub）；小红书设备端真实下载；IG 风控恢复后阶段 25 复测
+- 测试基线：parser **58 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
 - 本次文档更新时间：10.06 11:30
@@ -499,5 +499,13 @@
 - 测试：`:app:testDebugUnitTest` **4 例**（清单完整解析 / apkUrl 缺省回落固定链接 / 忽略未知字段 / 版本比较只看 versionCode）+ `:app:assembleDebug` 全绿
 - 改动文件：`version.properties`（新建）、`gradle.properties`、`app/build.gradle.kts`、`app/src/main/AndroidManifest.xml`、`app/src/main/res/xml/file_paths.xml`（新建）、`app/.../update/{UpdateManifest,UpdateRepository,ApkInstaller,UpdateCenter,UpdateUi}.kt`（新建）、`app/.../ClipDownApp.kt`、`app/.../ui/MainActivity.kt`、`app/.../ui/settings/SettingsScreen.kt`、`app/src/test/.../UpdateManifestTest.kt`（新建）、`scripts/publish-release.sh`（新建）、`.github/workflows/release.yml`（新建）
 - **待用户决策（阻塞首次发布）**：发布仓库 `Gorilla-Kevv/clipdown-dist` 尚不存在。**必须是公开仓库**应用侧才能匿名下载；创建公开仓库属于对外可见操作，需用户确认（或改为把主仓库转公开）。确认后 `bash scripts/publish-release.sh --create-repo` 一步完成建仓+首发
+- **决策落地（用户选择）**：**把主仓库转为公开**（不新建分发仓库）→ 已执行 `gh repo edit ... --visibility public`，`clipdown.updateRepo` 改为 `Gorilla-Kevv/mobileSrcDownloadplugin`，Release 直接发在主仓库
 - 下一步入口：①确认发布仓库方案并首发 ②真机安装首发 APK ③后续每次更新只需 `bash scripts/publish-release.sh --notes "…"`，测试机在应用内一键覆盖安装
-- 本次文档更新时间：10.06 16:05
+- **首发与验证（已完成）**：
+  - `v1.0.2（versionCode 3）`：APK 1,787,996 B / sha256 `df2722a4…`；`v1.0.3（versionCode 4）`：sha256 `a00092b1…`；两次均 `--latest` 成功，`gh release list` 显示 1.0.3 为 Latest
+  - **匿名验证**（不带任何 token）：`releases/latest/download/update.json` → `200`/574 B 且内容为 1.0.3；APK → `206`（Range 可用）/`Content-Type: application/vnd.android.package-archive` → **更新通道对外可用**
+  - **设备端验证**：发布版 APK 装到模拟器，`设置 → 关于与更新` 正确显示「当前版本 1.0.2（3）」与更新通道；但**启动自检失败**
+  - **失败原因定位（环境级）**：本机所在网络**直连 github.com 超时**（须走代理）；模拟器直连 GitHub `ERR_TIMED_OUT`、且**到不了主机代理**（`nc 10.0.2.2:14047` 超时）→ 模拟器上必然拉不到清单。小红书等国内站点正常 → 典型国内网络
+- **应对（已落地）**：更新通道**可指向任意托管**——`gradle.properties` 的 `clipdown.updateManifestUrl` / `clipdown.updateApkUrl` 留空则按 `clipdown.updateRepo` 拼 GitHub 固定链接，填上则用自定义地址（换 Gitee Releases / 阿里云 OSS / 腾讯云 COS / 自建静态服务**无需改代码**）；发布脚本同步支持 `--manifest-url` / `--apk-url` 覆盖
+- **诊断增强（v1.0.3 起）**：`ClipDownUpdate` 日志（清单地址/HTTP 码/异常类名与栈）；检查失败时回落到异常类名，不再只显示「检查失败」
+- 本次文档更新时间：10.06 16:12

@@ -17,6 +17,8 @@ import java.util.concurrent.TimeUnit
  */
 object UpdateRepository {
 
+    private const val TAG = "ClipDownUpdate"
+
     private val client = OkHttpClient.Builder()
         .connectTimeout(10, TimeUnit.SECONDS)
         .readTimeout(20, TimeUnit.SECONDS)
@@ -32,13 +34,16 @@ object UpdateRepository {
      * @return 成功时返回 [UpdateInfo]；**尚无任何发布时返回 null**（不是错误）；失败时返回 failure。
      */
     fun fetch(): Result<UpdateInfo?> = runCatching {
+        val manifestUrl = BuildConfig.UPDATE_MANIFEST_URL
+        android.util.Log.d(TAG, "检查更新：$manifestUrl")
         val request = Request.Builder()
-            .url(BuildConfig.UPDATE_MANIFEST_URL)
+            .url(manifestUrl)
             .header("Accept", "application/json")
             .header("User-Agent", "ClipDown-Updater/${BuildConfig.VERSION_NAME}")
             .build()
 
         client.newCall(request).execute().use { resp ->
+            android.util.Log.d(TAG, "清单响应：HTTP ${resp.code}")
             when {
                 // 还没有发布过任何 Release：视为"无更新"，不报错
                 resp.code == 404 -> null
@@ -49,6 +54,8 @@ object UpdateRepository {
                 }
             }
         }
+    }.onFailure {
+        android.util.Log.w(TAG, "检查更新异常：${it.javaClass.simpleName}: ${it.message}", it)
     }
 
     /** 解析清单（独立出来便于单测） */

@@ -21,11 +21,18 @@ val versionProps = Properties().apply {
 val appVersionCode = versionProps.getProperty("versionCode", "1").trim().toInt()
 val appVersionName = versionProps.getProperty("versionName", "1.0.0").trim()
 
-// 应用内更新通道：公开分发仓库（owner/repo），见 gradle.properties 的 clipdown.updateRepo
+// 应用内更新通道：默认按公开发布仓库拼 GitHub Release 固定链接；
+// 可用 clipdown.updateManifestUrl / clipdown.updateApkUrl 指向任意托管（换国内源不改代码）
 val updateRepo = (project.findProperty("clipdown.updateRepo") as String?)
-    ?: "Gorilla-Kevv/clipdown-dist"
+    ?: "Gorilla-Kevv/mobileSrcDownloadplugin"
 val apkAssetName = (project.findProperty("clipdown.apkAssetName") as String?)
     ?: "clipdown-release.apk"
+val updateManifestUrl = (project.findProperty("clipdown.updateManifestUrl") as String?)
+    ?.takeIf { it.isNotBlank() }
+    ?: "https://github.com/$updateRepo/releases/latest/download/update.json"
+val updateApkUrl = (project.findProperty("clipdown.updateApkUrl") as String?)
+    ?.takeIf { it.isNotBlank() }
+    ?: "https://github.com/$updateRepo/releases/latest/download/$apkAssetName"
 
 android {
     namespace = "com.clipdown.app"
@@ -51,18 +58,10 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         resourceConfigurations += setOf("zh", "en")
 
-        // 应用内更新所需常量（改发布仓库只需改 gradle.properties，不必动代码）
+        // 应用内更新所需常量（改发布仓库/换托管只需改 gradle.properties，不必动代码）
         buildConfigField("String", "UPDATE_REPO", "\"$updateRepo\"")
-        buildConfigField(
-            "String",
-            "UPDATE_MANIFEST_URL",
-            "\"https://github.com/$updateRepo/releases/latest/download/update.json\""
-        )
-        buildConfigField(
-            "String",
-            "UPDATE_APK_URL",
-            "\"https://github.com/$updateRepo/releases/latest/download/$apkAssetName\""
-        )
+        buildConfigField("String", "UPDATE_MANIFEST_URL", "\"$updateManifestUrl\"")
+        buildConfigField("String", "UPDATE_APK_URL", "\"$updateApkUrl\"")
     }
 
     compileOptions {

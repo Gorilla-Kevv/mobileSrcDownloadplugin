@@ -60,9 +60,12 @@ object UpdateCenter {
         val result = UpdateRepository.fetch()
         val info = result.getOrNull()
         state = when {
-            result.isFailure -> UpdateUiState.Failed(
-                result.exceptionOrNull()?.message ?: "检查更新失败"
-            )
+            result.isFailure -> {
+                val e = result.exceptionOrNull()
+                // 网络异常常见 message 为空（如 ConnectException），回落到异常类名，避免出现"检查失败：检查失败"
+                val reason = e?.message?.takeIf { it.isNotBlank() } ?: e?.javaClass?.simpleName ?: "未知错误"
+                UpdateUiState.Failed(reason)
+            }
             info == null -> UpdateUiState.UpToDate(UpdateRepository.currentVersionName)
             info.isNewerThan(UpdateRepository.currentVersionCode) -> UpdateUiState.Available(info)
             else -> UpdateUiState.UpToDate(UpdateRepository.currentVersionName)

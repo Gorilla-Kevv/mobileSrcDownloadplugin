@@ -33,6 +33,8 @@ DRY_RUN=0
 CREATE_REPO=0
 SKIP_BUILD=0
 REPO=""
+MANIFEST_URL_OVERRIDE=""
+APK_URL_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -40,6 +42,10 @@ while [[ $# -gt 0 ]]; do
     --no-bump)     BUMP="none"; shift ;;
     --notes)       NOTES="${2:-}"; shift 2 ;;
     --repo)        REPO="${2:-}"; shift 2 ;;
+    # 换国内托管（Gitee/OSS/COS/自建）时用这两个覆盖 update.json 里的地址，与 gradle.properties 的
+    # clipdown.updateManifestUrl / clipdown.updateApkUrl 保持一致即可
+    --manifest-url) MANIFEST_URL_OVERRIDE="${2:-}"; shift 2 ;;
+    --apk-url)      APK_URL_OVERRIDE="${2:-}"; shift 2 ;;
     --dry-run)     DRY_RUN=1; shift ;;
     --create-repo) CREATE_REPO=1; shift ;;
     --skip-build)  SKIP_BUILD=1; shift ;;
@@ -112,7 +118,7 @@ DIST="build/dist"
 mkdir -p "$DIST"
 cp "$APK_SRC" "$DIST/$APK_ASSET"
 
-APK_URL="https://github.com/${REPO}/releases/latest/download/${APK_ASSET}"
+APK_URL="${APK_URL_OVERRIDE:-https://github.com/${REPO}/releases/latest/download/${APK_ASSET}}"
 APK_SIZE="$(stat -c %s "$DIST/$APK_ASSET" 2>/dev/null || wc -c < "$DIST/$APK_ASSET" | tr -d ' ')"
 APK_SHA="$(sha256sum "$DIST/$APK_ASSET" | cut -d' ' -f1)"
 
@@ -177,5 +183,5 @@ fi
 
 echo
 echo "✅ 发布完成：https://github.com/${REPO}/releases/tag/${TAG}"
-echo "   应用内更新清单：https://github.com/${REPO}/releases/latest/download/update.json"
+echo "   应用内更新清单：${MANIFEST_URL_OVERRIDE:-https://github.com/${REPO}/releases/latest/download/update.json}"
 echo "   直接下载 APK ：${APK_URL}"
