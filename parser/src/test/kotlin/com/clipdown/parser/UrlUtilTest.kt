@@ -108,6 +108,13 @@ class UrlUtilTest {
         assertEquals("https://xhslink.cn/o/1kijoisLVUe", UrlUtil.extractFirst(text2))
     }
 
+    /** 分享文案可能以 emoji 旗子开头（小红书澳门帖实测），召回不应受影响 */
+    @Test
+    fun `extractFirst 从 emoji 开头的分享文案中召回链接`() {
+        val text = "🇲🇴 https://xhslink.cn/o/22TlIMvD96D\n拷走文字，去【小红书】探索这篇笔记~"
+        assertEquals("https://xhslink.cn/o/22TlIMvD96D", UrlUtil.extractFirst(text))
+    }
+
     // ---- hostOf / pathOf ----
 
     @Test

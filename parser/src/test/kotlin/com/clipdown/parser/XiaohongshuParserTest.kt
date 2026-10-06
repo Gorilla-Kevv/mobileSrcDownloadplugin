@@ -266,6 +266,35 @@ class XiaohongshuParserTest {
         assertEquals("今天穿这套去约会怎么样？", result.title)
     }
 
+    /**
+     * 视频帖真实结构（2026-10 用户分享链接 `xhslink.cn/o/22TlIMvD96D` → `type=video`，
+     * 主机抓取取证）：`video.media.stream.h264[].masterUrl` + `backupUrls`，
+     * 封面在 `imageList[0].infoList[]`（H5_DTL/H5_PRV 两形态、**同一 fileId**），
+     * 标题就是旗子 emoji `🇲🇴`，作者在 `user.nickName`。
+     * 断言：只出视频、封面图不落媒体、判为单选（走自动下载）、标题作者正确。
+     */
+    @Test
+    fun `视频帖 只出视频且封面图不落媒体`() {
+        val fixture = fixture("xhs_video_note.html")
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(fixture)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/discovery/item/6ac05cc4000000001b02d811?type=video&xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals("应提取到 1 个视频: ${result.media.map { it.url }}", 1, videos.size)
+        assertTrue("封面帧不应作为独立媒体: ${images.map { it.url }}", images.isEmpty())
+        assertTrue("视频帖应判为单选（走自动下载）", !result.isAlbumMultiSelect)
+        assertTrue("视频 URL 应指向 xhscdn: ${videos[0].url}", videos[0].url.contains("xhscdn.com"))
+        assertEquals("🇲🇴", result.title)
+        assertEquals("菠萝烤狗", result.author)
+    }
+
     @Test
     fun `视频笔记的 masterUrl 提取`() {
         val state = """

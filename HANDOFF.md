@@ -41,6 +41,8 @@
     - 图集同一张图同时下发 `urlPre`（预览）与 `urlDefault`（默认画质），**文件 ID 相同**（`.../notes_pre_post/<fileId>!nd_xxx`）→ 必须按文件 ID 去重
     - 视频笔记同时有 `masterUrl` 与 `imageList`（封面帧）→ **有视频时必须丢弃图片**（与 IG 修复 10c 同源）
     - **失效笔记不返回 4xx**：渲染 title=「小红书 - 你访问的页面不见了」；**登录墙/探索页 title 都是「小红书 - 你的生活兴趣社区」**（三者都塞推荐流，必须按 title 判定失败）
+    - 笔记详情页的 SSR 标志是 `noteDetailMap`（桌面）/ `imageList`（移动）；探索页两者都无
+    - **视频帖**（`type=video`，阶段 33 取证）：视频在 `video.media.stream.h264[].masterUrl` + `backupUrls`，**位置在 imageList 窗口之外**（必须全页扫描 `extractVideos`）；封面在 `imageList[0].infoList[]`，`imageScene` 为 `H5_DTL`/`H5_PRV` 两形态但 **fileId 相同**（去重后仅 1 张）。视频 URL 实测 `Content-Type: video/mp4`、`Accept-Ranges: bytes`（206 续传可用）、**必须带 `Referer: https://www.xiaohongshu.com/`**（解析器已挂在 MediaItem.headers 上）
 17. **小红书反爬含客户端指纹维度（阶段 32 结论）**：同一 URL、同一移动端 UA、同一请求头，**主机 curl 得 200（含 imageList），App 内 OkHttp 与 WebView 都被 302 到 `/login`**（日志 `直连结果：code=200 finalUrl=.../login?redirectPath=... imageList=false`）。已排除：xsec_token 过期（1.5h 后主机仍 200）、`apptime`/`share_id` 被 normalize 剥离、UA 与 client hints 不一致、WebView 残留 cookie、请求头组合。**剩余唯一可行动路径：用户提供登录态 Cookie（`web_session`）**——设置页「小红书 Cookie」入口已支持，`CookieStore` → `headersFor` 注入。**小红书图集的真实成功下载必须在真机或带 Cookie 的环境验证**
 
 ## 命令
