@@ -6,21 +6,25 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.clipdown.app.BuildConfig
+import com.clipdown.app.ui.components.AppCard
+import com.clipdown.app.ui.components.CardHeader
+import com.clipdown.app.ui.components.KeyValueRow
+import com.clipdown.app.ui.components.NoticeBar
+import com.clipdown.app.ui.components.PrimaryButton
+import com.clipdown.app.ui.components.SecondaryButton
+import com.clipdown.app.ui.components.Tone
+import com.clipdown.app.ui.components.VSpace
+import com.clipdown.app.ui.theme.AppTheme
 import kotlinx.coroutines.launch
 
 /**
@@ -36,96 +40,77 @@ fun UpdateSection() {
     val downloading = UpdateCenter.downloading
     val progress = UpdateCenter.progress
 
-    Card(
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("关于与更新", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            Text(
-                "当前版本：${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）",
-                style = MaterialTheme.typography.bodyMedium
+    AppCard {
+        CardHeader(title = "关于与更新", subtitle = "GitHub Release 通道，可原地覆盖安装")
+        VSpace(AppTheme.spacing.sm)
+        KeyValueRow("当前版本", "${BuildConfig.VERSION_NAME}（${BuildConfig.VERSION_CODE}）")
+        KeyValueRow("更新通道", BuildConfig.UPDATE_REPO)
+        VSpace(AppTheme.spacing.md)
+        Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)) {
+            SecondaryButton(
+                text = if (state is UpdateUiState.Checking) "检查中…" else "检查更新",
+                modifier = Modifier.weight(1f),
+                enabled = state !is UpdateUiState.Checking && !downloading,
+                onClick = { scope.launch { UpdateCenter.check() } }
             )
+            if (state is UpdateUiState.Available) {
+                PrimaryButton(
+                    text = if (downloading) "下载中…" else "下载并安装",
+                    modifier = Modifier.weight(1f),
+                    enabled = !downloading,
+                    onClick = { scope.launch { UpdateCenter.downloadAndInstall() } }
+                )
+            }
+        }
+
+        when (val s = state) {
+            is UpdateUiState.Idle, is UpdateUiState.Checking -> Unit
+            is UpdateUiState.UpToDate -> {
+                VSpace(AppTheme.spacing.md)
+                NoticeBar("已是最新版本（${s.currentVersionName}）", Tone.Success)
+            }
+
+            is UpdateUiState.Failed -> {
+                VSpace(AppTheme.spacing.md)
+                NoticeBar("检查失败：${s.message}", Tone.Danger)
+            }
+
+            is UpdateUiState.Available -> {
+                VSpace(AppTheme.spacing.md)
+                val info = s.info
+                NoticeBar(
+                    buildString {
+                        append("发现新版本 ${info.versionName}（${info.versionCode}）")
+                        if (info.sizeText().isNotEmpty()) append(" · ${info.sizeText()}")
+                        if (info.mandatory) append(" · 建议尽快更新")
+                        if (info.notes.isNotBlank()) append("\n${info.notes}")
+                    },
+                    Tone.Brand
+                )
+            }
+        }
+
+        if (downloading) {
+            VSpace(AppTheme.spacing.md)
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(6.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant
+            )
+            VSpace(AppTheme.spacing.xs)
             Text(
-                "更新通道：${BuildConfig.UPDATE_REPO}",
+                "正在下载升级包 ${(progress * 100).toInt()}%",
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-
-            Spacer(Modifier.height(10.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Button(
-                    onClick = { scope.launch { UpdateCenter.check() } },
-                    enabled = state !is UpdateUiState.Checking && !downloading
-                ) {
-                    Text(if (state is UpdateUiState.Checking) "检查中…" else "检查更新")
-                }
-                if (state is UpdateUiState.Available) {
-                    Button(
-                        onClick = { scope.launch { UpdateCenter.downloadAndInstall() } },
-                        enabled = !downloading
-                    ) {
-                        Text(if (downloading) "下载中…" else "下载并安装")
-                    }
-                }
-            }
-
-            when (val s = state) {
-                is UpdateUiState.Idle -> Unit
-                is UpdateUiState.Checking -> Unit
-                is UpdateUiState.UpToDate -> StatusText("已是最新版本 ✓")
-                is UpdateUiState.Failed -> StatusText("检查失败：${s.message}")
-                is UpdateUiState.Available -> {
-                    Spacer(Modifier.height(8.dp))
-                    val info = s.info
-                    StatusText(
-                        buildString {
-                            append("发现新版本 ${info.versionName}（${info.versionCode}）")
-                            if (info.sizeText().isNotEmpty()) append("，${info.sizeText()}")
-                            if (info.mandatory) append(" · 建议尽快更新")
-                        }
-                    )
-                    if (info.notes.isNotBlank()) {
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            info.notes,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f)
-                        )
-                    }
-                }
-            }
-
-            if (downloading) {
-                Spacer(Modifier.height(10.dp))
-                LinearProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.fillMaxWidth()
-                )
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    "正在下载升级包 ${(progress * 100).toInt()}%",
-                    style = MaterialTheme.typography.labelMedium
-                )
-            } else if (state is UpdateUiState.Available && !UpdateCenter.canInstallPackages()) {
-                Spacer(Modifier.height(8.dp))
-                TextButton(onClick = { UpdateCenter.openInstallPermission() }) {
-                    Text("首次更新需允许「安装未知应用」→ 点此去开启")
-                }
+        } else if (state is UpdateUiState.Available && !UpdateCenter.canInstallPackages()) {
+            VSpace(AppTheme.spacing.xs)
+            TextButton(onClick = { UpdateCenter.openInstallPermission() }) {
+                Text("首次更新需允许「安装未知应用」→ 点此去开启", style = MaterialTheme.typography.labelLarge)
             }
         }
     }
-}
-
-@Composable
-private fun StatusText(text: String) {
-    Spacer(Modifier.height(8.dp))
-    Text(
-        text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.primary
-    )
 }
 
 /**

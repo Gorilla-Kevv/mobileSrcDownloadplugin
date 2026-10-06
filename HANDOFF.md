@@ -44,6 +44,8 @@
     - 笔记详情页的 SSR 标志是 `noteDetailMap`（桌面）/ `imageList`（移动）；探索页两者都无
     - **视频帖**（`type=video`，阶段 33 取证）：视频在 `video.media.stream.h264[].masterUrl` + `backupUrls`，**位置在 imageList 窗口之外**（必须全页扫描 `extractVideos`）；封面在 `imageList[0].infoList[]`，`imageScene` 为 `H5_DTL`/`H5_PRV` 两形态但 **fileId 相同**（去重后仅 1 张）。视频 URL 实测 `Content-Type: video/mp4`、`Accept-Ranges: bytes`（206 续传可用）、**必须带 `Referer: https://www.xiaohongshu.com/`**（解析器已挂在 MediaItem.headers 上）
 17. **小红书反爬含客户端指纹维度（阶段 32 结论）**：同一 URL、同一移动端 UA、同一请求头，**主机 curl 得 200（含 imageList），App 内 OkHttp 与 WebView 都被 302 到 `/login`**（日志 `直连结果：code=200 finalUrl=.../login?redirectPath=... imageList=false`）。已排除：xsec_token 过期（1.5h 后主机仍 200）、`apptime`/`share_id` 被 normalize 剥离、UA 与 client hints 不一致、WebView 残留 cookie、请求头组合。**剩余唯一可行动路径：用户提供登录态 Cookie（`web_session`）**——设置页「小红书 Cookie」入口已支持，`CookieStore` → `headersFor` 注入。**小红书图集的真实成功下载必须在真机或带 Cookie 的环境验证**
+18. **模拟器代理残留会静默破坏应用网络（阶段 34/35 踩坑）**：`settings put global http_proxy 10.0.2.2:14047` 会被 Android 拆成 `global_http_proxy_host` / `global_http_proxy_port` 两个键，**只 delete `http_proxy` 无效**；且已生效的代理会缓存在网络配置里，必须**两个键都删 + 重启**才复位。症状是应用内所有 OkHttp 请求都报 `SocketTimeoutException: failed to connect to /10.0.2.2 (port 14047)`。另外**模拟器 DNS 解析不了 github.com**（`UnknownHostException: Unable to resolve host "github.com"`）——本机所在网络直连 GitHub 亦超时（需代理），故**应用内更新在模拟器上必然失败，只能真机验证**
+19. **Compose 里做网络请求必须切 IO 线程**：`LaunchedEffect` 跑在主线程，直接调阻塞式 OkHttp 会抛 `NetworkOnMainThreadException`（阶段 35 在设置页「检查更新」实测到，表现为"检查失败：NetworkOnMainThreadException"）。已改为 `withContext(Dispatchers.IO)`
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
@@ -62,6 +64,14 @@
 - **应用内更新**：`update/UpdateCenter`（进程级单例状态）+ `UpdateRepository`（拉清单比对 versionCode）+ `ApkInstaller`（下载 → FileProvider → 系统安装器）+ `UpdateUi`（设置页「关于与更新」区块 + 启动提示框）。Manifest 需 `REQUEST_INSTALL_PACKAGES` 与 `${applicationId}.fileprovider`（路径见 `res/xml/file_paths.xml`）
 - **覆盖安装前提**：新旧 APK **签名一致**（同一 keystore）。签名一致时系统原地升级、保留数据；不一致会提示"应用未安装"
 - 单测：`:app:testDebugUnitTest`（更新清单契约 4 例）
+
+## UI 设计体系（阶段 35 重构，改界面必读）
+- **令牌层**：`ui/theme/Color.kt`（语义色：Brand600/BrandContainer、Neutral*、TextPrimary/Secondary/Tertiary、Success/Warning/Danger/Info 各含 `*Fg` + `*Container`）、`ui/theme/Theme.kt`（Spacing 4/8/12/16/20/24、Radius card18/control12/thumb14/pill999、10 级排版、M3 Shapes）。取用方式：`AppTheme.spacing.lg` / `AppTheme.radius.card`
+- **硬规则**：**页面里禁止再写裸 `Color(0xFF...)` 与随手 dp 值**，一律引用令牌或共享组件；这样多屏才会看起来是同一套设计
+- **共享组件** `ui/components/AppUi.kt`：`PageHeader`（页面标题+副标题）、`AppCard`（白底+1dp 描边+18dp 圆角，**不用阴影**）、`CardHeader`、`Hairline`、`StatusPill`（语义胶囊）、`AppChip`、`KeyValueRow`、`NoticeBar`（错误/警告/成功提示条）、`PrimaryButton`/`SecondaryButton`、`SettingSwitchRow`、`EmptyState`、`GroupLabel`、`VSpace/HSpace/HGroup`
+- **版式规则**：页面 = `PageHeader` + 若干 `AppCard`，卡片间距 `spacing.md`、卡片内边距 `spacing.lg`、卡片内行用 `Hairline()` 分隔；列表/表单左右边界统一 `spacing.screen`
+- **主题策略**：默认**浅色优先**（`ClipDownTheme(darkTheme = false)`）——悬浮气泡与弹窗沿用深色磨砂玻璃，强跟随系统深色会让弹窗浅色块与页面深色底混搭；深色方案已在 `Theme.kt` 备好，需要时把默认值改为 `isSystemInDarkTheme()`
+- **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
 - 当前：**阶段 32（小红书真实链接联调）完成代码侧**：`xhslink.cn` 路由、短链 `<a href>` 展开、移动端 UA/结构适配、fileId 去重、视频帖净化、失效/登录墙守卫、WebView 提前收口；parser 单测 **56 例**全绿。**小红书图集真实成功下载被环境挡住**（App 侧 OkHttp/WebView 均被 302 到 /login，主机 curl 同参数得 200，反爬含客户端指纹）→ 需用户提供 `web_session` Cookie 或改用真机

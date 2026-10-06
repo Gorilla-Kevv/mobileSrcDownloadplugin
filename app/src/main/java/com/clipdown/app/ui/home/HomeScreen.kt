@@ -4,9 +4,7 @@ import android.content.Intent
 import android.provider.Settings
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -22,20 +20,15 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -48,7 +41,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -56,9 +48,21 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.clipdown.app.clip.ClipboardMonitor
 import com.clipdown.app.clip.LinkCenter
-import com.clipdown.app.clip.LinkSource
 import com.clipdown.app.floatwindow.FloatingWindowService
-import com.clipdown.app.ui.theme.SeedBlue
+import com.clipdown.app.ui.components.AppCard
+import com.clipdown.app.ui.components.AppChip
+import com.clipdown.app.ui.components.CardHeader
+import com.clipdown.app.ui.components.NoticeBar
+import com.clipdown.app.ui.components.PageHeader
+import com.clipdown.app.ui.components.PrimaryButton
+import com.clipdown.app.ui.components.SecondaryButton
+import com.clipdown.app.ui.components.StatusPill
+import com.clipdown.app.ui.components.Tone
+import com.clipdown.app.ui.components.VSpace
+import com.clipdown.app.ui.theme.AppTheme
+import com.clipdown.app.ui.theme.BrandContainer
+import com.clipdown.app.ui.theme.OnBrandContainer
+import com.clipdown.app.ui.theme.SuccessFg
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
 import com.clipdown.parser.core.ParserEngine
@@ -73,8 +77,9 @@ import kotlinx.coroutines.withContext
 /**
  * 首页：手动解析入口 + 权限引导 + 支持平台总览。
  *
- * 自动识别主要由悬浮窗完成，这里承担"随时可手动兜底"的职责：
- * 用户在任何时刻都能粘贴链接直接解析下载。
+ * 自动识别主要由悬浮窗完成，这里承担"随时可手动兜底"的职责。
+ * 版式遵循统一设计令牌：页面标题 → 解析卡 → 结果卡 → 权限卡 → 平台卡，
+ * 卡片间距、内边距、标题字号全部取自 [AppTheme]，不再各写各的。
  */
 @Composable
 fun HomeScreen(autoFocusParse: Boolean = false) {
@@ -89,7 +94,6 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
 
     val lastLink by LinkCenter.last.collectAsStateWithLifecycle()
 
-    // 从分享或悬浮窗进来时，直接解析最近一条链接
     LaunchedEffect(autoFocusParse, lastLink?.url) {
         if (autoFocusParse) {
             val link = lastLink ?: return@LaunchedEffect
@@ -125,60 +129,59 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(AppTheme.spacing.screen),
+        verticalArrangement = Arrangement.spacedBy(AppTheme.spacing.md)
     ) {
         item {
-            Text("剪存 ClipDown", style = MaterialTheme.typography.titleLarge)
-            Text(
-                "复制任意受支持平台的链接，悬浮窗会自动提示下载；也可以在这里手动粘贴。",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+            PageHeader(
+                title = "剪存 ClipDown",
+                subtitle = "复制链接后气泡会自动提示下载，也可以在这里手动粘贴解析"
             )
         }
 
         item {
-            Card(
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    OutlinedTextField(
-                        value = input,
-                        onValueChange = { input = it },
-                        modifier = Modifier.fillMaxWidth(),
-                        placeholder = { Text("粘贴 Instagram / X / 小红书 / 抖音 链接") },
-                        singleLine = true,
-                        shape = RoundedCornerShape(14.dp)
+            AppCard {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = { input = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = {
+                        Text(
+                            "粘贴 Instagram / X / 小红书 / 抖音 链接",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    singleLine = true,
+                    shape = RoundedCornerShape(AppTheme.radius.control),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
                     )
-                    Spacer(Modifier.height(12.dp))
-                    Row(modifier = Modifier.fillMaxWidth()) {
-                        Button(
-                            onClick = {
-                                val text = ClipboardMonitor.readAndSubmitForce()
-                                if (!text.isNullOrBlank()) {
-                                    input = text
-                                    parse(text)
-                                } else {
-                                    error = "剪贴板为空或当前无权限读取，请手动粘贴"
-                                }
-                            },
-                            shape = RoundedCornerShape(14.dp)
-                        ) {
-                            Icon(Icons.Default.ContentPaste, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("读取剪贴板")
+                )
+                VSpace(AppTheme.spacing.md)
+                Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)) {
+                    SecondaryButton(
+                        text = "读取剪贴板",
+                        icon = Icons.Default.ContentPaste,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            val text = ClipboardMonitor.readAndSubmitForce()
+                            if (!text.isNullOrBlank()) {
+                                input = text
+                                parse(text)
+                            } else {
+                                error = "剪贴板为空或当前无权限读取，请手动粘贴"
+                            }
                         }
-                        Spacer(Modifier.width(10.dp))
-                        Button(
-                            onClick = { parse(input) },
-                            enabled = input.isNotBlank() && !parsing,
-                            shape = RoundedCornerShape(14.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
-                        ) {
-                            Text("解析")
-                        }
-                    }
+                    )
+                    PrimaryButton(
+                        text = "解析",
+                        modifier = Modifier.weight(1f),
+                        enabled = input.isNotBlank() && !parsing,
+                        onClick = { parse(input) }
+                    )
                 }
             }
         }
@@ -186,30 +189,23 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
         item {
             AnimatedVisibility(visible = parsing) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    horizontalArrangement = Arrangement.Center
+                    modifier = Modifier.fillMaxWidth().padding(vertical = AppTheme.spacing.xs),
+                    horizontalArrangement = Arrangement.Center,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    Spacer(Modifier.width(10.dp))
-                    Text("解析中…", style = MaterialTheme.typography.bodyMedium)
+                    CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(AppTheme.spacing.sm))
+                    Text(
+                        "解析中…",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
             }
         }
 
         error?.let { msg ->
-            item {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    colors = CardDefaults.cardColors(containerColor = Color(0xFFFFECEC))
-                ) {
-                    Text(
-                        text = msg,
-                        modifier = Modifier.padding(14.dp),
-                        color = Color(0xFFB3261E),
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                }
-            }
+            item { NoticeBar(msg, Tone.Danger) }
         }
 
         result?.let { r ->
@@ -217,14 +213,14 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
                 ResultCard(
                     result = r,
                     selectedIndices = selected,
-                    multiSelect = r.isAlbumMultiSelect,
-                    onSelect = { index ->
+                    onToggle = { index ->
                         selected = if (r.isAlbumMultiSelect) {
                             if (index in selected) selected - index else selected + index
                         } else {
                             setOf(index)
                         }
                     },
+                    onSetSelection = { selected = it },
                     onDownload = { indices ->
                         val items = indices.mapNotNull { r.media.getOrNull(it) }
                         DownloadController.enqueueAll(items, r.platform, r.title, r.sourceUrl)
@@ -234,13 +230,9 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
             }
         }
 
-        item {
-            PermissionSection()
-        }
+        item { PermissionSection() }
 
-        item {
-            PlatformSection()
-        }
+        item { PlatformSection() }
     }
 }
 
@@ -248,99 +240,109 @@ fun HomeScreen(autoFocusParse: Boolean = false) {
 private fun ResultCard(
     result: ParseResult,
     selectedIndices: Set<Int>,
-    multiSelect: Boolean,
-    onSelect: (Int) -> Unit,
+    onToggle: (Int) -> Unit,
+    onSetSelection: (Set<Int>) -> Unit,
     onDownload: (Set<Int>) -> Unit
 ) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                AsyncImage(
-                    model = result.coverUrl,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(72.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                        .background(Color.Black.copy(alpha = 0.05f))
-                )
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        result.title ?: "未命名作品",
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        "${result.platform.displayName} · ${ParserEngine.sourceLabel(result.source)}",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-                    )
-                }
-            }
+    val multiSelect = result.isAlbumMultiSelect
+    val imageIndices = remember(result) {
+        result.media.indices.filter { result.media[it].kind == MediaKind.IMAGE }.toSet()
+    }
 
-            if (!result.warning.isNullOrBlank()) {
-                Spacer(Modifier.height(10.dp))
+    AppCard {
+        // 作品信息：缩略图 + 标题 + 来源
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            AsyncImage(
+                model = result.coverUrl,
+                contentDescription = null,
+                modifier = Modifier
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(AppTheme.radius.thumb))
+                    .background(MaterialTheme.colorScheme.surfaceVariant)
+            )
+            Spacer(Modifier.width(AppTheme.spacing.md))
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    result.warning!!,
-                    color = Color(0xFFB26A00),
-                    style = MaterialTheme.typography.labelMedium
+                    result.title ?: "未命名作品",
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            if (multiSelect) {
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                    TextButton(onClick = { result.media.indices.forEach { onSelect(it) } }) {
-                        Text("全选", style = MaterialTheme.typography.labelLarge)
-                    }
-                    TextButton(onClick = {
-                        result.media.indices.forEach { if (result.media[it].kind != MediaKind.VIDEO) onSelect(it) }
-                    }) {
-                        Text("仅视频", style = MaterialTheme.typography.labelLarge)
-                    }
-                    TextButton(onClick = { result.media.indices.forEach { onSelect(it) } }) {
-                        Text("清空", style = MaterialTheme.typography.labelLarge)
-                    }
+                VSpace(AppTheme.spacing.xs)
+                Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.xs)) {
+                    StatusPill(result.platform.displayName, Tone.Brand)
+                    StatusPill(ParserEngine.sourceLabel(result.source), Tone.Neutral)
                 }
-            }
-
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                itemsIndexed(result.media) { index, item ->
-                    val isSelected = index in selectedIndices
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = if (isSelected) SeedBlue else MaterialTheme.colorScheme.surfaceVariant,
-                        modifier = Modifier.clickable { onSelect(index) }
-                    ) {
-                        Text(
-                            text = "${kindLabel(item.kind)} · ${item.quality}",
-                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurface,
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(14.dp))
-
-            Button(
-                onClick = { onDownload(selectedIndices) },
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(if (multiSelect) "下载所选 ${selectedIndices.size} 项" else "下载所选资源")
             }
         }
+
+        if (!result.warning.isNullOrBlank()) {
+            VSpace(AppTheme.spacing.md)
+            NoticeBar(result.warning!!, Tone.Warning)
+        }
+
+        VSpace(AppTheme.spacing.lg)
+        HairlineRow()
+
+        // 资源选择
+        VSpace(AppTheme.spacing.md)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("资源", style = MaterialTheme.typography.titleSmall)
+            Spacer(Modifier.weight(1f))
+            Text(
+                if (multiSelect) "已选 ${selectedIndices.size}/${result.media.size}" else "单选",
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        VSpace(AppTheme.spacing.sm)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)) {
+            itemsIndexed(result.media) { index, item ->
+                AppChip(
+                    text = "${kindLabel(item.kind)} · ${item.quality}",
+                    selected = index in selectedIndices,
+                    onClick = { onToggle(index) }
+                )
+            }
+        }
+
+        if (multiSelect) {
+            VSpace(AppTheme.spacing.xs)
+            Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.xs)) {
+                TextButton(onClick = { onSetSelection(result.media.indices.toSet()) }) {
+                    Text("全选", style = MaterialTheme.typography.labelLarge)
+                }
+                TextButton(
+                    onClick = { onSetSelection(imageIndices) },
+                    enabled = imageIndices.isNotEmpty()
+                ) {
+                    Text("仅图片", style = MaterialTheme.typography.labelLarge)
+                }
+                TextButton(onClick = { onSetSelection(emptySet()) }) {
+                    Text("清空", style = MaterialTheme.typography.labelLarge)
+                }
+            }
+        }
+
+        VSpace(AppTheme.spacing.md)
+        PrimaryButton(
+            text = if (multiSelect) "下载所选 ${selectedIndices.size} 项" else "下载所选资源",
+            icon = Icons.Default.Download,
+            enabled = selectedIndices.isNotEmpty(),
+            modifier = Modifier.fillMaxWidth(),
+            onClick = { onDownload(selectedIndices) }
+        )
     }
+}
+
+@Composable
+private fun HairlineRow() {
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(MaterialTheme.colorScheme.outlineVariant)
+    )
 }
 
 @Composable
@@ -350,33 +352,28 @@ private fun PermissionSection() {
 
     LaunchedEffect(Unit) { overlayGranted.value = FloatingWindowService.hasPermission(context) }
 
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("必要权限", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(10.dp))
-            PermissionRow(
-                title = "悬浮窗",
-                desc = "用于在其他应用上方弹出下载提示",
-                granted = overlayGranted.value,
-                onClick = {
-                    context.startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            android.net.Uri.parse("package:${context.packageName}")
-                        )
+    AppCard {
+        CardHeader(title = "必要权限", subtitle = "开启后即可在复制链接时自动识别")
+        VSpace(AppTheme.spacing.sm)
+        PermissionRow(
+            title = "悬浮窗",
+            desc = "在其他应用上方弹出下载提示",
+            granted = overlayGranted.value,
+            onClick = {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        android.net.Uri.parse("package:${context.packageName}")
                     )
-                }
-            )
-            PermissionRow(
-                title = "无障碍服务",
-                desc = "Android 10+ 后台无法读取剪贴板，开启后可在复制时自动识别",
-                granted = AccessibilityState.isEnabled(context),
-                onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
-            )
-        }
+                )
+            }
+        )
+        PermissionRow(
+            title = "无障碍服务",
+            desc = "Android 10+ 后台读不到剪贴板，开启后可在复制时自动识别",
+            granted = AccessibilityState.isEnabled(context),
+            onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        )
     }
 }
 
@@ -388,65 +385,85 @@ private fun PermissionRow(
     onClick: () -> Unit
 ) {
     Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 8.dp),
+        modifier = Modifier.fillMaxWidth().padding(vertical = AppTheme.spacing.sm),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.bodyMedium)
+            VSpace(2.dp)
             Text(
                 desc,
                 style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
-        Box(
-            modifier = Modifier
-                .clip(RoundedCornerShape(12.dp))
-                .background(if (granted) Color(0xFF2EB872).copy(alpha = 0.14f) else Color(0xFFE5484D).copy(alpha = 0.12f))
-                .border(1.dp, if (granted) Color(0xFF2EB872) else Color(0xFFE5484D), RoundedCornerShape(12.dp))
-                .clickable(onClick = onClick)
-                .padding(horizontal = 12.dp, vertical = 6.dp),
-            contentAlignment = Alignment.Center
-        ) {
-            Text(
-                if (granted) "已开启" else "去开启",
-                color = if (granted) Color(0xFF1E7A4C) else Color(0xFFB3261E),
-                style = MaterialTheme.typography.labelMedium
-            )
-        }
+        Spacer(Modifier.width(AppTheme.spacing.md))
+        StatusPill(
+            text = if (granted) "已开启" else "去开启",
+            tone = if (granted) Tone.Success else Tone.Warning,
+            modifier = Modifier.clickable(onClick = onClick)
+        )
     }
 }
 
 @Composable
 private fun PlatformSection() {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text("支持的平台", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(12.dp))
-            Row(modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                Platform.entries.filter { it != Platform.GENERIC }.forEach { p ->
-                    Column(
-                        modifier = Modifier
-                            .padding(end = 12.dp)
-                            .clip(RoundedCornerShape(14.dp))
-                            .background(MaterialTheme.colorScheme.surfaceVariant)
-                            .padding(horizontal = 14.dp, vertical = 10.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
-                    ) {
-                        Text(p.displayName.take(2), style = MaterialTheme.typography.titleMedium, color = SeedBlue)
-                        Spacer(Modifier.height(4.dp))
-                        Text(p.displayName, style = MaterialTheme.typography.labelMedium)
-                        if (p.loginRequired) {
-                            Text("需登录态", style = MaterialTheme.typography.labelMedium, color = Color(0xFFB26A00))
-                        }
-                    }
+    val platforms = remember { Platform.entries.filter { it != Platform.GENERIC } }
+
+    AppCard {
+        CardHeader(title = "支持的平台", subtitle = "共 ${platforms.size} 个平台")
+        VSpace(AppTheme.spacing.md)
+        // 两列网格：比横向滚动更整齐，所有瓦片等宽等高
+        platforms.chunked(2).forEach { pair ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)
+            ) {
+                pair.forEach { p ->
+                    PlatformTile(p, modifier = Modifier.weight(1f))
                 }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
+            VSpace(AppTheme.spacing.sm)
+        }
+    }
+}
+
+@Composable
+private fun PlatformTile(platform: Platform, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier
+            .clip(RoundedCornerShape(AppTheme.radius.control))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(horizontal = AppTheme.spacing.md, vertical = AppTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Box(
+            modifier = Modifier
+                .size(34.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(BrandContainer),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(
+                platform.displayName.take(2).trim(),
+                style = MaterialTheme.typography.labelLarge,
+                color = OnBrandContainer
+            )
+        }
+        Spacer(Modifier.width(AppTheme.spacing.sm))
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                platform.displayName,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            Text(
+                if (platform.loginRequired) "需登录态" else "公开可解析",
+                style = MaterialTheme.typography.labelSmall,
+                color = if (platform.loginRequired) MaterialTheme.colorScheme.onSurfaceVariant else SuccessFg
+            )
         }
     }
 }

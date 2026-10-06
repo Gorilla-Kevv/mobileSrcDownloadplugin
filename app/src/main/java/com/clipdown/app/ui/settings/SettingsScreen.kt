@@ -8,17 +8,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -36,15 +35,25 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clipdown.app.ClipDownApp
 import com.clipdown.app.data.CookieStore
 import com.clipdown.app.floatwindow.FloatingWindowService
+import com.clipdown.app.ui.components.AppCard
+import com.clipdown.app.ui.components.CardHeader
+import com.clipdown.app.ui.components.Hairline
+import com.clipdown.app.ui.components.PageHeader
+import com.clipdown.app.ui.components.SettingSwitchRow
+import com.clipdown.app.ui.components.StatusPill
+import com.clipdown.app.ui.components.Tone
+import com.clipdown.app.ui.components.VSpace
+import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.update.UpdateSection
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.Platform
 import kotlinx.coroutines.launch
 
 /**
- * 设置页：监听范围、交互方式、下载策略与解析增强（Cookie / 远端服务）。
+ * 设置页：监听范围、交互方式、下载策略、登录态与解析增强。
  *
- * 所有改动即时生效：解析内核与下载引擎都支持配置热更新。
+ * 版式统一为「卡片 = 标题 + 说明 + 若干等距行」：
+ * 行高、行间距、标题字号全部走共享组件，避免历史上各区块各写一套 padding。
  */
 @Composable
 fun SettingsScreen() {
@@ -65,64 +74,94 @@ fun SettingsScreen() {
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        contentPadding = PaddingValues(AppTheme.spacing.screen),
+        verticalArrangement = Arrangement.spacedBy(AppTheme.spacing.md)
     ) {
         item {
-            Section("悬浮窗") {
-                SwitchRow("启用悬浮球", "常驻屏幕边缘，点击可立即识别剪贴板", floatEnabled) { v ->
+            PageHeader(
+                title = "设置",
+                subtitle = "所有改动即时生效，解析内核与下载引擎都支持热更新"
+            )
+        }
+
+        item {
+            AppCard {
+                CardHeader(title = "悬浮窗", subtitle = "在其他应用上方的常驻入口")
+                VSpace(AppTheme.spacing.xs)
+                SettingSwitchRow(
+                    title = "启用悬浮球",
+                    desc = "常驻屏幕边缘，点击可立即识别剪贴板",
+                    checked = floatEnabled
+                ) { v ->
                     scope.launch {
                         settings.setFloatEnabled(v)
                         if (v) FloatingWindowService.tryStart(context) else FloatingWindowService.stop(context)
                     }
                 }
-                SwitchRow("自动弹出解析窗", "识别到支持的链接后自动弹窗（关闭后只在气泡上做角标提示）", autoPopup) { v ->
-                    scope.launch { settings.setAutoPopup(v) }
-                }
-                SwitchRow(
-                    "解析后自动下载",
-                    "识别到单个视频/图片直接下载（气泡显示进度），图集等会弹窗让你挑选；" +
-                        "自动下载连续失败会自动熔断退避，配合「仅 Wi-Fi 下载」可在移动网络下暂停",
-                    autoDownload
-                ) { v ->
-                    scope.launch { settings.setAutoDownload(v) }
-                }
+                Hairline()
+                SettingSwitchRow(
+                    title = "自动弹出解析窗",
+                    desc = "识别到链接后自动弹窗；关闭则只在气泡上做角标提示",
+                    checked = autoPopup
+                ) { v -> scope.launch { settings.setAutoPopup(v) } }
+                Hairline()
+                SettingSwitchRow(
+                    title = "解析后自动下载",
+                    desc = "单个视频/图片直接下载并显示进度；图集会弹窗让你挑选。" +
+                        "连续失败会自动熔断退避，可配合「仅 Wi-Fi 下载」在移动网络下暂停",
+                    checked = autoDownload
+                ) { v -> scope.launch { settings.setAutoDownload(v) } }
             }
         }
 
         item {
-            Section("下载") {
-                SwitchRow("仅 Wi-Fi 下载", "移动网络下自动挂起任务", wifiOnly) { v ->
-                    scope.launch { settings.setWifiOnly(v) }
+            AppCard {
+                CardHeader(title = "下载", subtitle = "网络策略与落盘位置")
+                VSpace(AppTheme.spacing.xs)
+                SettingSwitchRow(
+                    title = "仅 Wi-Fi 下载",
+                    desc = "移动网络下自动挂起任务",
+                    checked = wifiOnly
+                ) { v -> scope.launch { settings.setWifiOnly(v) } }
+                Hairline()
+                SettingSwitchRow(
+                    title = "保存到系统相册",
+                    desc = "关闭后仅保存在应用私有目录",
+                    checked = saveAlbum
+                ) { v -> scope.launch { settings.setSaveToAlbum(v) } }
+                Hairline()
+                VSpace(AppTheme.spacing.sm)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("最大并发任务数", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.weight(1f))
+                    StatusPill("$maxConcurrent", Tone.Brand)
                 }
-                SwitchRow("保存到系统相册", "关闭后仅保存在应用私有目录", saveAlbum) { v ->
-                    scope.launch { settings.setSaveToAlbum(v) }
-                }
-                Column(modifier = Modifier.padding(top = 8.dp)) {
-                    Text("最大并发任务数：${maxConcurrent}", style = MaterialTheme.typography.bodyMedium)
-                    var sliderValue by remember(maxConcurrent) { mutableFloatStateOf(maxConcurrent.toFloat()) }
-                    Slider(
-                        value = sliderValue,
-                        onValueChange = { sliderValue = it },
-                        onValueChangeFinished = {
-                            scope.launch { settings.setMaxConcurrent(sliderValue.toInt()) }
-                        },
-                        valueRange = 1f..6f,
-                        steps = 4
-                    )
-                }
-            }
-        }
-
-        item {
-            Section("监听范围") {
-                Text(
-                    "未勾选任何平台时表示全部监听",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                var sliderValue by remember(maxConcurrent) { mutableFloatStateOf(maxConcurrent.toFloat()) }
+                Slider(
+                    value = sliderValue,
+                    onValueChange = { sliderValue = it },
+                    onValueChangeFinished = { scope.launch { settings.setMaxConcurrent(sliderValue.toInt()) } },
+                    valueRange = 1f..6f,
+                    steps = 4
                 )
-                Spacer(Modifier.height(6.dp))
+                Text(
+                    "并发越高越快，也越容易被平台限速；建议 3",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        }
+
+        item {
+            AppCard {
+                CardHeader(
+                    title = "监听范围",
+                    subtitle = "未勾选任何平台时表示全部监听",
+                    trailing = { StatusPill(if (enabledPlatforms.isEmpty()) "全部" else "${enabledPlatforms.size} 个", Tone.Brand) }
+                )
+                VSpace(AppTheme.spacing.xs)
                 Platform.entries.filter { it != Platform.GENERIC }.forEach { p ->
+                    val checked = enabledPlatforms.isEmpty() || enabledPlatforms.contains(p.id)
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -137,12 +176,13 @@ fun SettingsScreen() {
                                     ParserEngine.updateConfig(settings.parserConfig())
                                 }
                             }
-                            .padding(vertical = 4.dp),
+                            .padding(vertical = 6.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Checkbox(
-                            checked = enabledPlatforms.isEmpty() || enabledPlatforms.contains(p.id),
-                            onCheckedChange = null
+                            checked = checked,
+                            onCheckedChange = null,
+                            colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Text(p.displayName, style = MaterialTheme.typography.bodyMedium)
                     }
@@ -151,14 +191,18 @@ fun SettingsScreen() {
         }
 
         item {
-            Section("登录态增强") {
-                Text(
-                    "Instagram / 小红书 / Facebook 在免登录状态下只能拿到低清或封面。" +
-                        "从浏览器复制对应站点的 Cookie 粘贴到这里，即可获取原画质。Cookie 只保存在本机。",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+            AppCard {
+                CardHeader(
+                    title = "登录态增强",
+                    subtitle = "免登录只能拿到低清或封面"
                 )
-                Spacer(Modifier.height(10.dp))
+                VSpace(AppTheme.spacing.xs)
+                Text(
+                    "从浏览器复制对应站点的 Cookie 粘贴到下面，即可获取原画质。Cookie 只保存在本机。",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                VSpace(AppTheme.spacing.md)
                 CookieStore.platformsNeedingCookie().forEach { p ->
                     var text by remember(p) { mutableStateOf(CookieStore.get(context, p) ?: "") }
                     OutlinedTextField(
@@ -168,29 +212,41 @@ fun SettingsScreen() {
                             CookieStore.put(context, p, it)
                         },
                         label = { Text("${p.displayName} Cookie") },
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(bottom = AppTheme.spacing.sm),
                         singleLine = true,
                         visualTransformation = PasswordVisualTransformation(),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(AppTheme.radius.control),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                        )
                     )
                 }
             }
         }
 
         item {
-            Section("远端解析兜底") {
+            AppCard {
+                CardHeader(title = "远端解析兜底", subtitle = "本地失败时自动降级")
+                VSpace(AppTheme.spacing.xs)
                 Text(
-                    "本地解析会因平台风控随时失效。可自建 cobalt 或 yt-dlp 服务端，本地失败时自动降级调用。",
+                    "本地解析会因平台风控随时失效。可自建 cobalt 或 yt-dlp 服务端，本地失败时自动调用。",
                     style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                Spacer(Modifier.height(10.dp))
-                SwitchRow("启用远端解析", "仅在本机解析失败时使用", remoteEnabled) { v ->
+                VSpace(AppTheme.spacing.xs)
+                SettingSwitchRow(
+                    title = "启用远端解析",
+                    desc = "仅在本机解析失败时使用",
+                    checked = remoteEnabled
+                ) { v ->
                     scope.launch {
                         settings.setRemoteEnabled(v)
                         ParserEngine.updateConfig(settings.parserConfig())
                     }
                 }
+                Hairline()
+                VSpace(AppTheme.spacing.sm)
                 var endpoint by remember(remoteEndpoint) { mutableStateOf(remoteEndpoint) }
                 OutlinedTextField(
                     value = endpoint,
@@ -202,9 +258,13 @@ fun SettingsScreen() {
                         }
                     },
                     label = { Text("服务地址") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = AppTheme.spacing.sm),
                     singleLine = true,
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(AppTheme.radius.control),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    )
                 )
                 var token by remember(remoteToken) { mutableStateOf(remoteToken) }
                 OutlinedTextField(
@@ -217,51 +277,18 @@ fun SettingsScreen() {
                         }
                     },
                     label = { Text("鉴权 Key（可留空）") },
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                    modifier = Modifier.fillMaxWidth(),
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
-                    shape = RoundedCornerShape(12.dp)
+                    shape = RoundedCornerShape(AppTheme.radius.control),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    )
                 )
             }
         }
 
         item { UpdateSection() }
-    }
-}
-
-@Composable
-private fun Section(title: String, content: @Composable () -> Unit) {
-    Card(
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.height(8.dp))
-            content()
-        }
-    }
-}
-
-@Composable
-private fun SwitchRow(
-    title: String,
-    desc: String,
-    checked: Boolean,
-    onChanged: (Boolean) -> Unit
-) {
-    Row(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Column(modifier = Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.bodyMedium)
-            Text(
-                desc,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.55f)
-            )
-        }
-        Switch(checked = checked, onCheckedChange = onChanged)
     }
 }

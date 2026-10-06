@@ -1,7 +1,13 @@
 package com.clipdown.app.ui.nav
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Home
@@ -17,6 +23,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.unit.dp
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.NavHost
@@ -26,7 +33,6 @@ import androidx.navigation.compose.rememberNavController
 import com.clipdown.app.ui.downloads.DownloadsScreen
 import com.clipdown.app.ui.home.HomeScreen
 import com.clipdown.app.ui.settings.SettingsScreen
-import com.clipdown.app.ui.theme.SeedBlue
 
 sealed class Route(val path: String, val label: String, val icon: ImageVector) {
     data object Home : Route("home", "首页", Icons.Default.Home)
@@ -42,29 +48,43 @@ fun AppNav(openParse: Boolean) {
 
     Scaffold(
         bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                val entry by navController.currentBackStackEntryAsState()
-                val current = entry?.destination
-                routes.forEach { route ->
-                    NavigationBarItem(
-                        selected = current?.hierarchy?.any { it.route == route.path } == true,
-                        onClick = {
-                            navController.navigate(route.path) {
-                                popUpTo(navController.graph.findStartDestination().id) {
-                                    saveState = true
+            // 底部导航：白底 + 顶部 1dp 发丝线，避免默认阴影造成脏边
+            Column {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(MaterialTheme.colorScheme.outlineVariant)
+                )
+                NavigationBar(
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 0.dp
+                ) {
+                    val entry by navController.currentBackStackEntryAsState()
+                    val current = entry?.destination
+                    routes.forEach { route ->
+                        NavigationBarItem(
+                            selected = current?.hierarchy?.any { it.route == route.path } == true,
+                            onClick = {
+                                navController.navigate(route.path) {
+                                    popUpTo(navController.graph.findStartDestination().id) {
+                                        saveState = true
+                                    }
+                                    launchSingleTop = true
+                                    restoreState = true
                                 }
-                                launchSingleTop = true
-                                restoreState = true
-                            }
-                        },
-                        icon = { Icon(route.icon, contentDescription = route.label) },
-                        label = { Text(route.label) },
-                        colors = NavigationBarItemDefaults.colors(
-                            selectedIconColor = SeedBlue,
-                            selectedTextColor = SeedBlue,
-                            indicatorColor = SeedBlue.copy(alpha = 0.12f)
+                            },
+                            icon = { Icon(route.icon, contentDescription = route.label, modifier = Modifier.size(22.dp)) },
+                            label = { Text(route.label, style = MaterialTheme.typography.labelMedium) },
+                            colors = NavigationBarItemDefaults.colors(
+                                selectedIconColor = MaterialTheme.colorScheme.primary,
+                                selectedTextColor = MaterialTheme.colorScheme.primary,
+                                unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant,
+                                indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                            )
                         )
-                    )
+                    }
                 }
             }
         }

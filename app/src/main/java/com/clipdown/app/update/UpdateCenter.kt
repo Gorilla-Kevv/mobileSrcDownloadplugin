@@ -5,6 +5,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** 更新检查的 UI 状态 */
 sealed interface UpdateUiState {
@@ -57,7 +59,9 @@ object UpdateCenter {
      */
     suspend fun check(): UpdateInfo? {
         state = UpdateUiState.Checking
-        val result = UpdateRepository.fetch()
+        // 必须在 IO 线程发起：OkHttp 的阻塞调用在主线程会抛 NetworkOnMainThreadException
+        // （曾因此在设置页显示"检查失败：NetworkOnMainThreadException"）
+        val result = withContext(Dispatchers.IO) { UpdateRepository.fetch() }
         val info = result.getOrNull()
         state = when {
             result.isFailure -> {

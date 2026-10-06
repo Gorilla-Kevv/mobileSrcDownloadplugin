@@ -1,10 +1,10 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 34 完成（远程快速更新链路：一键发布脚本 + GitHub Release 通道 + 应用内检查更新；已首发 v1.0.2/v1.0.3，匿名下载与通道配置验证通过）
-- 下一阶段任务：真机安装 v1.0.3 → 在应用内点「检查更新」验证（真机网络可达 GitHub 时）；若不可达则改指国内托管
+- 当前正在开发任务：阶段 35 完成（应用 UI 与设置页重设计：设计令牌 + 共享组件 + 首页/下载/设置三屏重构；顺带修掉「检查更新」主线程网络请求 bug）
+- 下一阶段任务：真机看实际观感并微调（模拟器与真机 DPI/字体有差异）；如需深色模式则统一悬浮窗配色
 - 可提前进行的任务：小红书三例复测（需 Cookie 或真机）；阶段 29 真机复测（X 图集竖条 / 气泡下半屏向上生长 / 再点收起 / IG 冷却文案）；X 单视频下载闭环
-- 未完成的任务：应用内更新的**真机端到端**验证（模拟器网络到不了 GitHub）；小红书设备端真实下载；IG 风控恢复后阶段 25 复测
+- 未完成的任务：应用内更新的**真机端到端**验证（模拟器 DNS 解析不了 github.com）；小红书设备端真实下载；IG 风控恢复后阶段 25 复测
 - 测试基线：parser **58 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
@@ -509,3 +509,20 @@
 - **应对（已落地）**：更新通道**可指向任意托管**——`gradle.properties` 的 `clipdown.updateManifestUrl` / `clipdown.updateApkUrl` 留空则按 `clipdown.updateRepo` 拼 GitHub 固定链接，填上则用自定义地址（换 Gitee Releases / 阿里云 OSS / 腾讯云 COS / 自建静态服务**无需改代码**）；发布脚本同步支持 `--manifest-url` / `--apk-url` 覆盖
 - **诊断增强（v1.0.3 起）**：`ClipDownUpdate` 日志（清单地址/HTTP 码/异常类名与栈）；检查失败时回落到异常类名，不再只显示「检查失败」
 - 本次文档更新时间：10.06 16:12
+
+## 阶段 35 应用 UI 与设置页重设计（设计令牌 + 共享组件 + 三屏重构） [计划时间：10.06 16:09 BY ZCode][完成时间：10.06 16:40 BY ZCode]
+- 用户需求："clipdown 应用 UI 和设置重新设计和美化，排版整齐"（附 ui-ux-pro-max 技能）
+- **先立体系再改页面**（避免逐屏各写各的）：
+  - **令牌层**：重写 `theme/Color.kt`（语义色：Brand600/BrandContainer、Neutral 色阶、TextPrimary/Secondary/Tertiary、Success/Warning/Danger/Info 各含 Fg+Container；保留 `SeedBlue/GlassBase/SuccessGreen/...` 旧别名以兼容悬浮窗）、`theme/Theme.kt`（`Spacing` 4/8/12/16/20/24、`Radius` card18/control12/thumb14/pill999、10 级排版 3 字重、M3 `Shapes`；经 `CompositionLocal` 暴露 `AppTheme.spacing/radius`）
+  - **共享组件** 新建 `ui/components/AppUi.kt`：`PageHeader`/`AppCard`（白底+1dp 描边+18dp 圆角，去阴影）/`CardHeader`/`Hairline`/`StatusPill`(Tone 语义)/`AppChip`/`KeyValueRow`/`NoticeBar`/`PrimaryButton`/`SecondaryButton`/`SettingSwitchRow`/`EmptyState`/`GroupLabel`/`VSpace`
+- **首页重构**：标题+副标题 → 解析卡（等宽双按钮）→ 结果卡（缩略图/品牌胶囊/资源 chips/统一提示条）→ 权限卡（右侧状态胶囊，未开启用 Warning 而非刺眼的红）→ 平台卡（**横向滚动改两列网格**，等宽等高更整齐）。顺带修掉两个真实交互缺陷：原"全选/清空"都调 toggle（清空实为全选）、"仅视频"标签与行为不符 → 改为显式 `onSetSelection`，动作改为 全选/仅图片/清空
+- **下载页重构**：`PageHeader`（任务数/进行中汇总）+ 统一 `AppCard` 行（标题+状态胶囊+统一进度条+操作行）；空态改 `EmptyState`；状态胶囊统一走 Tone 映射
+- **设置页重构**：全部区块改用 `AppCard`+`CardHeader`+`SettingSwitchRow`+`Hairline`，行高/行距/标题字号完全统一；并发滑块加数值胶囊；监听范围加"全部/N 个"胶囊
+- **导航栏**：顶部 1dp 发丝线替代默认阴影、指示器改 `primaryContainer`、选中/未选中配色走令牌
+- **顺带修掉一个真 bug（可视化验证发现）**：设置页「检查更新」报 `NetworkOnMainThreadException` —— `LaunchedEffect` 在主线程，我此前直接调了阻塞式 OkHttp。已改为 `withContext(Dispatchers.IO)`；修复后失败原因变为诚实的网络错误
+- **环境清理**：早先为排查小红书设的模拟器代理残留（`global_http_proxy_host/port` 两键）会静默破坏应用网络，已删除并重启复位 → 现在模拟器对 GitHub 的失败是 `UnknownHostException`（国内 DNS 解析不了 github.com），非代码问题。已写入 HANDOFF 坑 18/19
+- 验证：`assembleRelease` 全绿；模拟器装机逐屏截图核对（首页/下载/设置上下半屏），排版对齐、卡片节奏、胶囊配色一致；`ClipDownUpdate` 日志与错误文案可读
+- 改动文件：`theme/Color.kt`、`theme/Theme.kt`、`ui/components/AppUi.kt`（新建）、`ui/home/HomeScreen.kt`、`ui/downloads/DownloadsScreen.kt`、`ui/settings/SettingsScreen.kt`、`ui/nav/AppNav.kt`、`update/UpdateUi.kt`、`update/UpdateCenter.kt`、`HANDOFF.md`、`PROGRESS.md`
+- 未动：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）——独立的深色玻璃层，若要统一需单独一轮
+- 下一步入口：①真机看实际观感（模拟器 DPI/字体与真机有差异）②如需深色模式，把 `ClipDownTheme` 默认值改为 `isSystemInDarkTheme()` 并统一悬浮窗配色
+- 本次文档更新时间：10.06 16:40
