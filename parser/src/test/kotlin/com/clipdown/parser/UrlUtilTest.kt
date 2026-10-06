@@ -88,6 +88,26 @@ class UrlUtilTest {
         assertEquals(Platform.X, UrlUtil.detectPlatform("x.com/a/status/1"))
     }
 
+    /**
+     * App 分享文案里小红书短链下发的是 **xhslink.cn**（不是 .com），
+     * 漏登记会让整条链接被判为"暂不支持该链接"。2026-10 用户实测链接取证。
+     */
+    @Test
+    fun `平台判定 小红书 xhslink cn 短链`() {
+        assertEquals(Platform.XIAOHONGSHU, UrlUtil.detectPlatform("https://xhslink.cn/o/7mDR2JlydL0"))
+        assertEquals(Platform.XIAOHONGSHU, UrlUtil.detectPlatform("https://xhslink.com/m/abc"))
+        assertTrue("xhslink.cn 应判定为短链", UrlUtil.isShortLink("https://xhslink.cn/o/7mDR2JlydL0"))
+    }
+
+    /** 真实分享文案：中文标题在前、链接居中、引导语在后 */
+    @Test
+    fun `extractFirst 从中文分享文案中召回链接`() {
+        val text = "须臾的休憩 感谢大模@糖包Rohan https://xhslink.cn/o/7mDR2JlydL0\n戳【小红书】围观这篇内容！"
+        assertEquals("https://xhslink.cn/o/7mDR2JlydL0", UrlUtil.extractFirst(text))
+        val text2 = "今天穿这套去约会怎么样？ https://xhslink.cn/o/1kijoisLVUe\n复制一下，然后打开【小红书】就能看到啦！"
+        assertEquals("https://xhslink.cn/o/1kijoisLVUe", UrlUtil.extractFirst(text2))
+    }
+
     // ---- hostOf / pathOf ----
 
     @Test

@@ -1,11 +1,11 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 31 完成（小红书链路测试与修复 4 项，48 例全绿 + 设备端端到端验证）
-- 下一阶段任务：用户提供带 xsec_token 的有效小红书笔记链接 → 真机/模拟器验证图集竖条与视频下载闭环
+- 当前正在开发任务：阶段 32 完成代码侧（小红书真实链接联调 5 项修复；真实成功下载被环境反爬挡住，需 Cookie 或真机）
+- 下一阶段任务：用户提供小红书 `web_session` Cookie → 设置页粘贴 → 验证单图/多图竖条张数 → 取真实视频链接验证自动下载
 - 可提前进行的任务：阶段 29 真机复测（X 图集竖条 / 气泡下半屏向上生长 / 再点收起 / IG 冷却文案）；阶段 25 之 IG 图集竖条（风控恢复后）；X 单视频下载闭环（家宽绕过 X 404）
-- 未完成的任务：小红书真实成功下载（缺有效链接）；阶段 30 下载闭环冒烟（模拟器完成不了，需真机）；IG 风控恢复后阶段 25 复测
-- 测试基线：parser **48 例** + downloader 30 例全绿
+- 未完成的任务：小红书真实成功下载（环境反爬）；阶段 30 下载闭环冒烟（需真机）；IG 风控恢复后阶段 25 复测
+- 测试基线：parser **56 例** + downloader 30 例全绿
 - 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
 - 本次文档更新时间：10.06 11:30
@@ -450,3 +450,18 @@
 - **未完成**：小红书**真实成功下载**未验证——测试夹具的笔记 ID `6ab7ffb0000000000b006b27` 已被小红书判为失效页（设备落盘页 title 取证），公开搜索取不到带 xsec_token 的有效笔记链接；需用户从 App 分享一条真实笔记链接（含 xsec_token）后复测图集竖条与视频下载
 - 下一步入口：拿到有效小红书链接 → 手动粘贴/分享注入 → 验证①图集竖条图片数与实际一致（去重生效）②视频帖直接自动下载（无竖条）③老链接失效时给出可操作文案
 - 本次文档更新时间：10.06 12:35
+
+## 阶段 32 小红书真实链接联调（xhslink.cn / 短链 a href / 移动端 UA 与结构 / 反爬指纹结论） [计划时间：10.06 13:30 BY ZCode][完成时间：10.06 14:20 BY ZCode]
+- 用户提供真实分享链接（单图 `xhslink.cn/o/7mDR2JlydL0`、多图 `xhslink.cn/o/1kijoisLVUe`；第三条"视频"链接与多图**完全相同**，应为复制遗漏），联调中又发现 5 个问题：
+- **修复 6（阻塞级）短链域名漏登记**：`Platform.XIAOHONGSHU.hosts/shortHosts` 只有 `xhslink.com`，而 App 分享实际下发 **`xhslink.cn`** → 整条链接被判"暂不支持该链接"。补登记 + `UrlUtilTest` 断言
+- **修复 7（阻塞级）短链页是纯 `<a href>`**：`xhslink.cn/o/xxx` 返回 **200 + `<a href="https://www.xiaohongshu.com/discovery/item/<id>?xsec_token=...">`**，既非 3xx 也非 meta refresh/JS 跳转 → `redirectFromHtml` 增加"页面里首个落在已知平台域名的绝对链接"分支（排除自身域名与 CDN），并还原 `&amp;`
+- **修复 8 移动端 UA**：小红书对**桌面 UA 的笔记页一律 302 /login**，移动端 UA 才返回带 SSR 的页面。解析器直连改用 `headersFor(platform, desktop=false)`；WebView 按站点选 UA（小红书用 Android Chrome 移动 UA，其余保持桌面 UA）
+- **修复 9 移动端 SSR 结构适配**：移动端**没有 `noteDetailMap`**，图片在 `imageList[].url`（带 `fileId`），标题 `title`，作者 `user.nickName`。新增 `noteWindow`（以首个 imageList 为中心 ±3000 字符，避开推荐流）、`imageListSlice`（括号配对取数组切片）、`authorFromWindow`（取 `"user":{` 作用域内的 nickName，避免取到 `atUserList` 里被 @ 的人）
+- **修复 10 正则截断**：`sns-webpic` 正则原用惰性量词 + 可选 query，会把 URL 截断成 `.../2` → 改贪婪匹配；且**结构化提取有结果时不再做全页正则兜底**（否则把紧随其后的推荐流封面当成图集）
+- **修复 11 直连优先、WebView 兜底**：原实现 WebView 优先；改为直连（移动端 UA）优先，直连结果不含 `imageList` 时才退 WebView。新增 `直连结果` 诊断日志（code/len/finalUrl/imageList）
+- **环境结论（写入 HANDOFF 坑 17）**：同一 URL、同一移动端 UA、同一请求头，**主机 curl 得 200（含 imageList），App 内 OkHttp 与 WebView 都被 302 到 `/login`**（`直连结果：code=200 finalUrl=.../login?redirectPath=... imageList=false`）。已排除 xsec_token 过期（1.5h 后主机仍 200）、`apptime`/`share_id` 被 normalize 剥离、UA 与 client hints 不一致、WebView 残留 cookie、模拟器代理、请求头组合 → **反爬含客户端指纹维度**。唯一可行动路径：用户提供 `web_session` Cookie（设置页入口已支持）
+- 测试：parser **56 例全绿**（阶段 31 的 48 + 短链域名/分享文案召回 2 + 移动端结构/多图 2 + 短链 `<a href>`/CDN 排除/自身域名 3 + 登录墙文案 1）
+- 改动文件：`parser/model/Platform.kt`、`parser/core/ParserEngine.kt`、`parser/parsers/XiaohongshuParser.kt`、`app/clip/WebViewHtmlFetcher.kt`、`parser/test/.../UrlUtilTest.kt`、`parser/test/.../XiaohongshuParserTest.kt`、`parser/test/.../core/ParserEngineTest.kt`
+- **未完成**：小红书图集/视频的真实成功下载（环境反爬挡住）→ 需 ①用户提供小红书 Cookie ②或真机验证（用户真实 IP + 真机栈）
+- 下一步入口：拿到 Cookie → 设置页粘贴 → 重跑单图/多图链接 → 验证竖条张数与实际一致（单图 1 张、多图 3 张）→ 再取一条**真实视频链接**验证自动下载
+- 本次文档更新时间：10.06 14:20

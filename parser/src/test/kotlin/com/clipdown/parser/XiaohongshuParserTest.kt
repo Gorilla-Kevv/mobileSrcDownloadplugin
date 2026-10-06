@@ -152,7 +152,32 @@ class XiaohongshuParserTest {
             )
         }.exceptionOrNull()
         assertTrue("应判定笔记不存在: $err", err is ParseException)
-        assertTrue("文案应说明链接失效: ${err?.message}", err!!.message!!.contains("链接已失效"))
+        assertTrue("文案应说明笔记不存在: ${err?.message}", err!!.message!!.contains("笔记不存在"))
+    }
+
+    /**
+     * 未登录时小红书 302 到 /login，而**登录页的 title 与探索页完全相同**
+     * （都是"小红书 - 你的生活兴趣社区"，2026-10 实测）。文案必须同时给出
+     * "补 Cookie" 与 "重新复制链接" 两条可操作路径，不能只说链接失效。
+     */
+    @Test
+    fun `登录墙或探索页 文案同时给出补Cookie与重取链接`() {
+        val html = "<html><head><title>小红书 - 你的生活兴趣社区</title></head><body>" +
+            "<script>window.__INITIAL_STATE__={\"user\":{\"loggedIn\":false}}</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val err = runCatching {
+            parser.parse(
+                "https://www.xiaohongshu.com/discovery/item/6ac3c5c4000000001500ef52?xsec_token=T",
+                testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+            )
+        }.exceptionOrNull()
+        assertTrue("应判定为登录墙/跳转页: $err", err is ParseException)
+        assertTrue("文案应提示补 Cookie: ${err?.message}", err!!.message!!.contains("Cookie"))
+        assertTrue("文案应提示重取链接: ${err.message}", err.message!!.contains("xsec_token"))
     }
 
     /**
@@ -179,6 +204,66 @@ class XiaohongshuParserTest {
         }.exceptionOrNull()
         assertTrue("应拒绝非笔记详情页: $err", err is ParseException)
         assertTrue("错误文案应提示链接失效: ${err?.message}", err!!.message!!.contains("笔记详情页"))
+    }
+
+    /**
+     * 移动端 SSR 结构（2026-10 实测取证）：**没有 noteDetailMap**，图片在 `imageList[].url`
+     * （带 fileId），标题是 `title`，作者是 `user.nickName`；且页面里还跟着推荐流
+     * （objectPosition 递增的其它笔记）。桌面 UA 会被 302 到 /login，所以移动端结构是主路径。
+     */
+    @Test
+    fun `移动端结构 提取图集并取对标题与作者`() {
+        val state = """
+            window.__INITIAL_STATE__={"note":{"noteId":"6ac3c5c4000000001500ef52","type":"normal",
+            "atUserList":[{"userId":"5ac4c21f4eacab16ccebcb41","nickName":"糖包Rohan"}],
+            "user":{"avatar":"https://sns-avatar-qc.xhscdn.com/avatar/x.jpg","userId":"67c01c94000000000d00ada2","nickName":"折纸"},
+            "imageList":[{"fileId":"1040g008325us1dr444105pu03ia39bd2j1tngn8","width":3901,"height":5852,"url":"http://sns-webpic-qc.xhscdn.com/202610061338/36a12fdb/1040g008325us1dr444105pu03ia39bd2j1tngn8!h5_1080jpg"}],
+            "title":"须臾的休憩","cover":{"fileId":"1040g008325us1dr444105pu03ia39bd2j1tngn8"}},
+            "feed":[{"noteCard":{"title":"推荐流里的别的笔记","cover":{"url":"http://sns-webpic-qc.xhscdn.com/202610061338/ffff/OTHERNOTE0001!h5_1080jpg"}}}]}
+        """.trimIndent()
+        val html = "<html><head><title> - 小红书</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/discovery/item/6ac3c5c4000000001500ef52?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        assertEquals("须臾的休憩", result.title)
+        assertEquals("应取 user.nickName 而不是 atUserList 里被@的人", "折纸", result.author)
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals("单图笔记应只出 1 项: ${images.map { it.url }}", 1, images.size)
+        assertTrue(images[0].url.contains("1040g008325us1dr444105pu03ia39bd2j1tngn8"))
+    }
+
+    /** 移动端多图：imageList 里多个 fileId，应逐个产出且不重复 */
+    @Test
+    fun `移动端多图 按 fileId 去重后逐张产出`() {
+        val state = """
+            window.__INITIAL_STATE__={"note":{"noteId":"6ac3c5c4000000001500ef53",
+            "user":{"userId":"u1","nickName":"折纸"},
+            "imageList":[
+            {"fileId":"AAAA0001","url":"http://sns-webpic-qc.xhscdn.com/202610061338/h1/AAAA0001!h5_1080jpg"},
+            {"fileId":"AAAA0002","url":"http://sns-webpic-qc.xhscdn.com/202610061338/h2/AAAA0002!h5_1080jpg"},
+            {"fileId":"AAAA0003","url":"http://sns-webpic-qc.xhscdn.com/202610061338/h3/AAAA0003!h5_1080jpg"}],
+            "title":"今天穿这套去约会怎么样？"}}
+        """.trimIndent()
+        val html = "<html><head><title> - 小红书</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/discovery/item/6ac3c5c4000000001500ef53?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals(3, images.size)
+        assertEquals(3, images.map { it.url }.distinct().size)
+        assertEquals("今天穿这套去约会怎么样？", result.title)
     }
 
     @Test

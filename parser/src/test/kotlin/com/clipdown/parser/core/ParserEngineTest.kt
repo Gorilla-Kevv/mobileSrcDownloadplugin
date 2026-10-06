@@ -41,6 +41,34 @@ class ParserEngineTest {
         )
     }
 
+    /**
+     * 真实取证（2026-10，用户分享的 xhslink.cn 短链）：短链返回 **200 + 一张纯 `<a href>`**，
+     * 既没有 3xx 也没有 meta/JS 跳转。此前 `expand()` 因此原样返回短链，
+     * 后续请求拿到的是首页 → 整条小红书链路必然失败。
+     */
+    @Test
+    fun `短链中转页 纯 a href 提取跳转目标`() {
+        val body = """<html><body><a href="https://www.xiaohongshu.com/discovery/item/6ac3c5c4000000001500ef52?xsec_token=CBK-abc%3D&amp;type=normal&amp;share_channel=copy_link">点击查看</a></body></html>"""
+        assertEquals(
+            "https://www.xiaohongshu.com/discovery/item/6ac3c5c4000000001500ef52?xsec_token=CBK-abc%3D&type=normal&share_channel=copy_link",
+            ParserEngine.redirectFromHtml(body, "https://xhslink.cn/o/7mDR2JlydL0")
+        )
+    }
+
+    /** 中转页里的 CDN / 脚本地址不能被当成跳转目标（只认已知平台域名） */
+    @Test
+    fun `中转页 不把 CDN 链接当跳转目标`() {
+        val body = """<html><head><script src="https://cdn.example.com/a.js"></script></head><body></body></html>"""
+        assertNull(ParserEngine.redirectFromHtml(body, "https://xhslink.cn/o/x"))
+    }
+
+    /** 指向短链自身域名的链接也不算跳转目标（防自环） */
+    @Test
+    fun `中转页 忽略指向自身域名的链接`() {
+        val body = """<html><body><a href="https://xhslink.cn/o/other">x</a></body></html>"""
+        assertNull(ParserEngine.redirectFromHtml(body, "https://xhslink.cn/o/7mDR2JlydL0"))
+    }
+
     @Test
     fun `普通笔记页不误判为跳转`() {
         val html = """<html><body><script>window.__INITIAL_STATE__={"note":{}}</script></body></html>"""

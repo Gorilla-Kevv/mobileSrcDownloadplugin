@@ -26,6 +26,22 @@ object WebViewHtmlFetcher {
     private const val DESKTOP_UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
+    /**
+     * 移动端 UA。小红书**对桌面 UA 的笔记页一律 302 到 /login（登录墙）**，
+     * 移动端 UA 才直接返回带 SSR 数据（`__INITIAL_STATE__` + `imageList`）的页面。
+     *
+     * 这里刻意用 **Android Chrome** 而非 iPhone Safari：WebView 的 client hints
+     * （Sec-CH-UA / Sec-CH-UA-Platform）本身就报 Android Chrome，UA 与提示不一致
+     * 是典型爬虫特征，实测 iPhone UA 仍被跳登录墙（2026-10 对照）。
+     * 版本号与模拟器 WebView 实际版本（113.0.5672）保持一致。
+     */
+    private const val MOBILE_UA =
+        "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Mobile Safari/537.36"
+
+    /** 按站点选择 UA：小红书走移动端，其余保持桌面端 */
+    private fun uaFor(url: String): String =
+        if (url.contains("xiaohongshu.com") || url.contains("xhslink.")) MOBILE_UA else DESKTOP_UA
+
     /** 页面中是否已出现媒体数据的探针（IG React 异步填充后命中） */
     private const val MEDIA_PRESENT_JS =
         "(function(){var h=document.documentElement.outerHTML;" +
@@ -43,6 +59,7 @@ object WebViewHtmlFetcher {
         android.util.Log.d(TAG, "fetch 开始：$url")
         val latch = CountDownLatch(1)
         var html: String? = null
+        var finalUrl: String? = null
         val appContext = context.applicationContext
         var wv: WebView? = null
         var cookieHeader: String? = null
@@ -56,7 +73,7 @@ object WebViewHtmlFetcher {
                     javaScriptEnabled = true
                     domStorageEnabled = true
                     blockNetworkImage = true          // 不加载图片，加速出 HTML
-                    userAgentString = DESKTOP_UA
+                    userAgentString = uaFor(url)
                 }
                 view.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(v: WebView, u: String) {
@@ -64,6 +81,7 @@ object WebViewHtmlFetcher {
                         startPolling(v) { page ->
                             if (html == null) {
                                 html = page
+                                finalUrl = v.url      // 落最终 URL：小红书跳首页/登录页时靠它取证
                                 latch.countDown()
                             }
                         }
@@ -73,9 +91,14 @@ object WebViewHtmlFetcher {
                         android.util.Log.d(TAG, "onReceivedError：${req.url} ${err.description}")
                     }
                 }
-                // 主请求直接带 Cookie 请求头（比 CookieManager 时序更可靠），双保险
-                if (cookieHeader.isNullOrBlank()) view.loadUrl(url)
-                else view.loadUrl(url, mapOf("Cookie" to cookieHeader!!))
+                // 主请求带 Cookie 与 Referer（比 CookieManager 时序更可靠），双保险。
+                // Referer 对小红书是必需的自然度信号：缺失时更容易被判定为机器请求
+                val extra = buildMap {
+                    if (!cookieHeader.isNullOrBlank()) put("Cookie", cookieHeader!!)
+                    put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+                    if (url.contains("xiaohongshu.com")) put("Referer", "https://www.xiaohongshu.com/")
+                }
+                view.loadUrl(url, extra)
                 Handler(Looper.getMainLooper()).postDelayed({
                     if (latch.count != 0L) {
                         android.util.Log.d(TAG, "fetch 超时")
@@ -89,7 +112,7 @@ object WebViewHtmlFetcher {
         }
         latch.await(timeoutMs + 3000, TimeUnit.MILLISECONDS)
         wv?.let { v -> Handler(Looper.getMainLooper()).post { v.destroy() } }
-        android.util.Log.d(TAG, "fetch 结束：html=${html?.length ?: "null"}")
+        android.util.Log.d(TAG, "fetch 结束：html=${html?.length ?: "null"} finalUrl=$finalUrl")
         // 调试落盘：保留最后一次渲染页，供 adb pull 分析（应用私有外部目录，无需存储权限）
         html?.let { page ->
             runCatching {

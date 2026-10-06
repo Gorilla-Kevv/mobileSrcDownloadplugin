@@ -39,8 +39,10 @@ enum class Platform(
     XIAOHONGSHU(
         id = "xiaohongshu",
         displayName = "小红书",
-        hosts = listOf("xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com"),
-        shortHosts = listOf("xhslink.com"),
+        // xhslink.cn 是 App 分享文案里实际下发的短链域名（2026-10 实测：xhslink.cn/o/xxx），
+        // 漏掉它会导致整条链接被判为"暂不支持"
+        hosts = listOf("xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com", "xhslink.cn"),
+        shortHosts = listOf("xhslink.com", "xhslink.cn"),
         pathHints = listOf("/explore/", "/discovery/item/", "/user/profile/"),
         loginRequired = true
     ),

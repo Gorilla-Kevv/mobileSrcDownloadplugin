@@ -30,28 +30,38 @@ class XiaohongshuParser : PlatformParser {
     override fun canHandle(url: String): Boolean = true
 
     override fun parse(url: String, ctx: ParseContext): ParseResult {
-        // WebView 渲染优先：真浏览器栈过阿里云 WAF（OkHttp 指纹被拦，见 PROGRESS 阶段 8）
-        val rendered = runCatching { ctx.webFetcher?.invoke(url) }.getOrNull()
-        val respBody: String?
-        val respCode: Int
-        if (!rendered.isNullOrBlank()) {
-            respBody = rendered
-            respCode = 200
-        } else {
-            val headers = warmUp(ctx.headersFor(platform), ctx) + mapOf(
-                "Referer" to "https://www.xiaohongshu.com/",
-                "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-            )
-            val resp = runCatching { ctx.http.get(url, headers) }
-                .getOrElse { throw ParseException("网络请求失败：${it.message}", platform) }
-            respBody = resp.body
-            respCode = resp.code
+        // 直连优先：**移动端 UA 的普通 HTTP 请求即可拿到带 imageList 的 SSR 笔记页**
+        // （桌面 UA 会 302 到 /login；而 WebView 即使把 UA 伪装成 Android Chrome 也会被跳登录墙，
+        //  2026-10 实测三种 UA + WebView 对照）。WebView 退居兜底，用于阿里云 WAF 指纹挑战等场景。
+        val headers = warmUp(ctx.headersFor(platform, desktop = false), ctx) + mapOf(
+            "Referer" to "https://www.xiaohongshu.com/",
+            "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+        )
+        val direct = runCatching { ctx.http.get(url, headers) }.getOrNull()
+        ctx.log(
+            id,
+            "直连结果：code=${direct?.code} len=${direct?.body?.length} " +
+                "finalUrl=${direct?.finalUrl?.take(120)} imageList=${direct?.body?.contains("\"imageList\"")}"
+        )
+
+        var via = "okhttp"
+        var respCode = direct?.code ?: 0
+        var respBody: String? = direct?.body
+
+        // 直连结果不可用（被 WAF 拦 / 空页 / 无笔记数据）时才走 WebView
+        if (respBody.isNullOrBlank() || !respBody.contains("\"imageList\"")) {
+            val rendered = runCatching { ctx.webFetcher?.invoke(url) }.getOrNull()
+            if (!rendered.isNullOrBlank()) {
+                via = "webview"
+                respCode = 200
+                respBody = rendered
+            }
         }
 
         ctx.log(
             id,
-            "请求诊断：via=${if (!rendered.isNullOrBlank()) "webview" else "okhttp"} " +
-                "code=$respCode len=${respBody?.length} state=${respBody?.contains("__INITIAL_STATE__")}"
+            "请求诊断：via=$via code=$respCode len=${respBody?.length} " +
+                "state=${respBody?.contains("__INITIAL_STATE__")} imageList=${respBody?.contains("\"imageList\"")}"
         )
 
         val html = respBody
@@ -59,16 +69,18 @@ class XiaohongshuParser : PlatformParser {
         if (respCode == 404) throw ParseException("笔记不存在或已删除", platform, retryable = false)
         if (respCode >= 400) throw ParseException("页面返回 $respCode", platform)
 
-        // 失效笔记守卫：小红书对已删除 / 缺 xsec_token / 失效的笔记并不返回 4xx，
-        // 而是渲染一张"你访问的页面不见了"的页或跳到探索页（title="小红书 - 你的生活兴趣社区"）。
-        // 这两类页面的 SSR 里塞的是推荐流，没有这道校验会把推荐流的封面图当成图集返回。
+        // 失效 / 登录墙守卫：小红书对"已删除、缺 xsec_token、失效"的笔记不返回 4xx，
+        // 而是渲染「你访问的页面不见了」，或跳探索页；**未登录时还会 302 到 /login，
+        // 而登录页的 <title> 与探索页完全相同**（都是"小红书 - 你的生活兴趣社区"，2026-10 实测）。
+        // 这两类页面的 SSR 里塞的是推荐流，没有这道校验会把推荐流封面图当成图集返回。
         val pageTitle = HtmlUtil.meta(html, "og:title") ?: HtmlUtil.title(html)
-        if (pageTitle != null && (
-            pageTitle.contains("你访问的页面不见了") || pageTitle.contains("你的生活兴趣社区")
-            )
-        ) {
+        if (pageTitle != null && pageTitle.contains("你访问的页面不见了")) {
+            throw ParseException("笔记不存在或已删除（小红书返回了失效页）", platform, retryable = false)
+        }
+        if (pageTitle != null && pageTitle.contains("你的生活兴趣社区")) {
             throw ParseException(
-                "笔记不存在或链接已失效（小红书返回了失效页/探索页，可尝试重新复制带 xsec_token 的分享链接）",
+                "小红书要求登录态，或该链接已失效（页面被跳到了首页/登录页）。" +
+                    "请在「设置」中补充小红书 Cookie 后重试，或重新复制带 xsec_token 的分享链接",
                 platform,
                 retryable = false
             )
@@ -80,7 +92,8 @@ class XiaohongshuParser : PlatformParser {
         // 笔记详情页守卫：小红书对"已删除 / 缺 xsec_token / 失效"的笔记会跳到 /404 或探索页，
         // 页面里塞的是推荐流——没有这道校验会把推荐流的图当成图集返回（用户下到一堆无关图）。
         // 只在拿到 __INITIAL_STATE__ 时校验；没拿到（WAF 拦截页）仍走下面的媒体提取失败分支。
-        if (state != null && !state.contains("noteDetailMap")) {
+        // 注意：移动端页面**没有** noteDetailMap（那是桌面端结构），以 imageList 为准。
+        if (state != null && !state.contains("noteDetailMap") && !state.contains("\"imageList\"")) {
             throw ParseException(
                 "链接不是笔记详情页：笔记可能已删除、链接失效或缺少 xsec_token（小红书已跳转到首页/探索页）",
                 platform,
@@ -88,16 +101,23 @@ class XiaohongshuParser : PlatformParser {
             )
         }
 
+        // 移动端与桌面端的 SSR 结构不同（2026-10 实测）：
+        //   桌面：noteDetailMap → urlDefault/urlPre、displayTitle、nickname
+        //   移动：imageList[].url（含 fileId）、title、user.nickName
+        // 以首个 imageList 为中心切出"笔记窗口"，避免把整页推荐流（objectPosition 2/3…）吃进来
+        val window = noteWindow(blob)
+
         val videos = extractVideos(blob)
         // 视频笔记的 imageList 是封面帧：与 IG 修复 10c 同源，有视频时图片一律丢弃，
         // 否则 media=[视频, 封面图] → isAlbumMultiSelect=true → 弹图集竖条、跳过自动下载，
         // 用户最终下到"视频 + 封面图"。图文笔记无 masterUrl，不受影响。
-        val images = if (videos.isEmpty()) extractImages(blob) else emptyList()
+        val images = if (videos.isEmpty()) extractImages(blob, window) else emptyList()
 
-        val title = HtmlUtil.meta(html, "og:title")?.substringBefore(" - 小红书")
-            ?: HtmlUtil.jsonField(blob, "displayTitle").firstOrNull()
-            ?: HtmlUtil.jsonField(blob, "title").firstOrNull()
-        val author = HtmlUtil.jsonField(blob, "nickname").firstOrNull()
+        val title = HtmlUtil.meta(html, "og:title")?.substringBefore(" - 小红书")?.takeIf { it.isNotBlank() }
+            ?: HtmlUtil.jsonField(window, "displayTitle").firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: HtmlUtil.jsonField(window, "title").firstOrNull()?.takeIf { it.isNotBlank() }
+        val author = authorFromWindow(window)
+            ?: HtmlUtil.jsonField(blob, "nickname").firstOrNull()?.takeIf { it.isNotBlank() }
         val cover = HtmlUtil.meta(html, "og:image") ?: images.firstOrNull()
         val desc = HtmlUtil.meta(html, "og:description")
             ?: HtmlUtil.jsonField(blob, "desc").firstOrNull()
@@ -169,29 +189,87 @@ class XiaohongshuParser : PlatformParser {
     }
 
     /**
+     * 以首个 `imageList` 为中心切出"笔记窗口"（前 3000 / 后 3000 字符）。
+     *
+     * 小红书页面里除本笔记外还有推荐流（`objectPosition` 递增的其它笔记），
+     * 整页扫描会把推荐流的图一起抓进来。笔记自身的字段分布在 imageList 两侧：
+     * `user.nickName` 在其前，`title` 在其后，故取双侧窗口。
+     */
+    private fun noteWindow(blob: String): String {
+        val idx = blob.indexOf("\"imageList\"")
+        if (idx < 0) return blob
+        val start = (idx - 3000).coerceAtLeast(0)
+        val end = (idx + 3000).coerceAtMost(blob.length)
+        return blob.substring(start, end)
+    }
+
+    /** 取 `imageList` 数组的文本切片（括号配对），避免 jsonField("url") 命中页面其它 url */
+    private fun imageListSlice(text: String): String? {
+        val m = Regex(""""imageList"\s*:\s*\[""").find(text) ?: return null
+        val open = text.indexOf('[', m.range.first)
+        if (open < 0) return null
+        var depth = 0
+        for (p in open until text.length) {
+            when (text[p]) {
+                '[' -> depth++
+                ']' -> {
+                    depth--
+                    if (depth == 0) return text.substring(open, p + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    /** 作者：优先取 `"user":{...}` 作用域内的 nickName——页面里 `atUserList` 的 @提及 排在更前面，全页取首个会拿到被提及的人 */
+    private fun authorFromWindow(window: String): String? {
+        val i = window.indexOf("\"user\":{")
+        val scope = if (i >= 0) window.substring(i, (i + 600).coerceAtMost(window.length)) else window
+        return HtmlUtil.jsonField(scope, "nickName").firstOrNull()?.takeIf { it.isNotBlank() }
+            ?: HtmlUtil.jsonField(scope, "nickname").firstOrNull()?.takeIf { it.isNotBlank() }
+    }
+
+    /**
      * 图集提取。
      *
      * 同一张图小红书会同时下发 `urlPre`（预览画质）与 `urlDefault`（默认画质）——
      * 两者只有路径 hash 段和 `!nd_prv_/!nd_dft_` 后缀不同，**文件 ID 相同**。
      * 因此按 URL 字符串去重不够（每张图会产出 2 项），必须按文件 ID 去重并优先保留 urlDefault。
+     * 移动端结构则是 `imageList[].url`（后缀 `!h5_1080jpg`），同样带 fileId。
      */
-    private fun extractImages(blob: String): List<String> {
+    private fun extractImages(blob: String, window: String): List<String> {
         val byFileId = linkedMapOf<String, String>()
-        // 先灌 urlDefault：同 ID 先到先得，urlPre 只能补空缺，保证留下来的是更高画质那份
-        HtmlUtil.jsonField(blob, "urlDefault").forEach { u ->
+        fun put(u: String) {
             val url = u.substringBefore("?")
-            byFileId.putIfAbsent(imageFileId(url), url)
+            if (url.startsWith("http")) byFileId.putIfAbsent(imageFileId(url), url)
         }
-        HtmlUtil.jsonField(blob, "urlPre").forEach { u ->
-            val url = u.substringBefore("?")
-            byFileId.putIfAbsent(imageFileId(url), url)
+
+        fun fillStructured(text: String) {
+            // 桌面端 urlDefault（默认画质）
+            HtmlUtil.jsonField(text, "urlDefault").forEach { put(it) }
+            // 移动端 imageList[].url —— 只扫 imageList 数组切片，避免命中页面其它 "url" 字段
+            imageListSlice(text)?.let { slice -> HtmlUtil.jsonField(slice, "url").forEach { put(it) } }
+            // 预览画质兜底
+            HtmlUtil.jsonField(text, "urlPre").forEach { put(it) }
         }
-        Regex("""(https://sns-webpic[a-z0-9\-.]*\.xhscdn\.com/[^"'\s\\]+?)(\?[^"'\s\\]*)?""")
-            .findAll(blob).forEach { m ->
-                val url = m.groupValues[1]
-                byFileId.putIfAbsent(imageFileId(url), url)
+
+        fun fillRegex(text: String) {
+            // DOM / 未转义 URL 兜底：必须用贪婪匹配——惰性 + 可选 query 会把 URL 截断成 `.../2`
+            Regex("""(https?://sns-webpic[a-z0-9\-.]*\.xhscdn\.com/[^"'\s\\]+)""")
+                .findAll(text).forEach { m -> put(m.groupValues[1]) }
+        }
+
+        // 笔记窗口内先走结构化提取（不碰推荐流）；只有在**完全提取不到**时才启用正则兜底——
+        // 正则扫页面会把紧随其后的推荐流封面一起吃进来（实测：单图笔记多出 1 张无关图）
+        fillStructured(window)
+        if (byFileId.isEmpty()) {
+            fillRegex(window)
+            if (byFileId.isEmpty()) {
+                fillStructured(blob)
+                fillRegex(blob)
             }
-        return byFileId.values.filter { it.startsWith("http") }.distinct().take(18)
+        }
+        return byFileId.values.take(18)
     }
 
     /**

@@ -186,9 +186,9 @@ object ParserEngine {
                 }.getOrNull()
                 val final = getResp?.finalUrl
                 if (!final.isNullOrBlank() && final != current) return final
-                // 小红书 xhslink 等短链常返回 200 的中转页（meta refresh / JS 跳转）而不是 3xx，
-                // OkHttp 不会跟随，此时必须从页面里把真实地址抠出来
-                val fromHtml = redirectFromHtml(getResp?.body)
+                // 小红书 xhslink 等短链常返回 200 的中转页（meta refresh / JS 跳转 / 纯 <a href>）
+                // 而不是 3xx，OkHttp 不会跟随，此时必须从页面里把真实地址抠出来
+                val fromHtml = redirectFromHtml(getResp?.body, current)
                 if (!fromHtml.isNullOrBlank()) return UrlUtil.normalize(fromHtml)
                 return current
             }
@@ -197,8 +197,17 @@ object ParserEngine {
         return current
     }
 
-    /** 从中转页里提取跳转目标：meta refresh → location.href / location.replace 两种写法 */
-    internal fun redirectFromHtml(body: String?): String? {
+    /**
+     * 从中转页里提取跳转目标，按可靠性依次尝试：
+     * 1. `meta refresh`（content="0;url=..."）
+     * 2. `location.href=` / `location.replace(...)`
+     * 3. 页面里第一个指向**其它已知平台域名**的绝对链接——xhslink.cn 的短链页就是
+     *    一张纯 `<a href="https://www.xiaohongshu.com/discovery/item/...?xsec_token=...">`，
+     *    既没有 3xx 也没有 meta/JS 跳转（2026-10 用户实测链接取证）。
+     *
+     * @param excludeHost 当前短链的 host，避免把指向自己的链接当跳转目标
+     */
+    internal fun redirectFromHtml(body: String?, excludeHost: String = ""): String? {
         if (body.isNullOrBlank()) return null
         Regex(
             """<meta[^>]+http-equiv\s*=\s*["']?refresh["']?[^>]*?content\s*=\s*["'][^"']*?url\s*=\s*([^"'\s>]+)""",
@@ -209,6 +218,15 @@ object ParserEngine {
             .find(body)?.groupValues?.getOrNull(1)?.let { return it }
         Regex("""location\.replace\(\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             .find(body)?.groupValues?.getOrNull(1)?.let { return it }
+        // 纯 <a href> 中转页：只认落在已知平台域名上的链接，避免把 CDN / 脚本地址当目标
+        val skip = UrlUtil.hostOf(excludeHost)
+        Regex("""(https?://[A-Za-z0-9\-._~%:]+(?:/[^\s"'<>\\]*)?)""")
+            .findAll(body)
+            .map { it.groupValues[1] }
+            .firstOrNull { url ->
+                val h = UrlUtil.hostOf(url)
+                h.isNotBlank() && h != skip && UrlUtil.detectPlatform(url) != null
+            }?.let { return it.replace("&amp;", "&") }   // HTML 属性里的 &amp; 要还原，否则后续 query 参数名被写坏
         return null
     }
 
