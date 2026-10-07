@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 40 完成（主页「加载更多」突破 3 页封顶：WebView 补真实视口 + 去掉容器 maxHeight 改滚 window + 阶梯扫动；实测单次抓到 35 页、会话累计 272 篇）
-- 下一阶段任务：其他平台主页解析器接入；加载更多效率优化（透传 cursor / 放宽 maxPosts）；是否需要标签拖动排序
-- 可提前进行的任务：真机看 UI 实际观感；阶段 29 真机复测；X 单视频下载闭环
-- 未完成的任务：其他平台主页解析；加载更多每轮从首屏重扫的效率折损；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
-- 测试基线：parser **76 例** + downloader 30 例 + app **4 例**全绿
+- 当前正在开发任务：阶段 41 完成（X 主页解析实测跑通：syndication 时间线免登录、100 条 + 点开视频实际下载；IG 主页三通道解析器 + `IgRiskGuard` 共享冷却落地，待 Cookie 实测）
+- 下一阶段任务：IG 主页用有效 Cookie 实测校准夹具；B 站/微博主页接入（免登录，验证多平台框架）；XHS 重新导出 Cookie 复验
+- 可提前进行的任务：加载更多透传 cursor 减少重扫；真机看 UI 实际观感；阶段 29 真机复测
+- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
+- 测试基线：parser **88 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.08 00:25
+- 本次文档更新时间：10.08 01:35
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -630,3 +630,25 @@
 - 测试：parser **76 例** + downloader 30 + app 4 全绿；`node scripts/check-inject-js.js` 通过；`:app:assembleDebug` 全绿
 - 改动文件：`app/clip/WebViewHtmlFetcher.kt`（视口 measure/layout、去容器 maxHeight、阶梯扫动、收口轮询 String 修复、移除诊断探针）、`parser/parsers/XiaohongshuProfileParser.kt`（扫动次数注释与机制说明）
 - 本次文档更新时间：10.08 00:20
+
+## 阶段 41 IG / X 博主主页解析（X 实测跑通、IG 代码就绪待 Cookie）[计划时间：10.08 00:40 BY Qoder][完成时间：10.08 01:35 BY Qoder]
+- 用户指定本轮重点：IG / X 主页解析，并提醒注意 IG 风控（HANDOFF 坑 13）
+- **先做数据源探测（主机侧，只发极少请求）**：
+  - X：`https://syndication.twitter.com/srv/timeline-profile/screen-name/<handle>` → **200 / 375KB / 免登录**，`__NEXT_DATA__` 里 `props.pageProps.timeline.entries[]` 共 100 条，含完整 `user`（followers/friends/statuses_count/bio/头像）与 `entities.media[]`（photo 60 / video 10 / 纯文本 25 / 引用 5）→ 文档里"X 无公开时间线接口"的旧结论**作废**
+  - IG：`i.instagram.com/api/v1/users/web_profile_info/` 免登录 → **429**；`www.instagram.com/<u>/` 免登录 → 200 但是登录墙（637KB、无 `og:*`、无帖子链接）→ 确认 IG 必须 Cookie，与坑 4/13 一致
+  - 网络前提：本机代理只监听 `127.0.0.1:7890`，模拟器够不到 → 临时起 `node` TCP 转发到 `0.0.0.0:18080`，模拟器 `http_proxy=10.0.2.2:18080`（测完删三个键 + 重启复位，脚本已删除）
+- **X 主页解析器 `XProfileParser`（x-syndication-profile-v1）**：kotlinx 解析 `__NEXT_DATA__`；转发条取被转发原推（否则点开只拿到转发壳）；`entities.media` 判类型（video/animated_gif→VIDEO、多图→ALBUM、单图→IMAGE、无媒体→UNKNOWN）；`created_at`（`EEE MMM dd HH:mm:ss Z yyyy`）转 epoch；结尾 `https://t.co/…` 分享短链从标题剥掉；头像 `_normal.`→`_400x400.`；**`hasMore` 恒 false**（公开时间线无游标，避免 UI 挂一个点不动的按钮）并给 warning「仅提供最近约 100 条」
+- **IG 风控保险丝抽共享（关键改动）**：冷却状态原先是 `InstagramParser` 的实例字段，主页链路另算 → 用户"主页失败→再点单篇"可绕开冷却把账号打得更狠。新增 `IgRiskGuard`（连续 2 次失败冷却 10 分钟、冷却期内**零请求**），单篇与主页共用一份计数；`InstagramParser.parse` 改为 `IgRiskGuard.guard(ctx, id){ parseChannels(...) }`
+  - 附带决策：**缺 Cookie 不计入风控失败**（否则用户连点两次"没配 Cookie"就把自己锁进 10 分钟冷却），检查提到 guard 之外直接抛出
+- **IG 主页解析器 `InstagramProfileParser`（ig-profile-v1）**：三通道降级 ①`web_profile_info`（Cookie + `x-ig-app-id: 936619743392459`，结构化最全：封面/标题/is_video/图集子项/点赞）②主页 HTML（`og:title/description/image` + `/p|reel|tv/<code>/` 链接扫描）③WebView 渲染兜底；设置页的 Cookie 入口由 `platformsNeedingCookie()` 按 `loginRequired` 自动列出，**IG 无需新增 UI**
+  - 页面通道两个真 bug（单测暴露）：帖子链接正则要求 code 后紧跟引号，实际是 `/p/<code>/` → 改为允许 `["'/?]`；封面不能按路径段匹配（IG 图片 URL 是 `…/t51.2885-15/<code>_n.jpg`，code 后是 `_n.`）→ 改为"URL 里含该 code"配对并补全相对路径
+- **测试**：parser **88 例全绿**（+6 X、+6 IG）。X 夹具 `x_profile_timeline.html` 是**真机抓取裁剪**（4 条代表性推文）；IG 夹具 `ig_profile_api.json` / `ig_profile_page.html` 是**按公开字段手工构造的结构样本**（IG 免登录拿不到真响应，已在类注释里写明待 Cookie 校准）——含"连续失败两次后零请求"与"主页失败连带单篇冷却"两条风控行为用例
+- **模拟器实测**
+  - X 全链路通：`linkKind kind=PROFILE platform=X` → `X 主页：elonmusk 推文=100` → 页面显示 Elon Musk / 2.4亿粉丝 / 1415关注 / 全部 100 / 上限提示；点开纯文本篇如实提示"没有可下载的媒体"；「视频」筛选后详情给出 3 档 mp4，**实际下载 3 个文件落盘 `Movies/ClipDown/`（2.16MB / 871KB / 316KB）**
+  - 新增取页诊断日志（`取页失败：via=… title=… userPageData=… login=…`），用于把"提取不到数据"从猜变成看得见
+- **小红书回归结论：环境导致，非代码回归**。本轮未改小红书解析逻辑，但复测报"要求登录态"。取证：同一份 Cookie 在 17:04 主机 curl 还能拿 291KB/32 篇 SSR，到 17:2x **主机 curl 也退化为 40KB 登录墙（notes=0）** → 会话已失效（疑因同一 `web_session` 在模拟器 OkHttp/WebView 与主机 curl 两种客户端指纹间复用被平台轮换/吊销，正是坑 17 的指纹维度）。需用户重新导出 Cookie 后再复验
+  - 纪律补记：**同一份 XHS/IG Cookie 不要在多客户端（主机 curl + 模拟器 + 真机）交叉复用**，容易把会话打失效
+- 工具坑（测试环境，非产品）：`adb shell input text` 在 Compose 输入框上会**随机丢字**（长 URL 反复被截成 `user/p`、`xsec_token=YB`），逐字符输入才稳定；`am start …SEND` 注入 `ShareTargetActivity` 在本轮未能触发自动解析（`linkKind` 无日志），未深查
+- 改动文件：新增 `parser/parsers/{XProfileParser,InstagramProfileParser,IgRiskGuard}.kt` + 两个测试类 + 三个夹具；`parser/core/ParserEngine.kt`（注册 X/IG 主页解析器）、`parser/parsers/InstagramParser.kt`（冷却改用共享保险丝）、`parser/parsers/XiaohongshuProfileParser.kt`（取页失败诊断）、`docs/06`（平台接入状态表更新）
+- 下一步：①IG 主页待有效 Cookie 实测校准（结构样本夹具需换成真响应）②X 主页可选增强（引用推文、更细的图集判定）③B 站/微博主页（免登录，可先验证多平台框架）④XHS 需重新导出 Cookie 复验
+- 本次文档更新时间：10.08 01:35

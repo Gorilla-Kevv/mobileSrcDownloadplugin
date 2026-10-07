@@ -13,9 +13,11 @@ import com.clipdown.parser.parsers.DouyinParser
 import com.clipdown.parser.parsers.FacebookParser
 import com.clipdown.parser.parsers.GenericParser
 import com.clipdown.parser.parsers.InstagramParser
+import com.clipdown.parser.parsers.InstagramProfileParser
 import com.clipdown.parser.parsers.TiktokParser
 import com.clipdown.parser.parsers.WeiboParser
 import com.clipdown.parser.parsers.XParser
+import com.clipdown.parser.parsers.XProfileParser
 import com.clipdown.parser.parsers.XiaohongshuParser
 import com.clipdown.parser.parsers.XiaohongshuProfileParser
 import com.clipdown.parser.parsers.YoutubeParser
@@ -112,7 +114,9 @@ object ParserEngine {
      * 新增平台主页支持：实现 [com.clipdown.parser.spi.ProfileParser] 并加到这里即可。
      */
     fun defaultProfileParsers(): List<ProfileParser> = listOf(
-        XiaohongshuProfileParser()
+        XiaohongshuProfileParser(),
+        XProfileParser(),
+        InstagramProfileParser()
     )
 
     private fun context(): ParseContext = ParseContext(config, http, cookieProvider, logger, webFetcher, webFetcherScroll)

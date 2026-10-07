@@ -67,7 +67,16 @@ class XiaohongshuProfileParser : ProfileParser {
         }
 
         val state = HtmlUtil.inlineJson(html, "__INITIAL_STATE__")
-            ?: throw ParseException("未能从主页页面中提取到数据（页面结构可能已更新）", platform)
+            ?: run {
+                // 失败必须留下证据：到底是哪条通道、拿到的是不是登录页，否则只能靠猜
+                ctx.log(
+                    id,
+                    "取页失败：via=$via len=${html.length} title=${pageTitle?.take(30)} " +
+                        "userPageData=${html.contains("userPageData")} noteCard=${html.contains("noteCard")} " +
+                        "login=${html.contains("/login")}"
+                )
+                throw ParseException("未能从主页页面中提取到数据（页面结构可能已更新）", platform)
+            }
 
         val profileWindow = windowAround(state, "\"userPageData\"", before = 200, after = 4000) ?: state
         var posts = extractNoteCards(state)
