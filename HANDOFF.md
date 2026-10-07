@@ -55,8 +55,8 @@
 23. **模拟器代理会"劫持"应用的所有网络**（阶段 35 坑 18 续）：模拟器从主机环境继承 `http_proxy=http://...`，被拆成 `global_http_proxy_host/_port` 两个 settings 键；删除 `http_proxy` 不够，要两键都删 + 重启**。最稳的预防：用 `env -u http_proxy -u https_proxy ...` 启动模拟器，根本不让它继承
 24. **debug 包绝不能继承 release 正式签名（阶段 39 阻塞级）**：`signing.properties` 存在时若把签名只写在 `buildTypes.release`，debug 产物会变成"正式签名 + 不可调试"——`adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`/`VERSION_DOWNGRADE`、`run-as` 报 `package not debuggable`，**更阴的是设备上一直跑旧包，会把"UI 没渲染""功能无效"等假象全引到排查里**。已在 `buildTypes.debug` 显式设回 debug 签名；换签名需 `uninstall` 后重装，Cookie 用 `adb push /data/local/tmp` + `run-as cp` 恢复（避开坑 14/15）
 25. **装机实测前必须先确认设备上就是刚构建的包**：`aapt2 dump badging <apk>` 看 versionCode/debuggable，与 `dumpsys package` 对比；不一致时别急着怀疑业务代码（阶段 39 因此在"翻页区没渲染"上空转了十几轮）
-26. **无窗口 WebView 里原生滚动不可能成立（阶段 39 实测）**：`window.innerWidth/innerHeight=0`、`documentElement.scrollHeight=0`、容器 `scrollTop` 设了回 0 → 必须**沿数据容器找 `overflowY:auto|scroll` 的祖先并强制 `maxHeight`+`overflowY:scroll`** 制造溢出，`scrollTop` 才生效。且小红书主页虚拟列表**即使拿到第 2/3 页响应也不再渲染新卡片**（`.note-item` 恒为 30）→ **DOM 提取路线不可用，只能回收接口 JSON**
-27. **WebView 回收页面内 XHR 响应的三条铁律（阶段 39）**：①注入 JS 里**任何语法错都只表现为回调收到 `null`**（`evaluateJavascript` 不报错），改完必跑 `node scripts/check-inject-js.js`；②`onPageStarted` 里的 `evaluateJavascript` 排在页面脚本之后，**首屏请求抓不到**，但滚动触发的分页请求抓得到（滚动前再幂等补注入一次）；③回传**不能把响应写进 DOM 再取 `outerHTML`**——HTML 序列化会把引号变成 `&quot;` 使 JSON 报废，必须走 `JSON.stringify(JSON.stringify(...))` 两层编码；收口条件用"响应条数稳定"而非"页面长度稳定"
+26. **WebView 抓取必须给它真实视口，且别改页面的滚动模型（阶段 39-40 定论）**：未附加到窗口的 WebView 尺寸为 0 → 页面里 `window.innerHeight=0`、`documentElement.clientHeight=0`，**基于视口的 IntersectionObserver 永不触发**，主页虚拟列表只会给出初始预取的那几页，怎么滚都不翻页。修法：创建后手动 `measure(EXACTLY 屏幕宽高)+layout(0,0,w,h)`（无需窗口、无需额外权限）。**反例**：阶段 39 曾用"给容器强制 `maxHeight`+`overflowY:scroll` 制造溢出"来让 `scrollTop` 生效——拿到真实视口后这招会变成**负作用**（滚动模型从整页 window 滚变成容器内滚，而页面监听挂在 window 上，实测 pages 从 3 掉到 1）。正确姿势：容器保持自然高度、**滚 window**，并按「顶→1/3→2/3→底」阶梯扫动制造哨兵离开/进入
+27. **WebView 回收页面内 XHR 响应的四条铁律（阶段 39-40）**：①注入 JS 里**任何语法错都只表现为回调收到 `null`**（`evaluateJavascript` 不报错），改完必跑 `node scripts/check-inject-js.js`；②`onPageStarted` 里的 `evaluateJavascript` 排在页面脚本之后，**首屏请求抓不到**，但滚动触发的分页请求抓得到（滚动前再幂等补注入一次）；③回传**不能把响应写进 DOM 再取 `outerHTML`**——HTML 序列化会把引号变成 `&quot;` 使 JSON 报废，必须走 `JSON.stringify(JSON.stringify(...))` 两层编码；④`evaluateJavascript` 的返回值只保证是 **JSON 字面量**：数字/布尔不带引号，`nextValue() as? String` 恒为 null（阶段 39 的收口轮询因此一直读到 0、提前收口），要么 JS 侧 `String(...)` 包一层，要么别按 String 强转
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
@@ -86,12 +86,13 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 39（主页「加载更多」端到端跑通）完成**——桌面 UA + 容器强制视口 + XHR 钩子回收 `user_posted` 分页 JSON；实测 32 → 92 → **122 篇**，杀进程重启后标签显示「全部 122」；顺带修掉**debug 包继承 release 签名**这个阻塞级构建 bug（阶段 38 的编译/验证因此实际未通过：`ParserEngine` 缺 `webFetcherScroll` 形参、`ProfileScreen` 缺 `SecondaryButton` import，本轮一并补齐）。parser **76 例**全绿
-- 能力边界（实测确认，非缺陷）：一次 WebView 会话内页面只滚动加载约 3 页（`window.__pages` 封顶 3），此后 `scrollTop` 已在底部不再产生新交叉 → 第二轮起接口不再前进、UI 给「没有更多了」。要更深翻页需在同一次抓取里**先回滚一段再滚到底**（分步推进）
+- 当前：**阶段 40（主页「加载更多」突破 3 页封顶）完成**——根因是 WebView 没有视口（`innerHeight=0` → IntersectionObserver 永不触发）；补 `measure+layout` 给真实视口 + **去掉容器 `maxHeight` 强制、改滚 window** + 「顶→1/3→2/3→底」阶梯扫动；顺带修掉阶段 39 的收口 bug（`evaluateJavascript` 返回数字不带引号，`as? String` 恒 null → 轮询永远读到 0、提前收口）。实测单次抓取可推进到 **35 页**，会话累计 **272 篇**（全唯一、全带 xsec_token），杀进程恢复与 `pageCount` 持久化正常，**每点一次约 +60 篇**
+- 已解除的边界：~~单次 WebView 会话约 3 页封顶~~（阶段 39 记录，阶段 40 已解）。剩余上限是 `maxPosts=(pages*60).coerceIn(120,360)`（约 360 篇/账号），且每轮从首屏重扫靠 id 去重——效率折损，非功能缺陷
+- 阶段 39（加载更多链路首版跑通）：桌面 UA + XHR 钩子回收 `user_posted` 分页 JSON；修掉 **debug 包继承 release 签名**这个阻塞级构建 bug（阶段 38 的编译/验证因此实际未通过：`ParserEngine` 缺 `webFetcherScroll` 形参、`ProfileScreen` 缺 `SecondaryButton` import，一并补齐）；新增真机夹具与 `scripts/check-inject-js.js`
 - 阶段 38（主页多标签 + 进程重启恢复）：功能与实测成立（标签/勾选恢复 ✓），但**当时未真正编译通过**，阶段 39 已补齐
 - 阶段 37（小红书主页真实跑通）：桌面 UA + Cookie 取 SSR（32 篇）、三入口、4 个真 bug（短链登录页陷阱 / jsonField 截断 / 无引号数字 / 转义还原）
 - 阶段 31-33（小红书笔记链路）：`xhslink.cn` 路由、短链 `<a href>` 展开、移动端 UA/结构适配、fileId 去重、失效/登录墙守卫；**图集真实下载仍需 Cookie 或真机**（反爬含客户端指纹，见坑 17）
 - 阶段 30（release 装机冒烟）：release 装机成功、R8 无运行时崩溃；下载闭环受模拟器出口 IP 限制未完成（环境，非回归），下载引擎由 30 例单测兜底。踩坑 14（`adb shell cat` 二进制 CRLF 翻译损坏 DataStore proto）
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（76）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
-- 下一步：①**加载更多深翻页**（同一次抓取里分步回滚再滚底，突破 3 页上限）②其他平台主页解析器（IG/X/TikTok 需登录 Cookie；微博/B站可公开但需过风控）③真机回归（X 单视频下载闭环 + X 图集竖条 + 阶段 29 四项气泡交互；家宽 IP 通常绕过 X 风控）④IG 风控恢复后复测阶段 25 ⑤keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
-- 文档：PROGRESS.md 全阶段记录（阶段 1-39，头部进度看板，含旧编号对照）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
+- 下一步：①**其他平台主页解析器**（IG/X/TikTok 需登录 Cookie；微博/B站可公开但需过风控）②加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）③真机回归（X 单视频下载闭环 + X 图集竖条 + 阶段 29 四项气泡交互；家宽 IP 通常绕过 X 风控）④IG 风控恢复后复测阶段 25 ⑤keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
+- 文档：PROGRESS.md 全阶段记录（阶段 1-40，头部进度看板，含旧编号对照）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）

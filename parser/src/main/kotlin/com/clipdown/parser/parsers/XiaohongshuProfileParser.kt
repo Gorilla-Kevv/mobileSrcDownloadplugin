@@ -78,10 +78,10 @@ class XiaohongshuProfileParser : ProfileParser {
         )
 
         // 加载更多：SSR 只给首屏一页，分页接口需要 x-s 签名无法重放，
-        // 因此让页面自己的 JS 在 WebView 里滚动触发无限滚动，再从 DOM 补齐后续页。
+        // 因此让页面自己的 JS 在 WebView 里滚动触发无限滚动，并回收它拿到的接口响应。
         // 必须桌面 UA：移动端 Web 的卡片 DOM（reds-note-card）里没有笔记 ID 与链接，提取不到。
         if (pages > 1) {
-            // 一次翻页滚 3 屏：无限滚动按屏分批下发，滚不够次数拿不到整页
+            // 一页做 3 轮「回顶→滚底」扫动（单方向滚到底会钉住，哨兵不再触发下一页）
             val raw = runCatching { ctx.webFetcherScroll?.invoke(url, (pages - 1) * 3, true) }.getOrNull()
             if (!raw.isNullOrBlank()) {
                 val sep = raw.indexOf(PAGES_SEP)

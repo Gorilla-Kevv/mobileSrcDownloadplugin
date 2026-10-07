@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 39 完成（主页「加载更多」端到端跑通：桌面 UA + 容器强制视口 + XHR 钩子回收 `user_posted` 分页 JSON，实测 32→92→122 篇；顺带修掉 debug 包继承 release 签名的阻塞级构建 bug）
-- 下一阶段任务：加载更多深翻页（同一次抓取分步回滚再滚底，突破单会话 3 页上限）；其他平台主页解析器接入；是否需要标签拖动排序
+- 当前正在开发任务：阶段 40 完成（主页「加载更多」突破 3 页封顶：WebView 补真实视口 + 去掉容器 maxHeight 改滚 window + 阶梯扫动；实测单次抓到 35 页、会话累计 272 篇）
+- 下一阶段任务：其他平台主页解析器接入；加载更多效率优化（透传 cursor / 放宽 maxPosts）；是否需要标签拖动排序
 - 可提前进行的任务：真机看 UI 实际观感；阶段 29 真机复测；X 单视频下载闭环
-- 未完成的任务：加载更多深翻页；其他平台主页解析；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
+- 未完成的任务：其他平台主页解析；加载更多每轮从首屏重扫的效率折损；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
 - 测试基线：parser **76 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.07 22:45
+- 本次文档更新时间：10.08 00:25
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -610,3 +610,23 @@
 - 新增工具：`scripts/check-inject-js.js`——从 Kotlin 拼串里抽出注入 JS 并用 node 校验语法（本轮两个"钩子静默失效"的根因都是 JS 语法错，`evaluateJavascript` 对语法错只回 `null`）
 - 改动文件：`app/build.gradle.kts`（debug 签名）、`app/clip/WebViewHtmlFetcher.kt`（desktop UA/钩子/容器滚动/分页回传/超时预算/收口标志）、`app/ClipDownApp.kt`（三参 webFetcherScroll + 90s 预算）、`parser/spi/{PlatformParser,ProfileParser}.kt`（签名扩展）、`parser/core/ParserEngine.kt`（接线）、`parser/parsers/XiaohongshuProfileParser.kt`（接口分页解析）、`app/ui/profile/{ProfileCenter,ProfileScreen}.kt`（阶段 38 未完成接线）、测试与夹具
 - 本次文档更新时间：10.07 22:40
+
+## 阶段 40 主页「加载更多」突破 3 页封顶（真实视口 + window 自然滚动）[计划时间：10.07 23:10 BY Qoder][完成时间：10.08 00:20 BY Qoder]
+- 目标：解掉阶段 39 记录的"单次 WebView 会话约 3 页封顶"边界，让主页能持续翻页
+- **根因不是翻页策略，而是 WebView 根本没有视口**：未附加到窗口的 WebView 尺寸为 0 → 页面里 `window.innerHeight=0`、`documentElement.clientHeight=0`，基于视口的 IntersectionObserver **永不触发**（探针实测 `ioN=0`），所以只有初始预取的那几页会发出请求，怎么滚都没用
+  - 修复：创建 WebView 后手动 `measure(EXACTLY 屏宽/屏高) + layout(0,0,w,h)`，无需窗口、无需额外权限即可拿到真实视口（实测 `ih=842` CSS px，探针 `ioN` 随即开始递增）
+- **第二个坑：拿到真实视口后反而一页都不翻**（pages 从 3 掉到 1）
+  - 原因：阶段 39 为了"让容器能滚"给它强制了 `maxHeight=900px + overflowY=scroll`，把滚动模型从**整页 window 滚动**改成了**容器内滚**，而页面的无限滚动监听挂在 window 上 → `window.scrollY` 恒为 0，永远不触发
+  - 修复：**去掉 maxHeight 强制**，让容器保持自然高度，改为滚 window
+- **翻页节奏：单向滚到底会钉住** → 每轮做成「顶 → 1/3 → 2/3 → 底」四档阶梯扫动（档间 1.2s），制造哨兵"离开视野再进入"，扫动之间留 2.5s 落位
+- 顺带修掉一个**阶段 39 就存在、一直被误判为"数据不再增长"的收口 bug**：`evaluateJavascript` 对数字返回**不带引号的字面量**，`JSONTokener(...).nextValue() as? String` 恒为 null → 收口轮询永远读到 `pages=0`、第 3 次就提前收口。改为 `String(...)` 包裹并把稳定阈值提到 `attempt>=4`
+  - 通用教训：**`evaluateJavascript` 的返回值只保证是 JSON 字面量**，取数字/布尔要么 `String()` 包一层，要么别按 String 强转
+- **实测（模拟器 + 真实 Cookie，连续两轮）**
+  - 复验前一次：`pages` 随扫动从 1 一路涨到 24（`docH` 5087→19258），`接口=180 新增=180`，UI 32 → 62 → 212 篇
+  - 清理探针后复验：9 轮扫动把 `pages` 推到 **35**（`docH` 37200），`接口=240`（受 `maxPosts` 上限），会话总数 **272 篇、去重后 272、272 篇全部带 xsec_token**
+  - 杀进程重开：标签恢复「全部 212」→ 继续翻页正常；`pageCount` 也已随会话持久化（重启后按第 4 页请求 9 轮扫动）
+  - 现在的节奏是**每点一次约 +60 篇**（受 `maxPosts=(pages*60).coerceIn(120,360)` 约束），3 页封顶已彻底解除
+- 已知余量：每轮都从首屏 SSR 重新扫起、重复解析已见过的页（靠 id 去重兜底），要更高效率可把 `cursor` 透传给页面或直接问接口——但接口签名不可重放，故维持现状
+- 测试：parser **76 例** + downloader 30 + app 4 全绿；`node scripts/check-inject-js.js` 通过；`:app:assembleDebug` 全绿
+- 改动文件：`app/clip/WebViewHtmlFetcher.kt`（视口 measure/layout、去容器 maxHeight、阶梯扫动、收口轮询 String 修复、移除诊断探针）、`parser/parsers/XiaohongshuProfileParser.kt`（扫动次数注释与机制说明）
+- 本次文档更新时间：10.08 00:20

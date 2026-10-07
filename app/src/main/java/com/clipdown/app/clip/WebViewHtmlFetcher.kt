@@ -68,8 +68,8 @@ object WebViewHtmlFetcher {
     ): String? {
         if (Looper.myLooper() == Looper.getMainLooper()) return null
         android.util.Log.d(TAG, "fetch 开始：$url scrollTimes=$scrollTimes desktop=$desktop")
-        // 滚动加载要额外时间：渲染 timeoutMs + 每滚一次 4s + 滚动后稳定轮询预算
-        val budget = timeoutMs + if (scrollTimes > 0) scrollTimes * 4_000L + 20_000L else 0L
+        // 滚动加载要额外时间：渲染 timeoutMs + 每轮阶梯扫动约 8s + 滚动后稳定轮询预算
+        val budget = timeoutMs + if (scrollTimes > 0) scrollTimes * 8_000L + 20_000L else 0L
         val latch = CountDownLatch(1)
         var html: String? = null
         var polled = false
@@ -83,6 +83,17 @@ object WebViewHtmlFetcher {
                 @SuppressLint("SetJavaScriptEnabled")
                 val view = WebView(appContext)
                 wv = view
+                // 必须给一个真实视口：未附加到窗口的 WebView 尺寸为 0，页面里
+                // window.innerHeight / documentElement.clientHeight 都是 0，
+                // 基于视口的 IntersectionObserver 永不触发 → 主页虚拟列表不渲染后续页，
+                // 分页接口也就停在初始预取的那两三页。手动 measure+layout 即可拿到真实视口。
+                val dm = appContext.resources.displayMetrics
+                view.measure(
+                    android.view.View.MeasureSpec.makeMeasureSpec(dm.widthPixels, android.view.View.MeasureSpec.EXACTLY),
+                    android.view.View.MeasureSpec.makeMeasureSpec(dm.heightPixels, android.view.View.MeasureSpec.EXACTLY)
+                )
+                view.layout(0, 0, dm.widthPixels, dm.heightPixels)
+                android.util.Log.d(TAG, "视口注入：${dm.widthPixels}x${dm.heightPixels} measured=${view.measuredWidth}x${view.measuredHeight}")
                 view.settings.apply {
                     javaScriptEnabled = true
                     domStorageEnabled = true
@@ -234,11 +245,12 @@ object WebViewHtmlFetcher {
     }
 
     /**
+     * 反复把 window 滚到底触发页面的无限滚动，回传 `渲染 DOM + 分页接口响应`。
      *
      * 小红书等平台的主页分页接口带 `x-s` 签名，App 侧无法重放；但**页面自己的 JS 能签名**。
-     * 实测（2026-10）：无窗口 WebView 里页面虚拟列表即使拿到第 2/3 页响应也不再渲染新卡片，
-     * 所以除了 DOM，还把钩子捕获的 `user_posted` 响应原文一并回传（`<<<XHS_PAGES>>>` 分隔），
-     * 解析器优先用接口 JSON，DOM 作兜底。
+     * 由于列表是虚拟滚动的（DOM 里始终只有约 30 张卡片），单看渲染结果拿不到后续页，
+     * 因此用注入钩子把 `user_posted` 的响应原文（`<<<XHS_PAGES>>>` 分隔）一并回传，
+     * 解析器优先吃接口 JSON，DOM 只作兜底。
      */
     private fun scrollToLoadMore(v: WebView, times: Int, onDone: (String) -> Unit) {
         val h = Handler(Looper.getMainLooper())
@@ -262,24 +274,39 @@ object WebViewHtmlFetcher {
             }
         }
 
-        /** 给真容器强制视口高度并滚到底（无窗口 WebView 里 innerHeight=0，不制造溢出就永远滚不动） */
-        fun scrollOnce() {
+        /**
+         * 阶梯式把 **window** 滚到底（顶 → 1/3 → 2/3 → 底）。
+         *
+         * 关键：拿到真实视口后**不能再给容器强制 maxHeight**——那样滚动模型就从
+         * "整页 window 滚动"变成"容器内滚"，而页面自己的无限滚动监听挂在 window 上，
+         * 结果一页都不会再请求（实测视口修好后 pages 反而从 3 掉到 1）。
+         * 让容器保持自然高度、滚 window，才与真实浏览器一致。
+         */
+        fun scrollRound(done: () -> Unit) {
             // 分页请求由本次滚动触发，钩子必须在滚动前就位（onPageStarted 那次可能太晚，幂等补注入）
             installPageHook(v)
-            eval(
-                "(function(){try{" +
-                    "var f=document.getElementById('userPostedFeeds');var sc=null;" +
-                    "if(f){var p=f.parentElement;while(p&&p!==document.documentElement){" +
-                    "var oy=getComputedStyle(p).overflowY;" +
-                    "if(oy==='auto'||oy==='scroll'){sc=p;break;}p=p.parentElement;}}" +
-                    "if(sc){sc.style.maxHeight='900px';sc.style.overflowY='scroll';" +
-                    "sc.scrollTop=sc.scrollHeight;sc.dispatchEvent(new Event('scroll'));}" +
-                    "window.dispatchEvent(new Event('scroll'));" +
-                    "return 'top='+(sc?Math.round(sc.scrollTop):-1)+' items='+document.querySelectorAll('.note-item').length+" +
-                    "' pages='+(window.__pages||[]).length;" +
-                    "}catch(e){return 'ERR:'+e.message;}})()"
-            ) { info ->
-                android.util.Log.d(TAG, "滚动 ${i}/${times}：$info")
+
+            fun rung(frac: String, label: String, next: () -> Unit) {
+                eval(
+                    "(function(){try{" +
+                        "var de=document.documentElement;" +
+                        "var y=Math.round(de.scrollHeight*($frac));" +
+                        "window.scrollTo(0,y);de.scrollTop=y;" +
+                        "return '$label y='+Math.round(window.scrollY)+' docH='+de.scrollHeight+" +
+                        "' items='+document.querySelectorAll('.note-item').length+" +
+                        "' pages='+(window.__pages||[]).length+' ih='+window.innerHeight;" +
+                        "}catch(e){return 'ERR:'+e.message;}})()"
+                ) { info ->
+                    android.util.Log.d(TAG, "滚动 $i/$times [$info]")
+                    h.postDelayed(next, 1200)
+                }
+            }
+            rung("0", "顶") {
+                rung("0.34", "1/3") {
+                    rung("0.67", "2/3") {
+                        rung("1", "底") { done() }
+                    }
+                }
             }
         }
 
@@ -292,12 +319,14 @@ object WebViewHtmlFetcher {
                 val poll = object : Runnable {
                     override fun run() {
                         attempt++
-                        eval("(window.__pages||[]).length") { n ->
+                        eval("String((window.__pages||[]).length)") { n ->
                             val pages = n?.toIntOrNull() ?: 0
                             stable = if (pages == lastPages) stable + 1 else 0
                             lastPages = pages
                             android.util.Log.d(TAG, "滚动后轮询 $attempt：pages=$pages stable=$stable")
-                            if ((stable >= 2 && attempt >= 3) || attempt >= 12) grab()
+                            // 注意：evaluateJavascript 对数字返回不带引号的字面量，
+                            // 必须 String() 包一层，否则 as? String 恒为 null → 轮询形同虚设、提前收口
+                            if ((stable >= 2 && attempt >= 4) || attempt >= 14) grab()
                             else h.postDelayed(this, 2500)
                         }
                     }
@@ -305,8 +334,7 @@ object WebViewHtmlFetcher {
                 h.postDelayed(poll, 2500)
                 return
             }
-            scrollOnce()
-            h.postDelayed({ step() }, 3000)
+            scrollRound { h.postDelayed({ step() }, 2500) }
         }
         step()
     }
