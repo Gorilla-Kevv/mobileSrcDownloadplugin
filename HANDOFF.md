@@ -51,6 +51,8 @@
     - **每篇笔记 URL 必须带 SSR 里的 `xsecToken`**（裸 `/explore/<id>` 被判无效链接）
     - **短链展开的登录页陷阱**：`expand()` 跟随重定向会落到 `/login?redirectPath=<真实地址>`，若直接返回 final 就会把登录页当目标（实测导致主页链接被判成笔记页、整条链路进不去）→ 已用 `loginRedirectTarget()` 从 `redirectPath` 还原
 21. **`HtmlUtil.jsonField` 的两个边界（阶段 37 修复，影响所有平台）**：①含**转义引号**的值曾被截断（标题「…坦承\"毕生最大遗憾\"…」只取前半段）；②**无引号数字**（`"posted":4127`）因可选结尾引号吃掉下一个键的引号而取不到。现为"先带引号（惰性 + 后瞻分隔符）、再退无引号"两段式；`unescapeJson` 也补齐了 `\"` `\n` `\t` 等常规转义
+22. **Compose 多标签会话的持久化要走 `@Serializable` 扩展函数（阶段 38）**：`encodeToString`/`decodeFromString` 是**扩展函数**，必须显式 `import kotlinx.serialization.encodeToString` 等，否则编译器匹配到 `Json` 类的另一重载 (String, Strategy → Value)，报"Cannot infer type for this parameter"。`ProfileResult` 已有 `@Serializable` 且依赖的 `kotlinx-serialization-json` 通过 `:parser` 模块传递到 `:app`，在 `:app` 也需要 `kotlin("plugin.serialization")` 插件（app/build.gradle.kts 已配）
+23. **模拟器代理会"劫持"应用的所有网络**（阶段 35 坑 18 续）：模拟器从主机环境继承 `http_proxy=http://...`，被拆成 `global_http_proxy_host/_port` 两个 settings 键；删除 `http_proxy` 不够，要两键都删 + 重启**。最稳的预防：用 `env -u http_proxy -u https_proxy ...` 启动模拟器，根本不让它继承
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`

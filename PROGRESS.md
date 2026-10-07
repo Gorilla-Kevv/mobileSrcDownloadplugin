@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 37 完成（小红书主页**真实跑通**：桌面 UA+Cookie → SSR 32 篇；三个入口补齐；修 4 个真 bug）
-- 下一阶段任务：其他平台主页按同模式接入（IG/X/抖音/TikTok 需登录；微博/B站需过风控）；主页「加载更多」
+- 当前正在开发任务：阶段 38 完成（主页解析多标签 + 进程重启恢复：底部导航加入口、`ProfileCenter` 重构为多标签会话、序列化到 `filesDir/profile_sessions.json`）
+- 下一阶段任务：主页分页加载；其他平台主页解析器接入；是否需要标签拖动排序
 - 可提前进行的任务：真机看 UI 实际观感；阶段 29 真机复测；X 单视频下载闭环
 - 未完成的任务：主页分页加载；其他平台主页解析；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
 - 测试基线：parser **74 例** + downloader 30 例 + app **4 例**全绿
@@ -570,3 +570,17 @@
 - 改动文件：`parser/parsers/XiaohongshuProfileParser.kt`（重写为 SSR 提取）、`parser/parsers/HtmlUtil.kt`（jsonField 两段式 + unescapeJson 补转义）、`parser/core/ParserEngine.kt`（linkKind 展开短链 + loginRedirectTarget + 诊断日志）、`app/floatwindow/{PopupUiState,ClipPopupContent,FloatingWindowService}.kt`（气泡主页卡）、`app/ui/home/HomeScreen.kt`（三个入口分流）、`app/ui/MainActivity.kt`（openProfile extra）、`app/ui/profile/ProfileCenter.kt`（adopt）、测试与夹具
 - **待办**：①其他平台主页按同模式接入（IG/X/抖音/TikTok 需登录；微博/B站需过风控）②主页"加载更多"（当前仅第一页 30 篇）③Cookie 是 PC 会话，若用户换移动端 Cookie 需相应改 UA 策略
 - 本次文档更新时间：10.07 00:05
+
+## 阶段 38 主页解析多标签（类浏览器分页）+ 进程重启恢复 [计划时间：10.07 01:29 BY ZCode][完成时间：10.07 12:15]
+- 用户需求：①底部导航加「主页解析」入口，与首页解析区分 ②首页解析主页后跳转「主页解析」 ③可回首页复制别的链接下载 ⑤**结果不丢失 + 支持解析多个主页，类浏览器分页可切换查看下载**
+- **`ProfileCenter` 重构为多标签**（`sessions: List<ProfileSession>` + `activeUrl`）：每个标签保留自己的结果/勾选/筛选，切换不重新请求、互不影响；`MAX_SESSIONS=8` 上限自动淘汰旧标签
+- **入口分流与去重**：`open(url)` 同链接已存在则切过去，不重复请求；从首页/气泡/分享三条入口都走 `open()` → 进主页页面再切到该标签
+- **导航**：`Route.Profile` 升级为底部导航一级入口（4 项：首页/主页解析/下载/设置）；`goToProfile()` 用 `popUpTo + saveState + launchSingleTop + restoreState` 跳转，标签页状态独立保存
+- **页面**：可横滚的标签栏（博主名 + 关闭 ×，活动选中加亮），顶栏带「N 个标签」计数 + 刷新/关闭当前标签
+- **进程重启恢复**：标签列表序列化到 `filesDir/profile_sessions.json`（`@Serializable ProfileResult` 已有序列化能力）；`ClipDownApp.onCreate` → `ProfileCenter.install(this)` 恢复；每次标签变更（解析完成/勾选/关闭）立即落盘
+  - 实测：解析后 `am force-stop` 杀进程，重新打开应用 → 标签与勾选完整恢复 ✓
+  - 仅恢复 Loaded 标签，Failed/Loading 不入盘
+- 测试：编译与现场验证（`assembleRelease` + 模拟器杀进程验证）
+- 改动文件：`ProfileCenter.kt`（重构为 sessions + 持久化）、`ProfileScreen.kt`（标签栏 + 顶栏重写）、`AppNav.kt`（主页解析入底栏 + 跳页保持标签状态）、`ClipDownApp.kt`（install 恢复）、`HANDOFF.md`、`PROGRESS.md`
+- 后续：①主页分页加载（按"加载更多"）②其他平台主页解析器接入 ③是否需要"标签拖动排序"（暂未做）
+- 本次文档更新时间：10.07 12:15

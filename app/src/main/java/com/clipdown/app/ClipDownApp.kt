@@ -52,6 +52,9 @@ class ClipDownApp : Application() {
         // 应用内更新：安装到公开分发仓库（GitHub Release 固定链接，见 gradle.properties）
         UpdateCenter.install(this)
 
+        // 主页标签：恢复上次打开的博主主页（结果与勾选落盘，进程回收也不丢）
+        com.clipdown.app.ui.profile.ProfileCenter.install(this)
+
         appScope.launch {
             settings.maxConcurrent.collect { max ->
                 val wifi = settings.wifiOnly.first()

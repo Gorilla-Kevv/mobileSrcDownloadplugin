@@ -39,22 +39,29 @@ import com.clipdown.app.ui.settings.SettingsScreen
 
 sealed class Route(val path: String, val label: String, val icon: ImageVector) {
     data object Home : Route("home", "首页", Icons.Default.Home)
+    data object Profile : Route("profile", "主页解析", Icons.Default.Person)
     data object Downloads : Route("downloads", "下载", Icons.Default.Download)
     data object Settings : Route("settings", "设置", Icons.Default.Settings)
-
-    /** 博主主页页：二级页面，不进底部导航 */
-    data object Profile : Route("profile", "博主主页", Icons.Default.Person)
 }
 
-private val routes = listOf(Route.Home, Route.Downloads, Route.Settings)
+private val routes = listOf(Route.Home, Route.Profile, Route.Downloads, Route.Settings)
 
 @Composable
 fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
     val navController = rememberNavController()
 
-    // 从首页/气泡入口打开博主主页页
+    // 与底部导航一致的跳转方式：避免把标签页重复压栈，并保留各标签页状态
+    val goToProfile: () -> Unit = {
+        navController.navigate(Route.Profile.path) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    // 从首页/气泡入口打开主页标签页
     LaunchedEffect(openProfile) {
-        if (openProfile) navController.navigate(Route.Profile.path)
+        if (openProfile) goToProfile()
     }
 
     Scaffold(
@@ -108,12 +115,12 @@ fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
             composable(Route.Home.path) {
                 HomeScreen(
                     autoFocusParse = openParse,
-                    onOpenProfile = { navController.navigate(Route.Profile.path) }
+                    onOpenProfile = goToProfile
                 )
             }
             composable(Route.Downloads.path) { DownloadsScreen() }
             composable(Route.Settings.path) { SettingsScreen() }
-            composable(Route.Profile.path) { ProfileScreen(onBack = { navController.popBackStack() }) }
+            composable(Route.Profile.path) { ProfileScreen() }
         }
     }
 }

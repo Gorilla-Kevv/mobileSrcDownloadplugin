@@ -2,6 +2,7 @@ package com.clipdown.app.ui.profile
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -15,17 +16,18 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
-import androidx.compose.material.icons.filled.OpenInNew
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
@@ -75,46 +77,47 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * 博主主页页（独立新页面）。
+ * 主页解析页（底部导航一级入口）。
  *
- * 结构（自上而下）：
- * 1. 顶栏：返回 + 博主名 + 刷新
- * 2. 博主信息卡：头像 / 昵称 / 平台 / 简介 / 笔记·粉丝·关注 三项统计
- * 3. 筛选行：全部 / 视频 / 图文 + 已选计数 + 全选·清空
- * 4. 笔记网格：两列，封面 + 选择圈 + 标题 + 类型角标
- * 5. 吸底操作条：已选 N 项 →「下载所选」（逐篇解析后入队）
+ * 与首页的"单篇解析"区分开：这里专门承载**博主主页**这种集合形态，
+ * 且是**多标签**的——每个标签是一个已打开的主页，各自保留解析结果、勾选与筛选，
+ * 可随时切换查看与下载（类似浏览器分页）。
  *
- * 点封面（非选择圈）打开 [NoteDetailSheet]：解析该篇后展示正文与媒体清单，可单独下载。
+ * 结构：
+ * 1. 顶栏：标题 + 刷新当前标签 + 关闭当前标签
+ * 2. 标签栏：横向滚动的标签（博主名 + 关闭），点切换
+ * 3. 内容：博主信息卡 / 筛选行 / 笔记网格（两列）
+ * 4. 吸底条：当前标签有勾选时出现，「下载所选 N 项」
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProfileScreen(onBack: () -> Unit) {
+fun ProfileScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val state = ProfileCenter.state
+    val sessions = ProfileCenter.sessions
+    val active = ProfileCenter.active
     var detail by remember { mutableStateOf<ProfilePost?>(null) }
 
     Scaffold(
         topBar = {
             TopAppBar(
                 title = {
-                    Text(
-                        (state as? ProfileUiState.Loaded)?.result?.displayName ?: "博主主页",
-                        style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "返回")
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("主页解析", style = MaterialTheme.typography.titleMedium)
+                        if (sessions.isNotEmpty()) {
+                            Spacer(Modifier.width(AppTheme.spacing.sm))
+                            StatusPill("${sessions.size} 个标签", Tone.Brand)
+                        }
                     }
                 },
                 actions = {
-                    val url = ProfileCenter.lastUrl
+                    val url = active?.url
                     if (url != null) {
                         IconButton(onClick = { scope.launch { ProfileCenter.load(url) } }) {
                             Icon(Icons.Default.Refresh, contentDescription = "刷新")
+                        }
+                        IconButton(onClick = { ProfileCenter.close(url) }) {
+                            Icon(Icons.Default.Close, contentDescription = "关闭当前标签")
                         }
                     }
                 },
@@ -124,7 +127,7 @@ fun ProfileScreen(onBack: () -> Unit) {
             )
         },
         bottomBar = {
-            val loaded = state as? ProfileUiState.Loaded
+            val loaded = active?.state as? ProfileUiState.Loaded
             if (loaded != null && loaded.selected.isNotEmpty()) {
                 Column(
                     Modifier
@@ -148,51 +151,68 @@ fun ProfileScreen(onBack: () -> Unit) {
         },
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (val s = state) {
-                is ProfileUiState.Idle -> AppCard(Modifier.padding(AppTheme.spacing.screen)) {
-                    EmptyState(
-                        title = "还没有打开主页",
-                        desc = "复制博主主页链接后点悬浮气泡，或在本页刷新",
-                        icon = Icons.Default.Person
-                    )
-                }
+        Column(Modifier.fillMaxSize().padding(padding)) {
+            if (sessions.isNotEmpty()) {
+                ProfileTabStrip(
+                    sessions = sessions,
+                    activeUrl = ProfileCenter.activeUrl,
+                    onSelect = { ProfileCenter.switchTo(it) },
+                    onClose = { ProfileCenter.close(it) }
+                )
+            }
 
-                is ProfileUiState.Loading -> Column(
-                    Modifier.fillMaxSize(),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
-                    VSpace(AppTheme.spacing.md)
-                    Text("正在打开主页…", style = MaterialTheme.typography.bodySmall)
-                    VSpace(AppTheme.spacing.xs)
-                    Text(
-                        "主页数据由平台前端渲染，首次打开可能需要十几秒",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+            Box(Modifier.fillMaxSize()) {
+                when (val s = active?.state) {
+                    null -> AppCard(Modifier.padding(AppTheme.spacing.screen)) {
+                        EmptyState(
+                            title = "还没有主页标签",
+                            desc = "复制博主主页链接后点悬浮气泡，或到首页粘贴解析；" +
+                                "每个主页会作为一个标签保留在这里，可随时切换",
+                            icon = Icons.Default.Person
+                        )
+                    }
 
-                is ProfileUiState.Failed -> Column(Modifier.padding(AppTheme.spacing.screen)) {
-                    AppCard {
-                        NoticeBar("打开失败：${s.message}", Tone.Danger)
+                    is ProfileUiState.Idle -> Unit
+
+                    is ProfileUiState.Loading -> Column(
+                        Modifier.fillMaxSize(),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(28.dp), strokeWidth = 2.5.dp)
                         VSpace(AppTheme.spacing.md)
-                        Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)) {
-                            PrimaryButton(
-                                text = "重试",
-                                icon = Icons.Default.Refresh,
-                                modifier = Modifier.weight(1f),
-                                onClick = { scope.launch { ProfileCenter.load(s.url) } }
-                            )
+                        Text("正在打开主页…", style = MaterialTheme.typography.bodySmall)
+                        VSpace(AppTheme.spacing.xs)
+                        Text(
+                            "主页数据量较大，首次打开可能需要十几秒",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    is ProfileUiState.Failed -> Column(Modifier.padding(AppTheme.spacing.screen)) {
+                        AppCard {
+                            NoticeBar("打开失败：${s.message}", Tone.Danger)
+                            VSpace(AppTheme.spacing.md)
+                            Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)) {
+                                PrimaryButton(
+                                    text = "重试",
+                                    icon = Icons.Default.Refresh,
+                                    modifier = Modifier.weight(1f),
+                                    onClick = { scope.launch { ProfileCenter.load(s.url) } }
+                                )
+                                TextButton(onClick = { ProfileCenter.close(s.url) }) {
+                                    Text("关闭标签", style = MaterialTheme.typography.labelLarge)
+                                }
+                            }
                         }
                     }
-                }
 
-                is ProfileUiState.Loaded -> ProfileContent(
-                    state = s,
-                    onOpenDetail = { detail = it }
-                )
+                    is ProfileUiState.Loaded -> ProfileContent(
+                        state = s,
+                        onOpenDetail = { detail = it }
+                    )
+                }
             }
         }
     }
@@ -203,6 +223,62 @@ fun ProfileScreen(onBack: () -> Unit) {
             onDismiss = { detail = null },
             onDownload = { scope.launch { ProfileCenter.downloadSingle(context, post) } }
         )
+    }
+}
+
+/** 标签栏：横向滚动，每个标签 = 博主名 + 关闭按钮；活动标签用品牌色底 */
+@Composable
+private fun ProfileTabStrip(
+    sessions: List<ProfileSession>,
+    activeUrl: String?,
+    onSelect: (String) -> Unit,
+    onClose: (String) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.surface)
+            .horizontalScroll(rememberScrollState())
+            .padding(horizontal = AppTheme.spacing.screen, vertical = AppTheme.spacing.sm),
+        horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        sessions.forEach { s ->
+            val isActive = s.url == activeUrl
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(AppTheme.radius.pill))
+                    .background(
+                        if (isActive) MaterialTheme.colorScheme.primary
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    .clickable { onSelect(s.url) }
+                    .padding(start = 14.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    s.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (isActive) MaterialTheme.colorScheme.onPrimary
+                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.widthIn(max = 120.dp)
+                )
+                IconButton(
+                    onClick = { onClose(s.url) },
+                    modifier = Modifier.size(26.dp)
+                ) {
+                    Icon(
+                        Icons.Default.Close,
+                        contentDescription = "关闭标签",
+                        modifier = Modifier.size(14.dp),
+                        tint = if (isActive) MaterialTheme.colorScheme.onPrimary
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -353,7 +429,6 @@ private fun NoteTile(
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()
             )
-            // 类型角标
             val badge = when (post.kind) {
                 PostKind.VIDEO -> "视频"
                 PostKind.ALBUM -> "图集 ${post.mediaCount ?: ""}".trim()
@@ -364,7 +439,6 @@ private fun NoteTile(
                     StatusPill(badge, Tone.Brand)
                 }
             }
-            // 选择圈（右上角，独立点击区，避免与"打开详情"冲突）
             Icon(
                 Icons.Default.CheckCircle,
                 contentDescription = if (selected) "取消选择" else "选择",
@@ -390,8 +464,7 @@ private fun NoteTile(
 /**
  * 笔记详情面板：打开时解析该篇，展示正文与媒体清单。
  *
- * 列表页只有封面与标题，**正文与媒体必须点开单篇才拿得到**，
- * 所以这里进入即触发一次单篇解析（复用作品页链路）。
+ * 列表页只有封面与标题，**正文与媒体必须点开单篇才拿得到**，故进入即触发一次单篇解析。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -406,7 +479,6 @@ private fun NoteDetailSheet(
     var body by remember { mutableStateOf<String?>(null) }
     var media by remember { mutableStateOf<List<String>>(emptyList()) }
     var error by remember { mutableStateOf<String?>(null) }
-    var selected by remember { mutableStateOf(setOf<Int>()) }
 
     LaunchedEffect(post.id) {
         val r = withContext(Dispatchers.IO) { ParserEngine.parseSafe(post.url) }
@@ -416,7 +488,6 @@ private fun NoteDetailSheet(
             title = parsed.title ?: post.title
             body = parsed.description
             media = parsed.media.map { it.url }
-            selected = parsed.media.indices.toSet()
         } else {
             error = (r.exceptionOrNull() as? com.clipdown.parser.model.ParseException)?.message
                 ?: r.exceptionOrNull()?.message ?: "该篇解析失败"
@@ -454,27 +525,20 @@ private fun NoteDetailSheet(
                         VSpace(AppTheme.spacing.md)
                     }
                     Text(
-                        "媒体 ${media.size} 项（已选 ${selected.size}）",
+                        "媒体 ${media.size} 项",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     VSpace(AppTheme.spacing.sm)
                     media.forEachIndexed { i, u ->
                         Row(
-                            Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    selected = if (i in selected) selected - i else selected + i
-                                }
-                                .padding(vertical = 6.dp),
+                            Modifier.fillMaxWidth().padding(vertical = 6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(
-                                Icons.Default.CheckCircle,
-                                contentDescription = null,
-                                tint = if (i in selected) MaterialTheme.colorScheme.primary
-                                else MaterialTheme.colorScheme.outlineVariant,
-                                modifier = Modifier.size(18.dp)
+                            Text(
+                                "${i + 1}.",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(Modifier.width(AppTheme.spacing.sm))
                             Text(
@@ -487,19 +551,12 @@ private fun NoteDetailSheet(
                         }
                     }
                     VSpace(AppTheme.spacing.md)
-                    Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)) {
-                        PrimaryButton(
-                            text = "下载本篇",
-                            icon = Icons.Default.Download,
-                            modifier = Modifier.weight(1f),
-                            onClick = onDownload
-                        )
-                        TextButton(onClick = { /* 由外部打开原链接 */ }) {
-                            Icon(Icons.Default.OpenInNew, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(4.dp))
-                            Text("原链接")
-                        }
-                    }
+                    PrimaryButton(
+                        text = "下载本篇（全部 ${media.size} 项）",
+                        icon = Icons.Default.Download,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onDownload
+                    )
                 }
             }
         }
