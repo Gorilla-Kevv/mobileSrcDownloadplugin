@@ -32,5 +32,11 @@ interface ProfileParser {
      * @param ctx 解析上下文（HTTP / Cookie / WebView 能力）
      * @return 主页信息 + 笔记列表；拿不到时抛 [com.clipdown.parser.model.ParseException]
      */
-    fun parseProfile(url: String, handle: String, ctx: ParseContext): ProfileResult
+    /**
+     * 解析主页。
+     *
+     * @param pages 需要加载的页数（1 = 仅首屏）。>1 时由实现方自行决定是否支持继续加载，
+     *              不支持时按首屏结果返回即可（[ProfileResult.hasMore] 会告知 UI 还能否继续）。
+     */
+    fun parseProfile(url: String, handle: String, ctx: ParseContext, pages: Int = 1): ProfileResult
 }

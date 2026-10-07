@@ -28,11 +28,13 @@ fun testContext(
     http: HttpFacade,
     cookies: Map<Platform, String> = emptyMap(),
     logs: MutableList<String> = mutableListOf(),
-    webFetcher: ((url: String) -> String?)? = null
+    webFetcher: ((url: String) -> String?)? = null,
+    webFetcherScroll: ((url: String, scrollTimes: Int, desktop: Boolean) -> String?)? = null
 ): ParseContext = ParseContext(
     config = com.clipdown.parser.config.ParserConfig.default(),
     http = http,
     cookieProvider = { cookies[it] },
     logger = { tag, msg -> logs.add("$tag: $msg") },
-    webFetcher = webFetcher
+    webFetcher = webFetcher,
+    webFetcherScroll = webFetcherScroll
 )

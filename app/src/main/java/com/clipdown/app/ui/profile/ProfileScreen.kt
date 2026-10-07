@@ -65,6 +65,7 @@ import com.clipdown.app.ui.components.AppChip
 import com.clipdown.app.ui.components.EmptyState
 import com.clipdown.app.ui.components.NoticeBar
 import com.clipdown.app.ui.components.PrimaryButton
+import com.clipdown.app.ui.components.SecondaryButton
 import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
@@ -210,7 +211,8 @@ fun ProfileScreen() {
 
                     is ProfileUiState.Loaded -> ProfileContent(
                         state = s,
-                        onOpenDetail = { detail = it }
+                        onOpenDetail = { detail = it },
+                        onLoadMore = { scope.launch { ProfileCenter.loadMore() } }
                     )
                 }
             }
@@ -283,7 +285,11 @@ private fun ProfileTabStrip(
 }
 
 @Composable
-private fun ProfileContent(state: ProfileUiState.Loaded, onOpenDetail: (ProfilePost) -> Unit) {
+private fun ProfileContent(
+    state: ProfileUiState.Loaded,
+    onOpenDetail: (ProfilePost) -> Unit,
+    onLoadMore: () -> Unit
+) {
     val r = state.result
     LazyVerticalGrid(
         columns = GridCells.Fixed(2),
@@ -384,8 +390,41 @@ private fun ProfileContent(state: ProfileUiState.Loaded, onOpenDetail: (ProfileP
             )
         }
 
+        // ---- 翻页区 ----
         item(span = { GridItemSpan(maxLineSpan) }) {
-            VSpace(AppTheme.spacing.xl)
+            Column(Modifier.fillMaxWidth()) {
+                state.hint?.let {
+                    NoticeBar(it, Tone.Warning)
+                    VSpace(AppTheme.spacing.sm)
+                }
+                when {
+                    state.loadingMore -> Row(
+                        Modifier.fillMaxWidth().padding(vertical = AppTheme.spacing.md),
+                        horizontalArrangement = Arrangement.Center,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(AppTheme.spacing.sm))
+                        Text("正在加载更多…", style = MaterialTheme.typography.bodySmall)
+                    }
+
+                    r.hasMore -> SecondaryButton(
+                        text = "加载更多（已 ${r.posts.size} 篇）",
+                        icon = Icons.Default.Refresh,
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = onLoadMore
+                    )
+
+                    else -> Text(
+                        "已到最后一页 · 共 ${r.posts.size} 篇",
+                        modifier = Modifier.fillMaxWidth().padding(vertical = AppTheme.spacing.md),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                    )
+                }
+                VSpace(AppTheme.spacing.xl)
+            }
         }
     }
 }

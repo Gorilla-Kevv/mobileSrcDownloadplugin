@@ -26,7 +26,19 @@ class XiaohongshuProfileParser : ProfileParser {
     override val platform: Platform = Platform.XIAOHONGSHU
     override val id: String = "xhs-profile-v1"
 
-    override fun parseProfile(url: String, handle: String, ctx: ParseContext): ProfileResult {
+    /**
+     * 单次解析的笔记上限。翻页时按页数放大——若固定上限，第二轮抓到的
+     * 新数据会被前几轮的已知项挤掉（实测 92 篇后再翻页恒为"没有更多了"）。
+     */
+    private var maxPosts = 120
+
+    override fun parseProfile(
+        url: String,
+        handle: String,
+        ctx: ParseContext,
+        pages: Int
+    ): ProfileResult {
+        maxPosts = (pages * 60).coerceIn(120, 360)
         val attempts = mutableListOf<Pair<String, String?>>()
         // 1) 桌面 UA（主页 SSR 的必需条件）
         attempts += "desktop" to fetch(url, ctx, desktop = true)
@@ -58,12 +70,34 @@ class XiaohongshuProfileParser : ProfileParser {
             ?: throw ParseException("未能从主页页面中提取到数据（页面结构可能已更新）", platform)
 
         val profileWindow = windowAround(state, "\"userPageData\"", before = 200, after = 4000) ?: state
-        val posts = extractNoteCards(state)
+        var posts = extractNoteCards(state)
         ctx.log(
             id,
-            "主页解析：via=$via handle=$handle 笔记=${posts.size} " +
+            "主页解析：via=$via handle=$handle 首屏笔记=${posts.size} " +
                 "state=${state.length} userPageData=${state.contains("userPageData")}"
         )
+
+        // 加载更多：SSR 只给首屏一页，分页接口需要 x-s 签名无法重放，
+        // 因此让页面自己的 JS 在 WebView 里滚动触发无限滚动，再从 DOM 补齐后续页。
+        // 必须桌面 UA：移动端 Web 的卡片 DOM（reds-note-card）里没有笔记 ID 与链接，提取不到。
+        if (pages > 1) {
+            // 一次翻页滚 3 屏：无限滚动按屏分批下发，滚不够次数拿不到整页
+            val raw = runCatching { ctx.webFetcherScroll?.invoke(url, (pages - 1) * 3, true) }.getOrNull()
+            if (!raw.isNullOrBlank()) {
+                val sep = raw.indexOf(PAGES_SEP)
+                val dom = if (sep >= 0) raw.substring(0, sep) else raw
+                val fromApi = if (sep >= 0) extractFromApiPages(raw.substring(sep + PAGES_SEP.length), ctx) else emptyList()
+                val known = posts.map { it.id }.toSet()
+                val added = fromApi.filter { it.id !in known }.ifEmpty {
+                    // 接口 JSON 拿不到时退回渲染 DOM（桌面版卡片是 <a href="/explore/<id>">）
+                    extractFromDom(dom).filter { it.id !in known }
+                }
+                ctx.log(id, "加载更多：接口=${fromApi.size} 新增=${added.size}")
+                posts = posts + added
+            } else {
+                ctx.log(id, "加载更多：滚动抓取不可用（笔记本=${posts.size}）")
+            }
+        }
 
         if (posts.isEmpty()) {
             throw ParseException(
@@ -85,8 +119,165 @@ class XiaohongshuProfileParser : ProfileParser {
             stats = extractStats(profileWindow),
             posts = posts,
             hasMore = posts.size >= PAGE_SIZE,
-            warning = if (posts.size >= PAGE_SIZE) "当前展示 ${posts.size} 篇（第一页），更多请到站内翻页" else null
+            warning = if (posts.size >= PAGE_SIZE) "已加载 ${posts.size} 篇，可点下方「加载更多」继续" else null
         )
+    }
+
+    /**
+     * 从**渲染后的 DOM** 提取笔记卡片（翻页补数据用）。
+     *
+     * 渲染后的卡片是 `<a href="/explore/<id>?xsec_token=...">`，封面在其中的 `<img>`，
+     * 标题是卡片里的文本节点；`xsec_token` 直接从 href 里取（点开/下载单篇必需）。
+     */
+    private fun extractFromDom(html: String): List<ProfilePost> {
+        val out = LinkedHashMap<String, ProfilePost>()
+        val card = Regex(
+            """<a\s[^>]*href\s*=\s*["'](?:https?://[^"']*?)?/(?:explore|discovery/item)/([0-9a-zA-Z]+)([^"']*)["'][^>]*>([\s\S]{0,2000}?)</a>""",
+            RegexOption.IGNORE_CASE
+        )
+        for (m in card.findAll(html)) {
+            val noteId = m.groupValues[1]
+            if (out.containsKey(noteId)) continue
+            val query = m.groupValues[2]
+            val inner = m.groupValues[3]
+            val token = Regex("""xsec_token=([^&"'<]+)""").find(query)?.groupValues?.get(1)
+            val cover = Regex("""<img[^>]+src\s*=\s*["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+                .find(inner)?.groupValues?.get(1)?.takeIf { it.startsWith("http") }
+            val title = Regex(""">([^<>{}]{2,80})<""").findAll(inner)
+                .map { it.groupValues[1].trim() }
+                .firstOrNull { it.isNotBlank() && !it.startsWith("http") }
+            out[noteId] = ProfilePost(
+                id = noteId,
+                url = noteUrl(noteId, token),
+                title = title,
+                cover = cover,
+                kind = if (inner.contains("video", ignoreCase = true)) PostKind.VIDEO else PostKind.UNKNOWN
+            )
+            if (out.size >= maxPosts) break
+        }
+        return out.values.toList()
+    }
+
+    /**
+     * 从 WebView 钩子回收的 `user_posted` 分页响应里提取笔记。
+     *
+     * 回传格式：`JSON.stringify(window.__pages)`，即**字符串数组**，每个元素是一页响应原文
+     * （内部 JSON 引号被转义）。实测虚拟列表在无窗口 WebView 里拿到数据也不渲染新卡片，
+     * DOM 提不到，但这些响应里就是完整分页数据（note_id/display_title/cover/xsec_token…）。
+     */
+    private fun extractFromApiPages(input: String, ctx: ParseContext): List<ProfilePost> {
+        // 回传串可能套了多层编码（JS 侧两层 JSON.stringify + evaluateJavascript 解码 +
+        // 历史上还有经 DOM 序列化变成 &quot; 的形态）——逐层解码直到能切出笔记对象
+        var text = HtmlUtil.unescapeHtmlOf(input)
+        var posts = scanPages(text)
+        var guard = 0
+        while (posts.isEmpty() && guard++ < 4) {
+            val next = stripOneLayer(text) ?: break
+            text = HtmlUtil.unescapeHtmlOf(next)
+            posts = scanPages(text)
+        }
+        ctx.log(id, "分页解码：层数=$guard 长度=${text.length} 笔记=${posts.size}")
+        return posts
+    }
+
+    /** 剥掉一层 JSON 字符串包装（`"…"` → 内容按 JSON 转义还原）；纯 JVM 模块，不依赖 org.json */
+    private fun stripOneLayer(s: String): String? {
+        val t = s.trim()
+        if (!t.startsWith("\"") || t.length < 3) return null
+        val sb = StringBuilder(t.length)
+        var i = 1
+        while (i < t.length) {
+            val c = t[i]
+            when {
+                c == '\\' && i + 1 < t.length -> {
+                    val n = t[i + 1]
+                    when (n) {
+                        'n' -> sb.append('\n'); 'r' -> sb.append('\r'); 't' -> sb.append('\t')
+                        '"' -> sb.append('"'); '\\' -> sb.append('\\'); '/' -> sb.append('/')
+                        'u' -> {
+                            if (i + 5 < t.length) {
+                                val hex = t.substring(i + 2, i + 6)
+                                val cp = hex.toIntOrNull(16)
+                                if (cp == null) return null
+                                sb.append(cp.toChar()); i += 4
+                            }
+                        }
+                        else -> return null
+                    }
+                    i++
+                }
+                c == '"' -> return sb.toString().takeIf { it.isNotBlank() }
+                else -> sb.append(c)
+            }
+            i++
+        }
+        return null
+    }
+
+    /** 扫描分页响应数组：每页是「JSON 字符串」形态，锚点兼容 `{"` 与 `{\"` 两种转义层 */
+    private fun scanPages(pagesJson: String): List<ProfilePost> {
+        val out = LinkedHashMap<String, ProfilePost>()
+        var from = 0
+        while (out.size < maxPosts) {
+            val plain = pagesJson.indexOf("{\"", from)
+            val escaped = pagesJson.indexOf("{\\\"", from)
+            val open = when {
+                plain < 0 && escaped < 0 -> break
+                plain < 0 -> escaped
+                escaped < 0 -> plain
+                else -> minOf(plain, escaped)
+            }
+            val end = matchQuote(pagesJson, open) ?: break
+            val page = pagesJson.substring(open, end + 1)
+            from = end + 1
+
+            // 页内层是转义 JSON：先还原，再按对象切 notes
+            val body = HtmlUtil.unescapeJsonOf(page)
+            val notes = arraySliceAfter(body, "\"notes\"")
+            for (obj in jsonObjects(notes)) {
+                val noteId = HtmlUtil.jsonField(obj, "note_id").firstOrNull()?.takeIf { it.isNotBlank() }
+                    ?: continue
+                if (out.containsKey(noteId)) continue
+                val token = HtmlUtil.jsonField(obj, "xsec_token").firstOrNull()?.takeIf { it.isNotBlank() }
+                val cover = HtmlUtil.jsonField(obj, "url_default").firstOrNull()?.takeIf { it.startsWith("http") }
+                    ?: HtmlUtil.jsonField(obj, "url_pre").firstOrNull()?.takeIf { it.startsWith("http") }
+                val type = HtmlUtil.jsonField(obj, "type").firstOrNull().orEmpty()
+                out[noteId] = ProfilePost(
+                    id = noteId,
+                    url = noteUrl(noteId, token),
+                    title = HtmlUtil.jsonField(obj, "display_title").firstOrNull()?.takeIf { it.isNotBlank() },
+                    cover = cover,
+                    kind = if (type == "video") PostKind.VIDEO else PostKind.UNKNOWN,
+                    publishedAt = HtmlUtil.jsonField(obj, "time").firstOrNull()?.toLongOrNull(),
+                    likedCount = HtmlUtil.jsonField(obj, "liked_count").firstOrNull()?.toIntOrNull()
+                )
+                if (out.size >= maxPosts) break
+            }
+        }
+        return out.values.toList()
+    }
+
+    /** 从 `open` 处的引号串找到未转义的收尾引号，返回其下标 */
+    private fun matchQuote(text: String, open: Int): Int? {
+        var p = open + 1
+        while (p < text.length) {
+            when (text[p]) {
+                '\\' -> p++
+                '"' -> return p
+            }
+            p++
+        }
+        return null
+    }
+
+    /** 笔记页链接：必须带 SSR/DOM 里的 xsecToken，裸 /explore/<id> 会被判无效 */
+    private fun noteUrl(noteId: String, token: String?): String = buildString {
+        append("https://www.xiaohongshu.com/explore/").append(noteId)
+        if (!token.isNullOrBlank()) {
+            // token 是 base64 形态（含 + = /），拼进 query 前必须转义，否则参数解析会截断
+            val encoded = token.replace("+", "%2B").replace("=", "%3D").replace("/", "%2F")
+            append("?xsec_token=").append(encoded).append("&xsec_source=pc_user")
+        }
     }
 
     /** 按 UA 直连取页面；失败返回 null（由调用方决定是否降级） */
@@ -109,7 +300,7 @@ class XiaohongshuProfileParser : ProfileParser {
     private fun extractNoteCards(state: String): List<ProfilePost> {
         val out = LinkedHashMap<String, ProfilePost>()
         var from = 0
-        while (out.size < MAX_POSTS) {
+        while (out.size < maxPosts) {
             val idx = state.indexOf("\"noteCard\"", from)
             if (idx < 0) break
             val open = state.indexOf('{', idx)
@@ -133,10 +324,7 @@ class XiaohongshuProfileParser : ProfileParser {
             out[noteId] = ProfilePost(
                 id = noteId,
                 // 带上 xsecToken：裸 /explore/<id> 打开会被判无效
-                url = buildString {
-                    append("https://www.xiaohongshu.com/explore/").append(noteId)
-                    if (token != null) append("?xsec_token=").append(token).append("&xsec_source=pc_user")
-                },
+                url = noteUrl(noteId, token),
                 title = HtmlUtil.jsonField(block, "displayTitle").firstOrNull()?.takeIf { it.isNotBlank() },
                 cover = cover,
                 kind = if (type == "video") PostKind.VIDEO else PostKind.UNKNOWN,
@@ -176,7 +364,18 @@ class XiaohongshuProfileParser : ProfileParser {
 
     /** 取 `key` 之后第一个 `[...]` 的切片（用于 interactions 这类数组字段） */
     private fun arraySliceAfter(text: String, key: String): String {
-        val k = text.indexOf(key)
+        // 必须匹配完整的 "key": 形式——曾因裸 indexOf("\"notes\"") 命中封面 URL 里的
+        // "…/notes_pre_post/…"（同样含 "notes" 字样），把数组锚点找错导致整页解析为空
+        var k = -1
+        var from = 0
+        while (true) {
+            val i = text.indexOf(key, from)
+            if (i < 0) break
+            var j = i + key.length
+            while (j < text.length && (text[j] == ' ' || text[j] == ':')) j++
+            if (text.indexOf("[", j) == j) { k = i; break }
+            from = i + key.length
+        }
         if (k < 0) return ""
         val open = text.indexOf('[', k)
         if (open < 0) return ""
@@ -247,6 +446,8 @@ class XiaohongshuProfileParser : ProfileParser {
     /** 单页笔记数（SSR 首屏返回 30 余篇） */
     private companion object {
         const val PAGE_SIZE = 30
-        const val MAX_POSTS = 60
+
+        /** WebView 回传串里「渲染 DOM」与「分页接口响应 JSON」的分隔标记 */
+        const val PAGES_SEP = "<<<XHS_PAGES>>>"
     }
 }

@@ -54,11 +54,25 @@ object WebViewHtmlFetcher {
         "xiaohongshu.com" to Platform.XIAOHONGSHU
     )
 
-    fun fetch(context: Context, url: String, timeoutMs: Long = 40_000L): String? {
+    /**
+     * @param scrollTimes 页面渲染稳定后再滚到底部的次数（>0 时用于触发"无限滚动"加载更多）
+     * @param desktop 强制桌面 UA：小红书**主页**的 SSR/无限滚动 DOM 只在桌面端下发
+     *                （移动端 Web 渲染的 reds-note-card 里根本没有笔记 ID，无法提取）
+     */
+    fun fetch(
+        context: Context,
+        url: String,
+        timeoutMs: Long = 40_000L,
+        scrollTimes: Int = 0,
+        desktop: Boolean = false
+    ): String? {
         if (Looper.myLooper() == Looper.getMainLooper()) return null
-        android.util.Log.d(TAG, "fetch 开始：$url")
+        android.util.Log.d(TAG, "fetch 开始：$url scrollTimes=$scrollTimes desktop=$desktop")
+        // 滚动加载要额外时间：渲染 timeoutMs + 每滚一次 4s + 滚动后稳定轮询预算
+        val budget = timeoutMs + if (scrollTimes > 0) scrollTimes * 4_000L + 20_000L else 0L
         val latch = CountDownLatch(1)
         var html: String? = null
+        var polled = false
         var finalUrl: String? = null
         val appContext = context.applicationContext
         var wv: WebView? = null
@@ -73,16 +87,35 @@ object WebViewHtmlFetcher {
                     javaScriptEnabled = true
                     domStorageEnabled = true
                     blockNetworkImage = true          // 不加载图片，加速出 HTML
-                    userAgentString = uaFor(url)
+                    userAgentString = if (desktop) DESKTOP_UA else uaFor(url)
                 }
                 view.webViewClient = object : WebViewClient() {
+                    /**
+                     * 页面 JS 执行前注入 XHR 钩子：小红书主页分页接口带 x-s 签名、App 侧无法重放，
+                     * 但**页面自己会发**并拿到响应——把 `user_posted` 的响应原文暂存到 window.__pages。
+                     * 注意：evaluateJavascript 排在页面脚本之后，onPageStarted 里注入对**首屏**请求太晚，
+                     * 但分页请求是滚动之后才发的，仍然赶得上（另见 startPolling 里的兜底注入）。
+                     */
+                    override fun onPageStarted(v: WebView, u: String, favicon: android.graphics.Bitmap?) {
+                        if (u.contains("xiaohongshu.com")) installPageHook(v)
+                    }
+
                     override fun onPageFinished(v: WebView, u: String) {
                         android.util.Log.d(TAG, "onPageFinished：$u")
                         startPolling(v) { page ->
+                            if (polled) return@startPolling   // 轮询链可能并发回调，只认第一次收口
                             if (html == null) {
                                 html = page
                                 finalUrl = v.url      // 落最终 URL：小红书跳首页/登录页时靠它取证
-                                latch.countDown()
+                                if (scrollTimes > 0) {
+                                    // 需要"加载更多"：继续滚到底部触发无限滚动，再回传更长的页面
+                                    scrollToLoadMore(v, scrollTimes) { more ->
+                                        html = more
+                                        latch.countDown()
+                                    }
+                                } else {
+                                    latch.countDown()
+                                }
                             }
                         }
                     }
@@ -104,13 +137,13 @@ object WebViewHtmlFetcher {
                         android.util.Log.d(TAG, "fetch 超时")
                         latch.countDown()
                     }
-                }, timeoutMs)
+                }, budget)
             } catch (t: Throwable) {
                 android.util.Log.d(TAG, "fetch 主线程异常：${t.message}")
                 latch.countDown()
             }
         }
-        latch.await(timeoutMs + 3000, TimeUnit.MILLISECONDS)
+        latch.await(budget + 3000, TimeUnit.MILLISECONDS)
         wv?.let { v -> Handler(Looper.getMainLooper()).post { v.destroy() } }
         android.util.Log.d(TAG, "fetch 结束：html=${html?.length ?: "null"} finalUrl=$finalUrl")
         // 调试落盘：保留最后一次渲染页，供 adb pull 分析（应用私有外部目录，无需存储权限）
@@ -173,6 +206,109 @@ object WebViewHtmlFetcher {
             }
         }
         h.postDelayed(task, 2000)
+    }
+
+    /** 注入 XHR 钩子：把 `user_posted` 分页响应原文暂存到 `window.__pages`（幂等） */
+    private fun installPageHook(v: WebView) {
+        // 注意：这段 JS 每行拼接必须保持括号自平衡，改完请跑 `node scripts/check-inject-js.js` 校验语法
+        v.evaluateJavascript(
+            "(function(){" +
+                "if(window.__pages){return;}" +
+                "window.__pages=[];" +
+                "var origOpen=XMLHttpRequest.prototype.open;" +
+                "XMLHttpRequest.prototype.open=function(method,url){" +
+                "try{" +
+                "if(String(url).indexOf('user_posted')>-1){" +
+                "var xhr=this;" +
+                "xhr.addEventListener('load',function(){" +
+                "if(xhr.status===200 && String(xhr.responseText).length>40){" +
+                "window.__pages.push(xhr.responseText);" +
+                "}" +
+                "});" +
+                "}" +
+                "}catch(err){}" +
+                "return origOpen.apply(this,arguments);" +
+                "};" +
+                "})()"
+        ) {}
+    }
+
+    /**
+     *
+     * 小红书等平台的主页分页接口带 `x-s` 签名，App 侧无法重放；但**页面自己的 JS 能签名**。
+     * 实测（2026-10）：无窗口 WebView 里页面虚拟列表即使拿到第 2/3 页响应也不再渲染新卡片，
+     * 所以除了 DOM，还把钩子捕获的 `user_posted` 响应原文一并回传（`<<<XHS_PAGES>>>` 分隔），
+     * 解析器优先用接口 JSON，DOM 作兜底。
+     */
+    private fun scrollToLoadMore(v: WebView, times: Int, onDone: (String) -> Unit) {
+        val h = Handler(Looper.getMainLooper())
+        var i = 0
+        val SEP = "<<<XHS_PAGES>>>"
+
+        fun eval(js: String, cb: (String?) -> Unit) {
+            v.evaluateJavascript(js) { raw ->
+                cb(runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull())
+            }
+        }
+
+        fun grab() {
+            // 分页响应必须走 JSON 编码回传：若把它写进 DOM 再取 outerHTML，
+            // HTML 序列化会把引号变成 &quot;，接口 JSON 就废了
+            eval(
+                "document.documentElement.outerHTML + '$SEP' + JSON.stringify(JSON.stringify(window.__pages||[]))"
+            ) { page ->
+                android.util.Log.d(TAG, "滚动加载完成：len=${page?.length}")
+                onDone(page ?: "")
+            }
+        }
+
+        /** 给真容器强制视口高度并滚到底（无窗口 WebView 里 innerHeight=0，不制造溢出就永远滚不动） */
+        fun scrollOnce() {
+            // 分页请求由本次滚动触发，钩子必须在滚动前就位（onPageStarted 那次可能太晚，幂等补注入）
+            installPageHook(v)
+            eval(
+                "(function(){try{" +
+                    "var f=document.getElementById('userPostedFeeds');var sc=null;" +
+                    "if(f){var p=f.parentElement;while(p&&p!==document.documentElement){" +
+                    "var oy=getComputedStyle(p).overflowY;" +
+                    "if(oy==='auto'||oy==='scroll'){sc=p;break;}p=p.parentElement;}}" +
+                    "if(sc){sc.style.maxHeight='900px';sc.style.overflowY='scroll';" +
+                    "sc.scrollTop=sc.scrollHeight;sc.dispatchEvent(new Event('scroll'));}" +
+                    "window.dispatchEvent(new Event('scroll'));" +
+                    "return 'top='+(sc?Math.round(sc.scrollTop):-1)+' items='+document.querySelectorAll('.note-item').length+" +
+                    "' pages='+(window.__pages||[]).length;" +
+                    "}catch(e){return 'ERR:'+e.message;}})()"
+            ) { info ->
+                android.util.Log.d(TAG, "滚动 ${i}/${times}：$info")
+            }
+        }
+
+        fun step() {
+            if (i++ >= times) {
+                // 新数据是异步到达的：轮询到「分页响应数」连续两次不再增长再收口
+                var attempt = 0
+                var lastPages = -1
+                var stable = 0
+                val poll = object : Runnable {
+                    override fun run() {
+                        attempt++
+                        eval("(window.__pages||[]).length") { n ->
+                            val pages = n?.toIntOrNull() ?: 0
+                            stable = if (pages == lastPages) stable + 1 else 0
+                            lastPages = pages
+                            android.util.Log.d(TAG, "滚动后轮询 $attempt：pages=$pages stable=$stable")
+                            if ((stable >= 2 && attempt >= 3) || attempt >= 12) grab()
+                            else h.postDelayed(this, 2500)
+                        }
+                    }
+                }
+                h.postDelayed(poll, 2500)
+                return
+            }
+            scrollOnce()
+            h.postDelayed({ step() }, 3000)
+        }
+        step()
     }
 
     /** 返回拼好的 Cookie 请求头（同时写入 CookieManager 供页面内 XHR 使用） */

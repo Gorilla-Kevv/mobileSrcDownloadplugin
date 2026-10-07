@@ -98,4 +98,49 @@ class XiaohongshuProfileParserTest {
         assertTrue(err is ParseException)
         assertTrue("文案应说明原因: ${err?.message}", err!!.message!!.contains("笔记列表"))
     }
+
+    /**
+     * 加载更多：优先消费 WebView 钩子回收的 `user_posted` 分页响应。
+     *
+     * 夹具是**真机取证**（2026-10）：无窗口 WebView 里页面虚拟列表即使拿到第 2/3 页
+     * 响应也不再渲染新卡片，DOM 提取恒为 0，只能直接吃接口 JSON。
+     * 回传格式 = `渲染后的 DOM + "<<<XHS_PAGES>>>" + JSON.stringify(响应原文数组)`。
+     */
+    @Test
+    fun `加载更多消费分页接口响应并按 id 去重合并`() {
+        val fixture = fixture("xhs_profile.html")
+        val pages = fixture("xhs_profile_pages.json")
+        val logs = mutableListOf<String>()
+        var scrolled: Triple<String, Int, Boolean>? = null
+        val ctx = testContext(
+            FakeHttp { ok(fixture) },
+            cookies = mapOf(Platform.XIAOHONGSHU to "web_session=xyz"),
+            logs = logs,
+            webFetcherScroll = { u, times, desktop ->
+                scrolled = Triple(u, times, desktop)
+                fixture + "<<<XHS_PAGES>>>" + pages
+            }
+        )
+
+        val first = parser.parseProfile(url, "u1", ctx)          // pages=1 → 不翻页
+        assertNull("首屏不应触发滚动抓取", scrolled)
+
+        val result = parser.parseProfile(url, "u1", ctx, pages = 2)
+        assertEquals("翻页应请求桌面 UA 且滚多屏: $scrolled", true, scrolled?.third)
+        assertEquals(3, scrolled?.second)
+        assertTrue("应合并接口分页数据: $logs", logs.any { it.contains("加载更多：接口=") && !it.contains("接口=0") })
+        assertTrue(
+            "总数应超过首屏 2 篇: ${result.posts.size}",
+            result.posts.size > first.posts.size
+        )
+        assertEquals("按 id 去重后不应有重复", result.posts.size, result.posts.distinctBy { it.id }.size)
+
+        val added = result.posts.first { it.id == "6ac3a528000000001b02c389" }
+        assertEquals("奥斯卡获奖短片导演首部长片敲定卡司，杰克・奥康奈尔搭档敖德萨・阿锡安开启荒诞公路", added.title)
+        assertTrue("URL 必须带 xsec_token: ${added.url}", added.url.contains("xsec_token="))
+        assertTrue("token 里的 = 必须转义: ${added.url}", added.url.contains("%3D"))
+        assertEquals(4, added.likedCount)
+        assertEquals(1791208560000L, added.publishedAt)
+        assertTrue("封面取 url_default: ${added.cover}", added.cover!!.startsWith("http"))
+    }
 }

@@ -34,7 +34,11 @@ class ClipDownApp : Application() {
             config = settings.parserConfig(),
             cookieProvider = { platform -> CookieStore.get(this, platform) },
             logger = { tag, msg -> Log.d(tag, msg) },
-            webFetcher = { url -> WebViewHtmlFetcher.fetch(this, url) }
+            webFetcher = { url -> WebViewHtmlFetcher.fetch(this, url) },
+            // 主页"加载更多"：平台分页接口需要签名，改为让页面自己的 JS 在 WebView 里滚动加载
+            webFetcherScroll = { url, times, desktop ->
+                WebViewHtmlFetcher.fetch(this, url, timeoutMs = 90_000L, scrollTimes = times, desktop = desktop)
+            }
         )
 
         // 下载引擎：并发度与网络策略在设置变更后通过 updateConfig 热更新

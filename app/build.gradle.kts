@@ -85,6 +85,11 @@ android {
         }
     }
     buildTypes {
+        debug {
+            // debug 包必须保持 debug 签名与可调试：否则继承 release 正式签名，
+            // 既装不进已装 release 包的机器，也无法 run-as / 调试器附加
+            signingConfig = signingConfigs.getByName("debug")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 38 完成（主页解析多标签 + 进程重启恢复：底部导航加入口、`ProfileCenter` 重构为多标签会话、序列化到 `filesDir/profile_sessions.json`）
-- 下一阶段任务：主页分页加载；其他平台主页解析器接入；是否需要标签拖动排序
+- 当前正在开发任务：阶段 39 完成（主页「加载更多」端到端跑通：桌面 UA + 容器强制视口 + XHR 钩子回收 `user_posted` 分页 JSON，实测 32→92→122 篇；顺带修掉 debug 包继承 release 签名的阻塞级构建 bug）
+- 下一阶段任务：加载更多深翻页（同一次抓取分步回滚再滚底，突破单会话 3 页上限）；其他平台主页解析器接入；是否需要标签拖动排序
 - 可提前进行的任务：真机看 UI 实际观感；阶段 29 真机复测；X 单视频下载闭环
-- 未完成的任务：主页分页加载；其他平台主页解析；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
-- 测试基线：parser **74 例** + downloader 30 例 + app **4 例**全绿
-- 说明：BY ZCode（本项目全程 ZCode 系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
+- 未完成的任务：加载更多深翻页；其他平台主页解析；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
+- 测试基线：parser **76 例** + downloader 30 例 + app **4 例**全绿
+- 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.06 11:30
+- 本次文档更新时间：10.07 22:45
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -584,3 +584,29 @@
 - 改动文件：`ProfileCenter.kt`（重构为 sessions + 持久化）、`ProfileScreen.kt`（标签栏 + 顶栏重写）、`AppNav.kt`（主页解析入底栏 + 跳页保持标签状态）、`ClipDownApp.kt`（install 恢复）、`HANDOFF.md`、`PROGRESS.md`
 - 后续：①主页分页加载（按"加载更多"）②其他平台主页解析器接入 ③是否需要"标签拖动排序"（暂未做）
 - 本次文档更新时间：10.07 12:15
+
+## 阶段 39 主页「加载更多」端到端跑通（XHR 钩子回收分页接口）+ 修 debug 签名 bug [计划时间：10.07 12:20 BY Qoder][完成时间：10.07 22:40 BY Qoder]
+- 方向选择：阶段 37/38 待办里唯一环境无关、可自主收口的一项——「加载更多」代码链路在阶段 38 只写了半成品（工作区未提交、且编译不过），本轮实测跑通并补齐
+- **先修阻塞级构建 bug：debug 包继承了 release 正式签名**
+  - 现象：`adb install -r` 报 `INSTALL_FAILED_UPDATE_INCOMPATIBLE`（签名不符）/`INSTALL_FAILED_VERSION_DOWNGRADE`；`run-as` 报 `package not debuggable`；**实测时一直跑的是设备上的旧包**，导致"翻页区没渲染""滚动无效"等一连串假象
+  - 根因：`app/build.gradle.kts` 的正式签名写在 `buildTypes.release` 内、但 `signing.properties` 存在时 debug 也走了同一套配置 → debug 包不可调试且与 release 同签名
+  - 修复：显式给 `debug` 构建类型设 `signingConfig = signingConfigs.getByName("debug")`；换签名需 `uninstall` 后重装，Cookie 用 `adb push` + `run-as cp` 恢复（避开坑 14/15）
+  - 同时暴露阶段 38 两处编译错误：`ParserEngine.bootstrap` 没有 `webFetcherScroll` 形参（属性/赋值/`context()` 三处都没接）、`ProfileScreen` 缺 `SecondaryButton` import——**阶段 38 的"编译与现场验证"实际未通过**
+- **加载更多链路跑通（小红书主页，真机取证）**
+  - 请求链：`ProfileCenter.loadMore()` → `ParserEngine.parseProfile(url, pages)` → `XiaohongshuProfileParser`（pages>1）→ `webFetcherScroll(url, (pages-1)*3, desktop=true)` → `WebViewHtmlFetcher.fetch(scrollTimes, desktop)`
+  - **桌面 UA 是硬条件**：`WebViewHtmlFetcher` 原先对小红书一律用移动端 UA（笔记页需要），但**主页**的移动端 Web 渲染出 `reds-note-card` 结构里**根本没有笔记 ID/链接**，提取恒为 0 → 给 `fetch()` 加 `desktop` 参数并贯通 SPI（`ParseContext.webFetcherScroll` 变为三参）
+  - **无窗口 WebView 里原生滚动不可能成立**（实测诊断）：`window.innerWidth/innerHeight=0`、`documentElement.scrollHeight=0`、容器 `scrollTop` 设了回 0 → 必须**给真容器强制视口高度**（沿 `#userPostedFeeds` 找 `overflowY:auto|scroll` 的祖先，设 `maxHeight=900px; overflowY=scroll`）制造溢出，`scrollTop` 才生效（实测 top=3674）
+  - **虚拟列表拿到数据也不渲染新卡片**：滚动后页面确实发出了第 2/3 页 `GET /api/sns/web/v1/user_posted?num=30&cursor=<noteId>&xsec_token=…` 并拿到 `200 + notes[]`，但 DOM 里 `.note-item` 恒为 30 → **DOM 提取路线作废，改为直接回收接口 JSON**
+  - 回收方式：`onPageStarted` + 滚动前幂等注入 XHR 钩子，把 `user_posted` 的 `responseText` 攒进 `window.__pages`；收口时回传 `outerHTML + "<<<XHS_PAGES>>>" + JSON.stringify(JSON.stringify(__pages))`
+    - **必须两层 JSON 编码**：若把响应写进 DOM 再取 `outerHTML`，HTML 序列化会把引号变成 `&quot;`，接口 JSON 直接报废（本轮踩过）
+    - 收口条件从"页面长度稳定"改为"**分页响应数量**连续两次不再增长"（DOM 不再变化但数据在异步到达）
+  - 解析侧 `extractFromApiPages`：自适应逐层解码（`unescapeHtml` + 手写 JSON 字符串剥离，纯 JVM 不依赖 org.json），页锚点同时兼容 `{"` 与 `{\"`；字段取 `note_id/display_title/cover.url_default→url_pre/xsec_token/type/time/interact_info.liked_count`；`xsec_token` 含 `+ =`，拼 URL 前必须转义
+  - 修 `arraySliceAfter` 误锚：裸 `indexOf("\"notes\"")` 会命中封面 URL 里的 `…/notes_pre_post/…` → 改为必须匹配完整 `"key":` 且紧跟 `[`
+  - 上限动态化：`maxPosts = (pages*60).coerceIn(120,360)`——固定上限时第二轮抓到的新数据会被前几轮已知项挤掉（实测 92 篇后再翻页恒为"没有更多了"）
+  - 顺带修：`startPolling` 回调并发重入（日志出现三条"页面已稳定"）→ 加 `polled` 一次性收口标志；`fetch` 超时预算改为 `timeoutMs + scrollTimes*4s + 20s`，避免主超时在滚动中途拆掉 WebView
+- **端到端实测（模拟器 clip34 + 真实 Cookie）**：首屏 SSR 32 篇 → 第 1 轮 `接口=60 新增=60` → UI「加载更多（已 92 篇）」 → 第 2 轮 `接口=90 新增=90` → UI **「加载更多（已 122 篇）」** → `profile_sessions.json` 复核 posts=122 → `am force-stop` 杀进程重开 → 标签显示 **「全部 122」** ✓（勾选/筛选/标签保持）
+- **能力边界（实测确认，非缺陷）**：一次 WebView 会话内页面只滚动加载约 3 页（`__pages` 封顶 3），此后 `scrollTop` 已在底部不再产生新的交叉观察 → 第二轮起接口不再前进，UI 给「没有更多了」。要更深翻页需在同一次抓取里**先回滚一段再滚到底**（分步推进），留作后续
+- 测试：parser **76 例全绿**（新增「加载更多消费分页接口响应并按 id 去重合并」，夹具 `xhs_profile_pages.json` 为真机回收的 3 页真实响应）；downloader 30、app 4 全绿
+- 新增工具：`scripts/check-inject-js.js`——从 Kotlin 拼串里抽出注入 JS 并用 node 校验语法（本轮两个"钩子静默失效"的根因都是 JS 语法错，`evaluateJavascript` 对语法错只回 `null`）
+- 改动文件：`app/build.gradle.kts`（debug 签名）、`app/clip/WebViewHtmlFetcher.kt`（desktop UA/钩子/容器滚动/分页回传/超时预算/收口标志）、`app/ClipDownApp.kt`（三参 webFetcherScroll + 90s 预算）、`parser/spi/{PlatformParser,ProfileParser}.kt`（签名扩展）、`parser/core/ParserEngine.kt`（接线）、`parser/parsers/XiaohongshuProfileParser.kt`（接口分页解析）、`app/ui/profile/{ProfileCenter,ProfileScreen}.kt`（阶段 38 未完成接线）、测试与夹具
+- 本次文档更新时间：10.07 22:40

@@ -49,6 +49,9 @@ object ParserEngine {
     private var webFetcher: ((url: String) -> String?)? = null
 
     @Volatile
+    private var webFetcherScroll: ((url: String, scrollTimes: Int, desktop: Boolean) -> String?)? = null
+
+    @Volatile
     private var logger: ((String, String) -> Unit)? = null
 
     @Volatile
@@ -66,13 +69,15 @@ object ParserEngine {
         http: HttpFacade? = null,
         cookieProvider: (Platform) -> String? = { null },
         logger: ((String, String) -> Unit)? = null,
-        webFetcher: ((url: String) -> String?)? = null
+        webFetcher: ((url: String) -> String?)? = null,
+        webFetcherScroll: ((url: String, scrollTimes: Int, desktop: Boolean) -> String?)? = null
     ) {
         this.config = config
         this.http = http ?: OkHttpFacade(config.connectTimeoutMs, config.readTimeoutMs)
         this.cookieProvider = cookieProvider
         this.logger = logger
         this.webFetcher = webFetcher
+        this.webFetcherScroll = webFetcherScroll
         if (!bootstrapped) {
             PlatformRegistry.registerAll(defaultParsers())
             ProfileRegistry.registerAll(defaultProfileParsers())
@@ -110,7 +115,7 @@ object ParserEngine {
         XiaohongshuProfileParser()
     )
 
-    private fun context(): ParseContext = ParseContext(config, http, cookieProvider, logger, webFetcher)
+    private fun context(): ParseContext = ParseContext(config, http, cookieProvider, logger, webFetcher, webFetcherScroll)
 
     /** 从剪贴板文本中解析：先抽链接，再走完整链路 */
     fun parseText(text: String?): ParseResult {
@@ -154,7 +159,7 @@ object ParserEngine {
      * 刻意不复用 [parse] 的降级链——主页是集合形态，用作品页的降级链
      * （远端兜底 / 通用网页解析）只会抓回一页垃圾。非主页链接直接抛明确异常。
      */
-    fun parseProfile(rawUrl: String): ProfileResult {
+    fun parseProfile(rawUrl: String, pages: Int = 1): ProfileResult {
         var url = UrlUtil.normalize(rawUrl)
         if (UrlUtil.isShortLink(url)) {
             runCatching { expand(url) }.getOrNull()
@@ -172,7 +177,7 @@ object ParserEngine {
                 match.platform,
                 retryable = false
             )
-        return parser.parseProfile(url, match.handle, context())
+        return parser.parseProfile(url, match.handle, context(), pages)
     }
 
     /**

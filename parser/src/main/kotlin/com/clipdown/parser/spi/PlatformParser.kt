@@ -23,7 +23,17 @@ class ParseContext(
      * 用于 WAF 指纹拦截（小红书）与 JS 壳页（Instagram）等 OkHttp 无法直取的场景。
      * 返回渲染完成后的页面 HTML；失败返回 null。
      */
-    val webFetcher: ((url: String) -> String?)? = null
+    val webFetcher: ((url: String) -> String?)? = null,
+    /**
+     * 带滚动加载的真浏览器抓取（App 层以 WebView 实现）。
+     *
+     * 用途：主页/列表的"加载更多"——分页接口通常需要签名，App 侧无法重放，
+     * 但页面自己的 JS 能签名；让它在真浏览器里滚动触发无限滚动，再取回渲染后的 DOM。
+     *
+     * @param scrollTimes 滚到底部的次数（每滚一次通常多加载一页）
+     * @param desktop 强制桌面 UA：部分平台（如小红书主页）只在桌面端下发完整 DOM
+     */
+    val webFetcherScroll: ((url: String, scrollTimes: Int, desktop: Boolean) -> String?)? = null
 ) {
     fun log(tag: String, msg: String) = logger?.invoke(tag, msg)
 

@@ -31,7 +31,13 @@ sealed interface ProfileUiState {
         /** 类型筛选：null = 全部 */
         val filter: PostKind? = null,
         /** 批量下载进行中的进度文案 */
-        val progress: String? = null
+        val progress: String? = null,
+        /** 已加载的页数（"加载更多"时 +1 重新拉取并合并） */
+        val pageCount: Int = 1,
+        /** 正在加载下一页 */
+        val loadingMore: Boolean = false,
+        /** 翻页过程中的临时提示（如"没有更多了"） */
+        val hint: String? = null
     ) : ProfileUiState {
         /** 当前筛选下可见的笔记 */
         val visible: List<ProfilePost>
@@ -97,7 +103,8 @@ object ProfileCenter {
         val url: String,
         val title: String,
         val result: ProfileResult,
-        val selected: List<String> = emptyList()
+        val selected: List<String> = emptyList(),
+        val pageCount: Int = 1
     )
 
     private val json = Json {
@@ -120,7 +127,7 @@ object ProfileCenter {
             val restored = list.takeLast(MAX_SESSIONS).map { p ->
                 ProfileSession(
                     url = p.url,
-                    state = ProfileUiState.Loaded(p.result, p.selected.toSet()),
+                    state = ProfileUiState.Loaded(p.result, p.selected.toSet(), pageCount = p.pageCount),
                     title = p.title.ifBlank { p.result.displayName }
                 )
             }
@@ -136,7 +143,7 @@ object ProfileCenter {
         runCatching {
             val list = sessions.mapNotNull { s ->
                 val st = s.state as? ProfileUiState.Loaded ?: return@mapNotNull null
-                PersistedSession(s.url, s.title, st.result, st.selected.toList())
+                PersistedSession(s.url, s.title, st.result, st.selected.toList(), st.pageCount)
             }
             f.writeText(json.encodeToString(list))
         }
@@ -322,4 +329,39 @@ object ProfileCenter {
     }
 
     fun clearProgress() = mutateActive { it.copy(progress = null) }
+
+    // ────────────────────────── 加载更多（翻页） ──────────────────────────
+    //
+    // 平台的分页接口需要签名，App 侧无法重放；这里按"整页重新拉取 N 页再合并"的方式翻页：
+    // 解析器内部会让页面自己的 JS 在 WebView 里滚动加载，取回后与已有笔记按 id 去重合并，
+    // 已勾选的内容与筛选状态保持不变。
+
+    suspend fun loadMore() {
+        val url = activeUrl ?: return
+        val cur = active?.state as? ProfileUiState.Loaded ?: return
+        if (cur.loadingMore) return
+        val target = cur.pageCount + 1
+
+        mutateActive { it.copy(loadingMore = true, hint = null) }
+        val r = withContext(Dispatchers.IO) { runCatching { ParserEngine.parseProfile(url, target) } }
+        val next = r.getOrNull()
+
+        if (next == null) {
+            val msg = r.exceptionOrNull()?.message ?: "加载更多失败"
+            mutateActive { it.copy(loadingMore = false, hint = "加载更多失败：$msg") }
+            return
+        }
+
+        val known = cur.result.posts.map { it.id }.toSet()
+        val added = next.posts.filter { it.id !in known }
+        val merged = cur.result.copy(posts = cur.result.posts + added, hasMore = next.hasMore)
+        mutateActive {
+            it.copy(
+                result = merged,
+                loadingMore = false,
+                pageCount = if (added.isEmpty()) cur.pageCount else target,
+                hint = if (added.isEmpty()) "没有更多了" else null
+            )
+        }
+    }
 }
