@@ -93,7 +93,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 43（气泡光环紧贴 + 长按关闭气泡）完成**——①`BubbleCircle` 光环半径改为「logo 半径 + 半个描边宽」（原按 64dp 画布内缩，环与头像间有约 2.3dp 空隙），logo 尺寸与环半径共用 `BUBBLE_LOGO_SIZE_DP=52f`；②View 级触摸加长按判定（700ms）：未移动即 `closeBubble()`（收弹层→`stopForeground`→`stopSelf`+Toast+`setFloatEnabled(false)` 防自动复活），拖拽/抬手/取消均取消定时器，长按后吞掉单击双击。气泡手势总表：**单击=识别剪贴板／拖拽=移动／双击=跳主界面／长按=关闭**
+- 当前：**阶段 44（真机二轮反馈）完成**——①光环内叠 1dp 无缝融合 ②服务重启过滤 SharedFlow replay 的旧链接（重开气泡不再弹"再次解析"确认卡）③X 图片推文：实测 tweet-result 对近期推文 `photos[].url` 正常、`photo_info` 已被上游移除、老/删除推文 404、**敏感内容标记推文 200 但不下发媒体**——已按 404/敏感/普通三态给文案+分诊日志（oEmbed/embed 页实测拿不到 pbs 直链，均不可作兜底）④`IgRiskGuard` 新增 `countsFailure`（缺 Cookie 传 false 不计入冷却，单篇链路已接，主页链路原有关前置检查）——未配 Cookie 连测 reel 不再误锁 10 分钟
+- 上轮：**阶段 43（气泡光环紧贴 + 长按关闭气泡）完成**——①`BubbleCircle` 光环半径改为「logo 半径 + 半个描边宽」（原按 64dp 画布内缩，环与头像间有约 2.3dp 空隙），logo 尺寸与环半径共用 `BUBBLE_LOGO_SIZE_DP=52f`；②View 级触摸加长按判定（700ms）：未移动即 `closeBubble()`（收弹层→`stopForeground`→`stopSelf`+Toast+`setFloatEnabled(false)` 防自动复活），拖拽/抬手/取消均取消定时器，长按后吞掉单击双击。气泡手势总表：**单击=识别剪贴板／拖拽=移动／双击=跳主界面／长按=关闭**
 - 上轮：**阶段 42（真机测试 9 项反馈修复）完成**——①小红书免登录定性（真机实测可解析，loginRequired=false，Cookie 入口与 loginRequired 解耦）②竖条 64dp 定宽修显示不全 ③多图默认全选/取消全选展开（defaultSelection 四处接线）④首页解析补 UrlUtil.extractFirst 与气泡链路对齐 ⑤已解析链接弹竖条"再次解析"提醒（带抑制窗口）⑥气泡右下角徽标取消 ⑦竖条收回（× 按钮 + 触摸分区恢复）⑧下载页类别按 mimeType（单条不成组/视频/图集）⑨居中弹窗去毛玻璃去投影精简化。详见 PROGRESS 阶段 42，**待真机复验**
 - 上轮：**阶段 41（IG / X 博主主页解析）完成 X 侧实测、IG 侧代码就绪**——① 新发现 **X 主页可免登录**：`syndication.twitter.com/srv/timeline-profile/screen-name/<handle>` 的 `__NEXT_DATA__` 给 100 条时间线 + 完整 user 统计（旧文档"X 无公开时间线"结论作废），模拟器实测 Elon Musk 主页 100 条渲染正常、点开视频篇拿到 3 档 mp4 并**实际下载落盘**；② IG 主页确认**无免登录路径**（`web_profile_info` 429、主页 HTML 是登录墙），已实现三通道 `InstagramProfileParser` + 单测，待有效 Cookie 校准；③ **IG 冷却抽成 `IgRiskGuard` 共享保险丝**（单篇与主页共用失败计数，缺 Cookie 不计入）
 - 待复验：**XHS 主页回归未通过——是会话失效不是代码回归**。同一份 Cookie 从 291KB/32 篇 SSR 退化为 40KB 登录墙（主机 curl 同样失败，见坑 28），需重新导出 Cookie 后复验

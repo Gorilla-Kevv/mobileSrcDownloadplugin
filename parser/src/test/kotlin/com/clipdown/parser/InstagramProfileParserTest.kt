@@ -62,6 +62,24 @@ class InstagramProfileParserTest {
     }
 
     @Test
+    fun `guard countsFailure=false 不触发冷却`() {
+        val ctx = testContext(FakeHttp { notFound() }, cookies = emptyMap())
+        repeat(3) {
+            runCatching { IgRiskGuard.guard(ctx, "test", countsFailure = false) { error("fail") } }
+        }
+        assertEquals("未计入的失败不应冷却（缺 Cookie 场景，2026-10 真机反馈）", 0, IgRiskGuard.remainingMinutes)
+    }
+
+    @Test
+    fun `guard countsFailure=true 连续两次进入冷却`() {
+        val ctx = testContext(FakeHttp { notFound() }, cookies = emptyMap())
+        repeat(2) {
+            runCatching { IgRiskGuard.guard(ctx, "test", countsFailure = true) { error("fail") } }
+        }
+        assertTrue("计入的失败连续两次应冷却", IgRiskGuard.remainingMinutes > 0)
+    }
+
+    @Test
     fun `接口通道给出完整字段`() {
         val r = parser.parseProfile(
             url, "nasa",

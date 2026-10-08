@@ -52,6 +52,10 @@ class XParser : PlatformParser {
             .getOrElse { throw ParseException("网络请求失败：${it.message}", platform) }
         val body = resp.body
             ?: throw ParseException("公开接口返回空数据", platform)
+        if (resp.code == 404) {
+            // 实测（2026-10）：tweet-result 对已删除/较老的推文返回 404 HTML 页
+            throw ParseException("推文不存在、已删除或超出公开接口的覆盖范围", platform, retryable = false)
+        }
         if (resp.code >= 400) throw ParseException("公开接口返回 ${resp.code}", platform)
 
         val root = runCatching { json.parseToJsonElement(body).jsonObject }
@@ -82,17 +86,8 @@ class XParser : PlatformParser {
                     headers = xHeaders
                 )
             }
-            o["photo_info"]?.jsonObject?.str("url")?.let { u ->
-                media += MediaItem(
-                    id = "x-p-${media.size}",
-                    url = u,
-                    kind = MediaKind.IMAGE,
-                    quality = "原图",
-                    rank = 80,
-                    container = "jpg",
-                    headers = xHeaders
-                )
-            }
+            // 注：mediaDetails[].photo_info 已被上游移除（2026-10 实测为 undefined），
+            // 图片统一走下方 photos[] 通道
         }
 
         root["photos"]?.jsonArray?.forEachIndexed { i, el ->
@@ -109,7 +104,25 @@ class XParser : PlatformParser {
             )
         }
 
-        if (media.isEmpty()) throw ParseException("该推文没有可下载的媒体（可能是纯文本或已删除）", platform)
+        if (media.isEmpty()) {
+            // 空媒体分诊：敏感内容标记时公开接口会 200 返回但不下发媒体（实测 2026-10），
+            // entities.media 仍在（只剩 t.co 短链）；用日志+文案把"为什么没有媒体"说清楚
+            val sensitive = root["possibly_sensitive"]?.jsonPrimitive?.contentOrNull == "true"
+            val hasMediaEntity = root["entities"]?.jsonObject?.containsKey("media") == true
+            ctx.log(
+                id,
+                "tweet-result 无媒体：sensitive=$sensitive entityMedia=$hasMediaEntity " +
+                    "created=${root.str("created_at")} type=${root.str("__typename")}"
+            )
+            throw ParseException(
+                when {
+                    sensitive -> "该推文带有敏感内容标记，公开接口不下发媒体，暂时无法下载"
+                    hasMediaEntity -> "推文媒体被公开接口隐藏（常见于敏感内容或较老的推文），暂时无法下载"
+                    else -> "该推文没有可下载的媒体（可能是纯文本或已删除）"
+                },
+                platform
+            )
+        }
 
         val user = root["user"]?.jsonObject
         return ParserDsl.result(

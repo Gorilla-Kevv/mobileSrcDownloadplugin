@@ -32,7 +32,13 @@ object IgRiskGuard {
             return if (left <= 0) 0 else (left / 60_000).toInt() + 1
         }
 
-    fun <T> guard(ctx: ParseContext, caller: String, block: () -> T): T {
+    /**
+     * @param countsFailure 本次失败是否计入风控计数。**缺登录态的调用方应传 false**：
+     *   未配 Cookie 时单篇解析（embed/WebView 通道）与主页解析本来就会失败，
+     *   真实用户"试两次没配上 Cookie"就会把自己锁进冷却（2026-10 真机实测反馈）。
+     *   失败异常照常抛出，只是不累加计数、不触发冷却。
+     */
+    fun <T> guard(ctx: ParseContext, caller: String, countsFailure: Boolean = true, block: () -> T): T {
         val now = System.currentTimeMillis()
         val remainMin = remainingMinutes
         if (remainMin > 0) {
@@ -47,14 +53,16 @@ object IgRiskGuard {
             failStreak = 0
             return result.getOrThrow()
         }
-        failStreak++
-        if (failStreak >= THRESHOLD) {
-            cooldownUntil = now + COOLDOWN_MS
-            ctx.log(
-                caller,
-                "连续失败 $failStreak 次，冷却 ${COOLDOWN_MS / 60_000} 分钟（风控保护，期间不再发起请求）"
-            )
-            failStreak = 0
+        if (countsFailure) {
+            failStreak++
+            if (failStreak >= THRESHOLD) {
+                cooldownUntil = now + COOLDOWN_MS
+                ctx.log(
+                    caller,
+                    "连续失败 $failStreak 次，冷却 ${COOLDOWN_MS / 60_000} 分钟（风控保护，期间不再发起请求）"
+                )
+                failStreak = 0
+            }
         }
         throw result.exceptionOrNull() ?: ParseException("解析失败", Platform.INSTAGRAM)
     }

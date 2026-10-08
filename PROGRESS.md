@@ -1,15 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 43 完成（光环紧贴气泡 + 长按气泡关闭悬浮窗）
-- 下一阶段任务：真机复验阶段 42 九项 + 阶段 43 两项；IG 主页 Cookie 实测；B 站/微博主页接入
+- 当前正在开发任务：阶段 44 完成（光环无缝融合 / 重开气泡不再弹"再次解析" / X 图片推文分诊文案+404 文案 / IG 缺 Cookie 不计入冷却）
+- 下一阶段任务：真机复验阶段 42/43/44 各项；用户重导出 XHS Cookie 复验主页；IG 主页 Cookie 实测
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
-- **发布约定（2026-10-09）**：每轮修完问题后必须走远程更新链路发版（`bash scripts/publish-release.sh --bump patch --notes "…"`），真机在应用内一键覆盖安装；发布后提交自增的 `version.properties`
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **88 例** + downloader 30 例 + app **4 例**全绿
+- 测试基线：parser **91 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.08 23:59
+- 本次文档更新时间：10.09 09:40
 
 
 ## 阶段 42 真机测试 9 项反馈修复（竖条/选择流/入口统一/提醒/下载类别/弹窗精简） [计划时间：10.08 23:40 BY Qoder][完成时间：10.08 23:59 BY Qoder]
@@ -38,6 +37,17 @@
 - 改动文件：`floatwindow/FloatingWindowService.kt`、PROGRESS/HANDOFF
 - 待真机复验：①环与头像目视无间隙 ②长按约 0.7s 关闭且不再触发点击、拖拽不误触
 - 本次文档更新时间：10.09 00:20
+
+## 阶段 44 真机二轮反馈（光环无缝 / 重开气泡弹确认卡 / X 图片推文无媒体 / IG 误触冷却） [计划时间：10.09 09:00 BY Qoder][完成时间：10.09 09:40 BY Qoder]
+- 用户真机（v1.1.1）四项反馈：
+- **①光环仍有间隙**：v1.1.1 已把环半径改为 logo 半径+半描边（理论内缘恰好贴合），但截图（时间戳在发版前后之间，疑似旧版）仍见间隙 → 本次直接**内叠 1dp**（`logo半径 + 半描边 - 1dp`，环内缘压进头像边缘），任何相位任何颜色目视无缝
+- **②关闭气泡重开后弹"已解析过，是否要再次解析"**：`LinkCenter.detected` 是 `replay=1` 的 SharedFlow——服务重启（长按关闭后再开）时把上一条旧链接重播进 observeLinks，命中 seen_links 就弹确认竖条。修法：服务记录 `startedAtMs`，**重播的旧时间戳链接直接忽略**（不动 LinkCenter，避免影响 last 状态流的其他消费者）
+- **③X 图片推文"没有可下载的媒体"（严重）**：主机取证（经代理）——syndication tweet-result 对**近期**图片推文返回 `photos[].url`（pbs 直链）+`mediaDetails`，我们提取路径没问题；但 `mediaDetails[].photo_info` 已被上游移除（undefined，旧死代码已删）；**已删除/较老推文返回 404 HTML**；**敏感内容标记（possibly_sensitive）的推文 200 返回但不下发媒体**（entities.media 只剩 t.co 短链，oEmbed/embed 页也拿不到直链，均实测）。修复：①404 给出"推文不存在、已删除或超出公开接口覆盖范围"；②空媒体时按 `possibly_sensitive`/`entities.media` 分诊给明确文案+取证日志（sensitive/entityMedia/created_at/type）。用户那条 2025-07 的推文大概率属于"敏感标记被隐藏"或"超龄"——待用户提供原链接可进一步定性
+- **④IG 未配 Cookie 测 2 次 reel 就触发冷却**：`InstagramParser.parse` 把整个 parseChannels 包在 guard 里——缺 Cookie 时 embed/WebView 通道对 reel 几乎必失败，2 次真实尝试 = 2 次计数 = 冷却 10 分钟（主页链路阶段 41 已做"缺 Cookie 提到 guard 外"，单篇漏了）。修法：`IgRiskGuard.guard` 新增 `countsFailure` 参数（默认 true 不影响既有语义），单篇链路按 `cookieProvider` 是否为空传入；失败异常照常抛、只是不计数。用户实测场景（未配 Cookie 连试）不再触发冷却
+- 测试：parser **91 例全绿**（+2 guard 计数开关用例、+敏感文案用例、+photos 提取用例，-0）；`:app:assembleDebug` 全绿；发布 v1.1.2（versionCode 7）
+- 改动文件：`floatwindow/FloatingWindowService.kt`（①②）、`parser/parsers/{XParser,IgRiskGuard,InstagramParser}.kt`（③④）、`parser/test/{XParserTest,InstagramProfileParserTest}.kt`、文档
+- 待真机复验：①光环无缝 ②重开气泡不再弹确认卡 ③X 图片推文（普通新推文应正常出原图；若再遇"没有可下载的媒体"看新文案与 logcat 分诊日志）④未配 Cookie 连测 reel 不再出现"冷却中"
+- 本次文档更新时间：10.09 09:40
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：

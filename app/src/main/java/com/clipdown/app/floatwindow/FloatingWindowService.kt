@@ -166,6 +166,9 @@ class FloatingWindowService : Service() {
 
     private val settings by lazy { SettingsRepository(this) }
 
+    /** 服务启动时刻：LinkCenter 的 SharedFlow 带 replay=1，重启会重播上一条旧链接，据此过滤 */
+    private val startedAtMs = System.currentTimeMillis()
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
@@ -497,6 +500,9 @@ class FloatingWindowService : Service() {
     private fun observeLinks() {
         LinkCenter.detected
             .onEach { link ->
+                // 服务重启时 replay=1 会把上一条旧链接重播进来（例如长按关闭气泡前识别过的
+                // 那条），重新打开气泡就会立刻弹"已解析过，是否要再次解析"——旧链接直接忽略
+                if (link.detectedAtMillis < startedAtMs) return@onEach
                 // 识别记忆：检测过的链接持久化，自动流程只给"新面孔"
                 val seenBefore = settings.seenLinks.first()
                 scope.launch { settings.markLinkSeen(link.url) }
@@ -1226,9 +1232,9 @@ private fun BubbleCircle(
     ) {
         Canvas(modifier = Modifier.size(64.dp)) {
             val stroke = 2.5.dp.toPx()
-            // 光环紧贴头像圆：半径 = logo 半径 + 半个描边宽。
-            // 原来按 64dp 画布内缩一整个描边，环与头像之间留了一圈空隙（用户反馈）。
-            val radius = BUBBLE_LOGO_SIZE_DP.dp.toPx() / 2f + stroke / 2f
+            // 光环与头像圆完全融合：半径再向内叠 1dp（环内缘压进头像边缘 1dp），
+            // 任何相位/任何颜色都不会出现目视间隙（用户两轮反馈）
+            val radius = BUBBLE_LOGO_SIZE_DP.dp.toPx() / 2f + stroke / 2f - 1.dp.toPx()
             when (phase) {
                 // 空闲：蓝色呼吸光圈（alpha 呼吸只触发 draw 重绘，无重组/布局开销）
                 BubblePhase.Idle -> drawCircle(

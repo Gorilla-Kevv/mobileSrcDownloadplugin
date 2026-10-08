@@ -61,4 +61,29 @@ class XParserTest {
         }.exceptionOrNull()
         assertTrue(err!!.message!!.contains("没有可下载的媒体"))
     }
+
+    @Test
+    fun `敏感内容推文给出明确文案`() {
+        // 敏感内容推文：公开接口 200 返回但不下发媒体（2026-10 实测），entities.media 只剩 t.co
+        val body = """{"text":"x","possibly_sensitive":true,"entities":{"media":[{"url":"https://t.co/xyz"}]},"user":{"name":"a"}}"""
+        val http = FakeHttp { if (it.contains("syndication")) ok(body) else notFound() }
+        val err = runCatching {
+            parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        }.exceptionOrNull()
+        assertTrue("应提示敏感内容: ${err?.message}", err!!.message!!.contains("敏感内容"))
+    }
+
+    @Test
+    fun `解析真实 syndication 图片推文 提取原图`() {
+        // photos[].url → pbs.twimg.com 直链（photo_info 已被上游移除）
+        val body = """
+            {"text":"photo tweet","user":{"name":"NASA"},
+             "photos":[{"url":"https://pbs.twimg.com/media/HUHaKxjW4AAKpQt.jpg","width":3072,"height":4096}]}
+        """.trimIndent()
+        val http = FakeHttp { if (it.contains("syndication")) ok(body) else notFound() }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        val img = r.media.single()
+        assertEquals("IMAGE", img.kind.name)
+        assertTrue("应拼接 orig 原图参数: ${img.url}", img.url.endsWith("?format=jpg&name=orig"))
+    }
 }

@@ -38,9 +38,13 @@ class InstagramParser : PlatformParser {
 
     override fun canHandle(url: String): Boolean = shortcodeRegex.containsMatchIn(url)
 
-    // 风控保护（修复 11）：连续失败冷却；状态与主页链路共用 IgRiskGuard，避免两条链路各自计数被绕过
-    override fun parse(url: String, ctx: ParseContext): ParseResult =
-        IgRiskGuard.guard(ctx, id) { parseChannels(url, ctx) }
+    // 风控保护（修复 11）：连续失败冷却；状态与主页链路共用 IgRiskGuard，避免两条链路各自计数被绕过。
+    // 缺登录态的失败不计入（与主页链路的处理一致）：未配 Cookie 时 reel 几乎必失败，
+    // 计入会让用户"试两次"就锁进 10 分钟冷却（2026-10 真机实测反馈）
+    override fun parse(url: String, ctx: ParseContext): ParseResult {
+        val hasCookie = !ctx.cookieProvider(platform).isNullOrBlank()
+        return IgRiskGuard.guard(ctx, id, countsFailure = hasCookie) { parseChannels(url, ctx) }
+    }
 
     private fun parseChannels(url: String, ctx: ParseContext): ParseResult {
         val code = shortcodeRegex.find(url)?.groupValues?.getOrNull(1)
