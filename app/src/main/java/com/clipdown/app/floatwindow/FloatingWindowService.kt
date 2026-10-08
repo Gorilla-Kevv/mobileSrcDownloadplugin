@@ -45,6 +45,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.Composable
@@ -1235,6 +1237,11 @@ private fun BubbleCircle(
             // 光环与头像圆完全融合：半径再向内叠 1dp（环内缘压进头像边缘 1dp），
             // 任何相位/任何颜色都不会出现目视间隙（用户两轮反馈）
             val radius = BUBBLE_LOGO_SIZE_DP.dp.toPx() / 2f + stroke / 2f - 1.dp.toPx()
+            // 弧线必须显式指定外接矩形：drawArc 的 size 默认是整个画布（64dp），
+            // 不传就会按 32dp 半径画弧，比头像圆大一圈 —— 这正是"黄色解析环/蓝色进度环
+            // 有间隙、而空闲蓝环没有"的根因（只有 drawCircle 类的分支才走 radius）
+            val arcTopLeft = Offset(center.x - radius, center.y - radius)
+            val arcSize = Size(radius * 2f, radius * 2f)
             when (phase) {
                 // 空闲：蓝色呼吸光圈（alpha 呼吸只触发 draw 重绘，无重组/布局开销）
                 BubblePhase.Idle -> drawCircle(
@@ -1245,10 +1252,12 @@ private fun BubbleCircle(
                 // 解析中：黄色旋转光弧
                 BubblePhase.Parsing -> rotate(spin) {
                     drawArc(
-                        accent,
+                        color = accent,
                         startAngle = 0f,
                         sweepAngle = 110f,
                         useCenter = false,
+                        topLeft = arcTopLeft,
+                        size = arcSize,
                         style = Stroke(stroke, cap = StrokeCap.Round)
                     )
                 }
@@ -1258,20 +1267,24 @@ private fun BubbleCircle(
                     if (pct == null) {
                         rotate(spin) {
                             drawArc(
-                                accent,
+                                color = accent,
                                 startAngle = 0f,
                                 sweepAngle = 120f,
                                 useCenter = false,
+                                topLeft = arcTopLeft,
+                                size = arcSize,
                                 style = Stroke(stroke, cap = StrokeCap.Round)
                             )
                         }
                     } else {
                         drawCircle(accent.copy(alpha = 0.18f), radius = radius, style = Stroke(stroke))
                         drawArc(
-                            accent,
+                            color = accent,
                             startAngle = -90f,
                             sweepAngle = 360f * pct / 100f,
                             useCenter = false,
+                            topLeft = arcTopLeft,
+                            size = arcSize,
                             style = Stroke(stroke, cap = StrokeCap.Round)
                         )
                     }

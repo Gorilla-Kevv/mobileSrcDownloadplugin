@@ -74,6 +74,28 @@ class XParserTest {
     }
 
     @Test
+    fun `敏感内容推文 走 fxTwitter 镜像兜底拿到原图`() {
+        // syndication 对敏感内容推文 200 但不给媒体 → 兜底镜像返回 pbs 直链
+        val tweetResult = """{"text":"x","possibly_sensitive":true,"entities":{"media":[{"url":"https://t.co/xyz"}]},"user":{"name":"a"}}"""
+        val fx = """
+            {"code":200,"message":"OK","tweet":{"id":"2094077925989515691","author":{"screen_name":"a"},
+             "media":{"all":[{"type":"photo","url":"https://pbs.twimg.com/media/HUHaKxjW4AAKpQt.jpg?name=orig"}]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok(tweetResult)
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        val img = r.media.single()
+        assertEquals("IMAGE", img.kind.name)
+        assertTrue("应拿镜像直链: ${img.url}", img.url.startsWith("https://pbs.twimg.com/media/"))
+        assertTrue("应带兜底说明: ${r.warning}", r.warning?.contains("fxTwitter") == true)
+    }
+
+    @Test
     fun `解析真实 syndication 图片推文 提取原图`() {
         // photos[].url → pbs.twimg.com 直链（photo_info 已被上游移除）
         val body = """

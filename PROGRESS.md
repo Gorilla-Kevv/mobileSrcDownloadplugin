@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 44 完成（光环无缝融合 / 重开气泡不再弹"再次解析" / X 图片推文分诊文案+404 文案 / IG 缺 Cookie 不计入冷却）
-- 下一阶段任务：真机复验阶段 42/43/44 各项；用户重导出 XHS Cookie 复验主页；IG 主页 Cookie 实测
+- 当前正在开发任务：阶段 45 完成（弧线类光环间隙真根因修复 + X 敏感内容/老推文改走 fxTwitter 兜底取原图）
+- 下一阶段任务：真机复验阶段 45（尤其那条 2025-07 敏感推文能否下载）；复验 42/43/44 各项；XHS Cookie 复验主页
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **91 例** + downloader 30 例 + app **4 例**全绿
@@ -48,6 +48,17 @@
 - 改动文件：`floatwindow/FloatingWindowService.kt`（①②）、`parser/parsers/{XParser,IgRiskGuard,InstagramParser}.kt`（③④）、`parser/test/{XParserTest,InstagramProfileParserTest}.kt`、文档
 - 待真机复验：①光环无缝 ②重开气泡不再弹确认卡 ③X 图片推文（普通新推文应正常出原图；若再遇"没有可下载的媒体"看新文案与 logcat 分诊日志）④未配 Cookie 连测 reel 不再出现"冷却中"
 - 本次文档更新时间：10.09 09:40
+
+## 阶段 45 弧线光环间隙真根因 + X 敏感内容推文兜底下载 [计划时间：10.09 10:10 BY Qoder][完成时间：10.09 10:45 BY Qoder]
+- **①弧线类光环间隙（真根因，前两轮都没修到）**：`Canvas` 里我之前改的 `radius` 只作用于 `drawCircle` 分支；**`drawArc` 的 `size` 默认是整个画布**，不显式传 `topLeft/size` 就按 64dp 画布（半径 32dp）画弧——所以**黄色解析环、蓝色下载进度环、合并期旋转弧**都在头像圆外面浮着，而空闲蓝环/闪现环（drawCircle）是贴着的。这与用户"只有黄环和蓝环有间隙"的观察完全吻合。修法：三处 `drawArc` 统一传 `topLeft=Offset(center-radius)`、`size=Size(radius*2)`，与 `drawCircle` 同一半径
+- **②敏感内容标记推文的可下载方案（用户要求"请尝试"）**：主机取证（经代理）
+  - syndication `tweet-result` 对敏感标记推文 **200 但不下发媒体**（entities.media 只剩 t.co；oEmbed、platform 老 embed 页实测都拿不到 pbs 直链，均无法兜底）
+  - X 官方时间线 `syndication.twitter.com/srv/timeline-profile/...`：媒体实体只覆盖最近约 100 条且不完整，无法按任意 ID 取；**不可用**
+  - **第三方公开镜像 fxTwitter 可用**：`https://api.fxtwitter.com/i/status/<id>` → 200，`tweet.media.all[]` 给 pbs 直链（photo 带 `?name=orig`，video/gif 给 mp4 变体带码率）。实测 NASA 图片推文拿到 `https://pbs.twimg.com/media/HUHaKxjW4AAKpQt.jpg?name=orig`
+  - 落地：XParser 新增 `fetchFxMedia()`，**仅在 syndication 拿不到媒体时**调用（敏感标记/较老推文/已下线媒体都覆盖），photo→原图、video/gif→按码率降序的 mp4；命中时 result 带 warning 说明"改由第三方镜像获取"；镜像不可用静默失败走原失败文案
+- 测试：parser **92 例全绿**（+敏感推文走镜像兜底用例）；`:app:assembleDebug` 全绿；发布 v1.1.3（versionCode 8）
+- 待真机复验：①黄色解析环/蓝色进度环与头像无缝 ②**用原来那条 2025-07 的敏感推文再试**（预期可解析出原图并下载；若仍失败看 logcat `ParserEngine` 的 fxTwitter 命中日志）
+- 本次文档更新时间：10.09 10:45
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：

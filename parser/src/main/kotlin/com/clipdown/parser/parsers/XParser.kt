@@ -104,6 +104,19 @@ class XParser : PlatformParser {
             )
         }
 
+        // syndication 拿不到媒体时的兜底：第三方公开镜像 fxTwitter（2026-10 实测可用，
+        // 它给的是 pbs.twimg.com 直链）。敏感内容标记 / 较老推文 / 已下线媒体都能覆盖
+        var warning: String? = null
+        if (media.isEmpty()) {
+            val fallback = fetchFxMedia(tweetId, ctx)
+            if (fallback.isNotEmpty()) {
+                media += fallback
+                warning = "该推文的媒体未随公开 syndication 接口下发（常见于敏感内容标记或较老的推文），" +
+                    "已改由第三方镜像 fxTwitter 获取"
+                ctx.log(id, "fxTwitter 兜底命中：媒体 ${fallback.size} 项")
+            }
+        }
+
         if (media.isEmpty()) {
             // 空媒体分诊：敏感内容标记时公开接口会 200 返回但不下发媒体（实测 2026-10），
             // entities.media 仍在（只剩 t.co 短链）；用日志+文案把"为什么没有媒体"说清楚
@@ -116,8 +129,8 @@ class XParser : PlatformParser {
             )
             throw ParseException(
                 when {
-                    sensitive -> "该推文带有敏感内容标记，公开接口不下发媒体，暂时无法下载"
-                    hasMediaEntity -> "推文媒体被公开接口隐藏（常见于敏感内容或较老的推文），暂时无法下载"
+                    sensitive -> "该推文带有敏感内容标记，公开接口与备用镜像都没有拿到媒体，暂时无法下载"
+                    hasMediaEntity -> "推文媒体被公开接口隐藏（常见于敏感内容或较老的推文），备用镜像也没有拿到，暂时无法下载"
                     else -> "该推文没有可下载的媒体（可能是纯文本或已删除）"
                 },
                 platform
@@ -133,8 +146,72 @@ class XParser : PlatformParser {
             title = root.str("text")?.take(60),
             author = user?.str("name") ?: user?.str("screen_name"),
             cover = media.firstOrNull { it.kind == MediaKind.IMAGE }?.url,
-            source = ParseSource.OFFICIAL
+            source = ParseSource.OFFICIAL,
+            warning = warning
         )
+    }
+
+    /**
+     * 兜底通道：第三方公开镜像 fxTwitter（`api.fxtwitter.com/i/status/<id>`，免登录）。
+     *
+     * 仅在 syndication 拿不到媒体时调用（敏感内容标记、较老推文等），返回
+     * `tweet.media.all[]` 里的 pbs 直链（photo → 原图，video/gif → mp4 变体按码率降序）。
+     * 镜像不可用/结构变化时静默返回空，由上层给出正常失败文案。
+     */
+    private fun fetchFxMedia(
+        tweetId: String,
+        ctx: ParseContext
+    ): List<MediaItem> {
+        val api = "https://api.fxtwitter.com/i/status/$tweetId"
+        val headers = mapOf(
+            "Accept" to "application/json",
+            "User-Agent" to ctx.ua(desktop = false)
+        )
+        val body = runCatching { ctx.http.get(api, headers) }.getOrNull()
+            ?.takeIf { it.code < 400 }?.body ?: return emptyList()
+        val tweet = runCatching { json.parseToJsonElement(body).jsonObject }
+            .getOrNull()?.get("tweet")?.jsonObject ?: return emptyList()
+        val all = tweet["media"]?.jsonObject?.get("all")?.jsonArray ?: return emptyList()
+        val xHeaders = mapOf("Referer" to "https://x.com/")
+
+        val out = mutableListOf<MediaItem>()
+        all.forEachIndexed { i, el ->
+            val o = el.jsonObject
+            val type = o.str("type") ?: ""
+            when {
+                type == "photo" -> {
+                    val u = o.str("url") ?: return@forEachIndexed
+                    out += MediaItem(
+                        id = "x-fx-p-$i",
+                        url = if (u.contains("?name=")) u else "$u?name=orig",
+                        kind = MediaKind.IMAGE,
+                        quality = "原图 ${out.size + 1}",
+                        rank = 80 - out.size,
+                        container = "jpg",
+                        headers = xHeaders
+                    )
+                }
+                type == "video" || type == "gif" || type == "animated_gif" -> {
+                    val variants = o["variants"]?.jsonArray
+                        ?.mapNotNull { v -> v.jsonObject.str("url")?.let { u -> u to (v.jsonObject.int("bitrate") ?: 0) } }
+                        ?.filter { it.first.contains(".mp4") }
+                        ?.sortedByDescending { it.second }
+                    variants?.forEachIndexed { vi, (u, bitrate) ->
+                        out += MediaItem(
+                            id = "x-fx-v-$i-$vi",
+                            url = u,
+                            kind = MediaKind.VIDEO,
+                            quality = bitrateLabel(bitrate, vi),
+                            rank = 100 - vi,
+                            container = "mp4",
+                            mimeType = "video/mp4",
+                            headers = xHeaders
+                        )
+                    }
+                }
+            }
+        }
+        return out
     }
 
     /**
