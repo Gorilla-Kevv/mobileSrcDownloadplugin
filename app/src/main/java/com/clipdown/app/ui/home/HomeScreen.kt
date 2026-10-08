@@ -69,6 +69,7 @@ import com.clipdown.downloader.DownloadService
 import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.core.ProfileUrls
+import com.clipdown.parser.core.UrlUtil
 import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.ParseResult
@@ -111,14 +112,20 @@ fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) 
             error = null
             result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url).getOrNull() }
             parsing = false
-            selected = setOf(0)
+            selected = result?.takeIf { it.isAlbumMultiSelect }?.media?.indices?.toSet() ?: setOf(0)
             if (result == null) error = "解析失败，可稍后重试或在设置中配置远端解析服务"
         }
     }
 
     fun parse(text: String) {
-        val url = text.trim()
-        if (url.isBlank()) return
+        // 输入可能是整段分享文案（标题+链接+引导语），先抽出真正的 URL——
+        // 悬浮窗链路在 LinkCenter 里做过这一步，首页此前漏了，导致分享文案整段
+        // 被当 URL 判平台而报"暂不支持该链接"
+        val url = UrlUtil.extractFirst(text)
+        if (url.isNullOrBlank()) {
+            error = "未在输入中找到可识别的链接，请检查粘贴内容"
+            return
+        }
         scope.launch {
             // 博主主页链接走独立页面（主页是集合形态，不能混进单篇解析链路）
             if (withContext(Dispatchers.IO) { ParserEngine.linkKind(url) } == LinkKind.PROFILE) {
@@ -136,8 +143,10 @@ fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) 
             val r = withContext(Dispatchers.IO) { ParserEngine.parseSafe(url) }
             parsing = false
             if (r.isSuccess) {
-                result = r.getOrThrow()
-                LinkCenter.publishResult(r.getOrThrow())
+                val parsed = r.getOrThrow()
+                result = parsed
+                selected = if (parsed.isAlbumMultiSelect) parsed.media.indices.toSet() else setOf(0)
+                LinkCenter.publishResult(parsed)
             } else {
                 val e = r.exceptionOrNull()
                 error = (e as? ParseException)?.message ?: e?.message ?: "解析失败"
@@ -147,7 +156,8 @@ fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) 
 
     // 仅本地判断（不展开短链、不发网络）：用于输入框下方的提示条
     val isProfileInput = remember(input) {
-        input.isNotBlank() && runCatching { ProfileUrls.match(input) != null }.getOrDefault(false)
+        val url = UrlUtil.extractFirst(input)
+        url != null && runCatching { ProfileUrls.match(url) != null }.getOrDefault(false)
     }
 
     LazyColumn(

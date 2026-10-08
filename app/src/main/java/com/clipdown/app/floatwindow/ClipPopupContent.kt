@@ -72,14 +72,12 @@ import com.clipdown.parser.model.MediaKind
 /**
  * 悬浮弹窗内容。
  *
- * 视觉：整屏容器只做"毛玻璃底 + 轻微压暗"，真正的卡片是一块半透明磨砂面板——
- * 在 Android 12+ 由系统级 `FLAG_BLUR_BEHIND` 提供真实背景模糊，
- * 低版本退化为半透明深色遮罩，观感一致但无实时模糊。
+ * 视觉：极简双层面——半透明压暗遮罩 + 一块不透明的深色圆角卡。
+ * 已按用户反馈取消毛玻璃（系统 blur 与卡片投影造成的"双层"观感），不再做背景模糊。
  */
 @Composable
 fun ClipPopupContent(
     state: PopupUiState,
-    blurSupported: Boolean,
     remainSeconds: Int,
     onRecognize: () -> Unit,
     onSelect: (Int) -> Unit,
@@ -100,7 +98,7 @@ fun ClipPopupContent(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .background(if (blurSupported) Color(0x1F000000) else Color(0xAA0A0E1A))
+                .background(Color(0x52000000))
                 .clickable(enabled = true, onClick = onDismiss),
             contentAlignment = Alignment.Center
         ) {
@@ -129,12 +127,10 @@ fun GlassCard(
 ) {
     Surface(
         modifier = modifier
-            .clip(RoundedCornerShape(24.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.16f), RoundedCornerShape(24.dp)),
-        shape = RoundedCornerShape(24.dp),
-        color = GlassBase.copy(alpha = 0.62f),
-        tonalElevation = 12.dp,
-        shadowElevation = 24.dp,
+            .clip(RoundedCornerShape(18.dp))
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(18.dp)),
+        shape = RoundedCornerShape(18.dp),
+        color = GlassBase,
         content = content
     )
 }

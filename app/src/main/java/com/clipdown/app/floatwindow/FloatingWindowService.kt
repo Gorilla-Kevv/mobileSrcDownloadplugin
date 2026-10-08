@@ -233,12 +233,17 @@ class FloatingWindowService : Service() {
                         phase = bubblePhase.value,
                         pendingCount = pendingCount.intValue,
                         parsingCount = parsingCount.intValue,
-                        downloadingCount = downloadingCount.intValue,
                         barState = uiState.value.takeIf {
                             it is PopupUiState.Mini || (it is PopupUiState.Ready && it.multiSelect)
                         },
                         barOnTop = barOnTop.value,
                         onRecognize = { startManualRecognize() },
+                        onConfirmParse = { link ->
+                            // 已解析过链接的"再次解析"：直接走强制流水线，不再读剪贴板
+                            uiState.value = PopupUiState.Hidden
+                            autoRecognize(link, force = true)
+                        },
+                        onCollapse = { hidePopup() },
                         onSelect = { index ->
                             val s = uiState.value
                             if (s is PopupUiState.Ready) {
@@ -459,7 +464,20 @@ class FloatingWindowService : Service() {
                     autoRecognize(link, force = true)
                     return@onEach
                 }
-                if (link.url in seenBefore) return@onEach
+                if (link.url in seenBefore) {
+                    // 已解析过：不自动解析，弹竖条提醒，由用户决定是否再次解析下载。
+                    // 同时记入抑制窗口：地址栏/剪贴板停留场景不会反复弹提醒；
+                    // 用户选"再次解析"走 force=true，不受抑制影响
+                    if (autoPopupEnabled && popupFreeForAuto() && !isSuppressed(link.url)) {
+                        markSuppressed(link.url)
+                        uiState.value = PopupUiState.Mini(
+                            hint = "已解析过，是否要再次解析？",
+                            confirmLink = link
+                        )
+                        startDismissTimer()
+                    }
+                    return@onEach
+                }
                 if (autoPopupEnabled) autoRecognize(link) else pendingCount.intValue++
             }
             .launchIn(scope)
@@ -510,7 +528,7 @@ class FloatingWindowService : Service() {
                     if (popupFreeForAuto() && !parsed.isEmpty) {
                         uiState.value = PopupUiState.Ready(
                             link, parsed,
-                            selectedIndices = setOf(0),
+                            selectedIndices = defaultSelection(parsed),
                             multiSelect = parsed.isAlbumMultiSelect
                         )
                         startDismissTimer()
@@ -532,6 +550,10 @@ class FloatingWindowService : Service() {
         }
         autoParseJobs.add(job)
     }
+
+    /** 默认选中：图集/多资源=全选（用户取消全选才展开挑图）；单资源=首位 */
+    private fun defaultSelection(result: ParseResult): Set<Int> =
+        if (result.isAlbumMultiSelect) result.media.indices.toSet() else setOf(0)
 
     /**
      * 自动下载候选：单资源直取；多条但全为视频（同源清晰度变体，如 reel 原画质+备选、
@@ -744,7 +766,7 @@ class FloatingWindowService : Service() {
                 setPhase(BubblePhase.ParseOk, revertMs = 1_200)
                 uiState.value = PopupUiState.Ready(
                     link, parsed,
-                    selectedIndices = setOf(0),
+                    selectedIndices = defaultSelection(parsed),
                     multiSelect = parsed.isAlbumMultiSelect
                 )
             } else {
@@ -774,13 +796,11 @@ class FloatingWindowService : Service() {
         val lifecycleOwner = OverlayLifecycleOwner()
         popupLifecycle = lifecycleOwner
 
-        val blurSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.S
         val view = ComposeView(this).apply {
             setContent {
                 ClipDownTheme(darkTheme = true) {
                     ClipPopupContent(
                         state = uiState.value,
-                        blurSupported = blurSupported,
                         remainSeconds = remainSeconds.value,
                         onRecognize = { startManualRecognize() },
                         onSelect = { index ->
@@ -821,8 +841,6 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.CENTER
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-                flags = flags or WindowManager.LayoutParams.FLAG_BLUR_BEHIND
-                setBlurBehindRadius(BLUR_RADIUS_PX)
                 setFitInsetsTypes(0)
             }
         }
@@ -1020,7 +1038,6 @@ class FloatingWindowService : Service() {
     companion object {
         private const val CHANNEL_MONITOR = "clipdown_monitor"
         private const val NOTIFICATION_ID = 9002
-        private const val BLUR_RADIUS_PX = 56
         private const val SUPPRESS_MS = 10 * 60_000L
 
         /** 双击判定窗口（ms）；单击行为延迟到窗口过期后执行 */
@@ -1095,11 +1112,12 @@ private fun BubbleWindowContent(
     phase: BubblePhase,
     pendingCount: Int,
     parsingCount: Int,
-    downloadingCount: Int,
     barState: PopupUiState?,
     barOnTop: Boolean,
     onToggle: () -> Unit,
     onRecognize: () -> Unit,
+    onConfirmParse: (com.clipdown.app.clip.DetectedLink) -> Unit,
+    onCollapse: () -> Unit,
     onSelect: (Int) -> Unit,
     onDownload: () -> Unit,
     onBarStateChanged: (PopupUiState?) -> Unit
@@ -1108,18 +1126,26 @@ private fun BubbleWindowContent(
     LaunchedEffect(barState) { onBarStateChanged(barState) }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
         if (barOnTop && barState != null) {
-            BarBody(state = barState, onRecognize = onRecognize, onSelect = onSelect, onDownload = onDownload)
+            BarBody(
+                state = barState, onRecognize = onRecognize,
+                onConfirmParse = onConfirmParse, onCollapse = onCollapse,
+                onSelect = onSelect, onDownload = onDownload
+            )
         }
-        BubbleCircle(phase, pendingCount, parsingCount, downloadingCount)
+        BubbleCircle(phase, pendingCount, parsingCount)
         if (!barOnTop && barState != null) {
-            BarBody(state = barState, onRecognize = onRecognize, onSelect = onSelect, onDownload = onDownload)
+            BarBody(
+                state = barState, onRecognize = onRecognize,
+                onConfirmParse = onConfirmParse, onCollapse = onCollapse,
+                onSelect = onSelect, onDownload = onDownload
+            )
         }
     }
 }
 
 /**
- * 圆形气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 三个计数徽标。
- * 左上绿 = 搁置待处理；左下黄 = 解析中 N；右下蓝 = 下载中 M（阶段 16 并发可见性）。
+ * 圆形气泡：头像 logo + 相位光环（Canvas 绘制，不重布局）+ 计数徽标。
+ * 左上绿 = 搁置待处理；左下黄 = 解析中 N（右下角下载计数已按用户反馈取消）。
  *
  * 注意：这里刻意不放任何 pointerInput——Compose 内容一旦认领触摸事件，
  * 服务层 View 级拖拽/单击监听器就收不到事件（见 addBubble）。
@@ -1128,8 +1154,7 @@ private fun BubbleWindowContent(
 private fun BubbleCircle(
     phase: BubblePhase,
     pendingCount: Int,
-    parsingCount: Int,
-    downloadingCount: Int
+    parsingCount: Int
 ) {
     val infinite = rememberInfiniteTransition(label = "bubbleHalo")
     val breathe by infinite.animateFloat(
@@ -1217,10 +1242,10 @@ private fun BubbleCircle(
                 modifier = Modifier.fillMaxSize()
             )
         }
-        // 徽标：左上绿=搁置待处理，左下黄=解析中，右下蓝=下载中（>0 才显示，9+ 封顶）
+        // 徽标：左上绿=搁置待处理，左下黄=解析中（>0 才显示，9+ 封顶）；
+        // 右下角下载计数徽标已按用户反馈取消
         if (pendingCount > 0) CountBadge(pendingCount, Color(0xFF2EB872), Modifier.align(Alignment.TopStart))
         if (parsingCount > 0) CountBadge(parsingCount, Color(0xFFFFC53D), Modifier.align(Alignment.BottomStart))
-        if (downloadingCount > 0) CountBadge(downloadingCount, HaloBlue, Modifier.align(Alignment.BottomEnd))
     }
 }
 

@@ -10,10 +10,14 @@ sealed interface PopupUiState {
     /** 不展示（默认） */
     data object Hidden : PopupUiState
 
-    /** 迷你面板：点击气泡后展开，仅提供"识别链接"入口，不自动解析 */
+    /**
+     * 迷你面板：点击气泡后展开，仅提供"识别链接"入口，不自动解析。
+     * confirmLink 非空时为"已解析过"提醒态：按钮变为"再次解析"，直接重跑该链接。
+     */
     data class Mini(
         val recognizing: Boolean = false,
-        val hint: String? = null
+        val hint: String? = null,
+        val confirmLink: DetectedLink? = null
     ) : PopupUiState
 
     /** 已捕获链接，正在解析 */

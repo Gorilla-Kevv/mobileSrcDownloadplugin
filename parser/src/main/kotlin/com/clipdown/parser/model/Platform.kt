@@ -44,7 +44,9 @@ enum class Platform(
         hosts = listOf("xiaohongshu.com", "www.xiaohongshu.com", "xhslink.com", "xhslink.cn"),
         shortHosts = listOf("xhslink.com", "xhslink.cn"),
         pathHints = listOf("/explore/", "/discovery/item/", "/user/profile/"),
-        loginRequired = true
+        // 2026-10-08 真机实测：移动端 UA 直连免登录可解析笔记（模拟器被 302 是环境指纹问题，
+        // 见 HANDOFF 坑 17）；主页解析仍需 Cookie，但不影响"公开可解析"标注
+        loginRequired = false
     ),
     FACEBOOK(
         id = "facebook",

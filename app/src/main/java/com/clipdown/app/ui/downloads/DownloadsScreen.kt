@@ -172,10 +172,22 @@ private fun buildRows(tasks: List<TaskEntity>): List<DownloadRow> {
         entries += it.updatedAt to DownloadRow.Single(it)
     }
     tasks.filter { it.sourceUrl != null }.groupBy { it.sourceUrl!! }.forEach { (_, list) ->
-        entries += list.maxOf { it.updatedAt } to DownloadRow.Album(list.sortedBy { it.createdAt })
+        // 单条记录不成组：单视频/单图有来源链接时按独立任务展示，
+        // 否则会把单视频误标成"图集 1 张"（用户实测反馈）
+        if (list.size == 1) {
+            entries += list[0].updatedAt to DownloadRow.Single(list[0])
+        } else {
+            entries += list.maxOf { it.updatedAt } to DownloadRow.Album(list.sortedBy { it.createdAt })
+        }
     }
     return entries.sortedByDescending { it.first }.map { it.second }
 }
+
+/** 媒体类别文案：按 mimeType 判定（视频/图片），供下载页准确标注类别 */
+private fun categoryLabel(task: TaskEntity): String =
+    if (task.mimeType.startsWith("video/")) "视频"
+    else if (task.mimeType.startsWith("audio/")) "音频"
+    else "图片"
 
 private fun openTask(context: android.content.Context, task: TaskEntity) {
     val uri = task.localUri ?: return
@@ -219,7 +231,7 @@ private fun TaskRow(
                 )
                 VSpace(2.dp)
                 Text(
-                    statusText(task, progress) + " · " + fmtTime(task.updatedAt),
+                    categoryLabel(task) + " · " + statusText(task, progress) + " · " + fmtTime(task.updatedAt),
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -286,6 +298,13 @@ private fun AlbumGroupCard(
     val active = tasks.count { it.status.isActive }
     val totalBytes = tasks.sumOf { if (it.status == DownloadStatus.COMPLETED) it.totalBytes else 0L }
     val allDone = done == tasks.size
+    // 组类别按实际 mimeType 统计，不再一律叫"图集"
+    val videoCount = tasks.count { it.mimeType.startsWith("video/") }
+    val groupLabel = when {
+        videoCount == 0 -> "图集 ${tasks.size} 张"
+        videoCount == tasks.size -> "视频 ${tasks.size} 个"
+        else -> "视频 $videoCount + 图片 ${tasks.size - videoCount}"
+    }
 
     AppCard {
         // 整包头：标题 + 状态胶囊 + 明细开关
@@ -300,7 +319,7 @@ private fun AlbumGroupCard(
                 VSpace(2.dp)
                 Text(
                     buildString {
-                        append("图集 ${tasks.size} 张")
+                        append(groupLabel)
                         when {
                             allDone -> append(" · 全部完成 · ${MediaItem.formatSize(totalBytes)}")
                             failed > 0 -> append(" · 完成 $done / 失败 $failed")

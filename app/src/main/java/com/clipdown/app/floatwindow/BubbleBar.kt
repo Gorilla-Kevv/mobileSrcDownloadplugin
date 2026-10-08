@@ -23,7 +23,9 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -57,20 +59,30 @@ import com.clipdown.parser.model.MediaKind
 internal fun BarBody(
     state: PopupUiState,
     onRecognize: () -> Unit,
+    onConfirmParse: (com.clipdown.app.clip.DetectedLink) -> Unit,
+    onCollapse: () -> Unit,
     onSelect: (Int) -> Unit,
     onDownload: () -> Unit
 ) {
     when (state) {
-        is PopupUiState.Mini -> MiniBarBody(state, onRecognize)
-        is PopupUiState.Ready -> AlbumBarBody(state, onSelect, onDownload)
+        is PopupUiState.Mini -> MiniBarBody(state, onRecognize, onConfirmParse)
+        is PopupUiState.Ready -> AlbumBarBody(state, onCollapse, onSelect, onDownload)
         else -> Unit
     }
 }
 
-/** Mini 竖条：剪贴板空闲/识别失败时的提示与识别入口 */
+/** Mini 竖条：剪贴板空闲/识别失败时的提示与识别入口；confirmLink 非空时变为"再次解析"确认 */
 @Composable
-private fun MiniBarBody(state: PopupUiState.Mini, onRecognize: () -> Unit) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+private fun MiniBarBody(
+    state: PopupUiState.Mini,
+    onRecognize: () -> Unit,
+    onConfirmParse: (com.clipdown.app.clip.DetectedLink) -> Unit
+) {
+    val confirm = state.confirmLink
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(64.dp)
+    ) {
         Spacer(Modifier.height(2.dp))
         Text("剪存", color = Color.White, style = MaterialTheme.typography.labelMedium)
         if (state.hint != null) {
@@ -79,26 +91,35 @@ private fun MiniBarBody(state: PopupUiState.Mini, onRecognize: () -> Unit) {
                 state.hint!!,
                 color = Color(0xFFFFB020),
                 style = MaterialTheme.typography.labelSmall,
-                maxLines = 3,
+                maxLines = 4,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
         Spacer(Modifier.height(6.dp))
         IconButton(
-            onClick = onRecognize,
+            onClick = { if (confirm != null) onConfirmParse(confirm) else onRecognize() },
             modifier = Modifier
                 .fillMaxWidth()
                 .background(SeedBlue, RoundedCornerShape(12.dp))
         ) {
-            Icon(Icons.Default.Search, contentDescription = "识别", tint = Color.White, modifier = Modifier.size(16.dp))
+            Icon(
+                if (confirm != null) Icons.Default.Refresh else Icons.Default.Search,
+                contentDescription = if (confirm != null) "再次解析" else "识别",
+                tint = Color.White,
+                modifier = Modifier.size(16.dp)
+            )
         }
     }
 }
 
-/** 图集竖条：默认全选；全选行取消=向下展开缩略图列逐张挑选 */
+/**
+ * 图集竖条：默认全选；点"全选"取消勾选=向下展开缩略图列逐张挑选，重新勾选=全选并收起。
+ * 点缩略图右上角的 × 收回竖条、只剩气泡。
+ */
 @Composable
 private fun AlbumBarBody(
     state: PopupUiState.Ready,
+    onCollapse: () -> Unit,
     onSelect: (Int) -> Unit,
     onDownload: () -> Unit
 ) {
@@ -106,17 +127,33 @@ private fun AlbumBarBody(
     var expanded by remember { mutableStateOf(false) }
     val allSelected = result.media.isNotEmpty() && state.selectedIndices.size == result.media.size
 
-    Column {
-        AsyncImage(
-            model = result.media.firstOrNull()?.url,
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(48.dp)
-                .clip(RoundedCornerShape(10.dp))
-                .background(Color.White.copy(0.08f))
-        )
+    Column(modifier = Modifier.width(64.dp)) {
+        Box {
+            AsyncImage(
+                model = result.media.firstOrNull()?.url,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(Color.White.copy(0.08f))
+            )
+            // 收回竖条：回到只有气泡的状态（问题 7 反馈的入口找回）
+            IconButton(
+                onClick = onCollapse,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .size(18.dp)
+            ) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "收回",
+                    tint = Color.White.copy(0.85f),
+                    modifier = Modifier.size(12.dp)
+                )
+            }
+        }
         Spacer(Modifier.height(4.dp))
         Text(
             "图集 ${result.media.size} 张",

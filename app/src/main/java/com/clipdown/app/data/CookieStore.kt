@@ -36,7 +36,13 @@ object CookieStore {
 
     fun has(context: Context, platform: Platform): Boolean = !get(context, platform).isNullOrBlank()
 
-    /** 需要登录态才有完整体验的平台，UI 据此展示"补充 Cookie"入口 */
+    /**
+     * 提供"补充 Cookie"入口的平台。
+     *
+     * 注意与 [Platform.loginRequired] 解耦：小红书笔记解析已实测免登录可用
+     * （2026-10-08 真机，标注为公开可解析），但其**主页解析仍强依赖 Cookie**，
+     * 所以设置页的 Cookie 入口保留。
+     */
     fun platformsNeedingCookie(): List<Platform> =
-        Platform.entries.filter { it.loginRequired }
+        listOf(Platform.INSTAGRAM, Platform.XIAOHONGSHU, Platform.FACEBOOK)
 }

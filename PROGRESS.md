@@ -1,15 +1,31 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 41 完成（X 主页解析实测跑通：syndication 时间线免登录、100 条 + 点开视频实际下载；IG 主页三通道解析器 + `IgRiskGuard` 共享冷却落地，待 Cookie 实测）
-- 下一阶段任务：IG 主页用有效 Cookie 实测校准夹具；B 站/微博主页接入（免登录，验证多平台框架）；XHS 重新导出 Cookie 复验
-- 可提前进行的任务：加载更多透传 cursor 减少重扫；真机看 UI 实际观感；阶段 29 真机复测
-- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证（模拟器 DNS 解析不了 github.com）
+- 当前正在开发任务：阶段 42 完成（真机测试 9 项反馈修复：竖条溢出/默认全选/首页解析入口统一/已解析提醒/徽标取消/竖条收回/下载类别/弹窗精简/小红书免登录定性）
+- 下一阶段任务：真机复验阶段 42 的 9 项；IG 主页 Cookie 实测；B 站/微博主页接入
+- 可提前进行的任务：加载更多透传 cursor 减少重扫；发布新版（publish-release.sh）供真机覆盖安装
+- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **88 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.08 01:35
+- 本次文档更新时间：10.08 23:59
 
+
+## 阶段 42 真机测试 9 项反馈修复（竖条/选择流/入口统一/提醒/下载类别/弹窗精简） [计划时间：10.08 23:40 BY Qoder][完成时间：10.08 23:59 BY Qoder]
+- 用户真机测试反馈 9 项（1 项新发现 + 8 项问题），全部处理：
+- **①新发现：小红书免登录可解析**（真机实测）——移动端 UA 直连在真机上免登录解析成功，证实坑 17 的"客户端指纹维度"是模拟器环境问题。落地：`Platform.XIAOHONGSHU.loginRequired=false`（平台列表显示"公开可解析"）；`CookieStore.platformsNeedingCookie()` 与 `loginRequired` 解耦改为显式清单——**主页解析仍需 Cookie**，设置页 Cookie 入口保留
+- **②竖条显示不全（P0）**：`AlbumBarBody`/`MiniBarBody` 的 Column 无宽度约束，WRAP_CONTENT 窗口内 AsyncImage 按图片固有宽度撑爆窗口（真机截图：竖条冲出屏幕右缘、内容错乱）→ 两处 Column 固定 `width(64.dp)`（与气泡同宽的设计初衷）；`syncBubbleWindow` 的 x 钳制（barW=64dp）随之生效
+- **③多图选择顺序错乱**：Ready 创建时 `selectedIndices=setOf(0)` 与"默认全选、取消全选才展开挑图"的交互矛盾（初始态 allSelected=false，点"全选"行反而变成再全选）→ 新增 `defaultSelection()`：`isAlbumMultiSelect` 时全选，否则首位。四处接线（气泡自动流水线/手动弹窗/首页手动解析/首页自动解析）
+- **④首页解析与气泡能力不一致（P0）**：首页 `parse()` 把整段分享文案（标题+链接+引导语）直接当 URL 判平台 → "暂不支持该链接：谁懂！…"；气泡链路在 LinkCenter.quickDetect 里做过 `UrlUtil.extractFirst` → 首页补上同一抽取步骤（含主页提示条 isProfileInput 同步修正）。五入口审查：气泡✓/首页手动✓（本轮修复）/首页自动（lastLink 已抽取）✓/分享✓/无障碍✓
+- **⑤已解析链接提醒**：原逻辑 seen_links 命中即静默跳过 → 改为弹竖条提醒"已解析过，是否要再次解析？"，按钮变"再次解析"（`Mini.confirmLink` 直接 force 重跑该链接，不再读剪贴板）；同时记入抑制窗口防地址栏/剪贴板停留场景反复弹
+- **⑥气泡右下角徽标取消**：`BubbleCircle` 移除下载计数徽标渲染（downloadingCount 状态保留仅作簿记）
+- **⑦竖条收回气泡**：①②的宽度撑爆使触摸分区错乱是"点气泡收不回"的根因；另在缩略图右上角加 × 收回按钮（显式入口）
+- **⑧下载记录类别（P0）**：`buildRows` 把所有带 sourceUrl 的任务一律聚合成"图集 N 张"——单视频也变"图集 1 张"→ 单条记录不成组；组卡类别按 mimeType 统计（全图="图集 N 张"/全视频="视频 N 个"/混合="视频 X + 图片 Y"）；单任务行加类别前缀（视频/音频/图片）
+- **⑨居中弹窗双层+毛玻璃（P0）**：`FLAG_BLUR_BEHIND`+`setBlurBehindRadius(56)` 与卡片 `tonalElevation=12/shadowElevation=24` 叠加出"双层"观感 → 全部移除；卡片改不透明 `GlassBase(0xFF101426)`+18dp 圆角+细描边，遮罩统一 `0x52000000`
+- 测试：`assembleDebug` 全绿 + parser 88 + downloader 30 + app 4 全绿
+- 改动文件：`floatwindow/{FloatingWindowService,BubbleBar,ClipPopupContent,PopupUiState}.kt`、`ui/home/HomeScreen.kt`、`ui/downloads/DownloadsScreen.kt`、`data/CookieStore.kt`、`parser/model/Platform.kt`、HANDOFF/PROGRESS
+- **待真机复验**：②竖条 64dp 定宽后显示正常 ③默认全选+取消展开挑图 ⑤提醒条与再次解析 ⑦点气泡/点 × 收回 ⑧下载页类别 ⑨弹窗精简观感
+- 本次文档更新时间：10.08 23:59
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：
