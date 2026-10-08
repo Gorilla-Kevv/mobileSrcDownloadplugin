@@ -1,8 +1,8 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：阶段 42 完成（真机测试 9 项反馈修复：竖条溢出/默认全选/首页解析入口统一/已解析提醒/徽标取消/竖条收回/下载类别/弹窗精简/小红书免登录定性）
-- 下一阶段任务：真机复验阶段 42 的 9 项；IG 主页 Cookie 实测；B 站/微博主页接入
+- 当前正在开发任务：阶段 43 完成（光环紧贴气泡 + 长按气泡关闭悬浮窗）
+- 下一阶段任务：真机复验阶段 42 九项 + 阶段 43 两项；IG 主页 Cookie 实测；B 站/微博主页接入
 - 可提前进行的任务：加载更多透传 cursor 减少重扫；发布新版（publish-release.sh）供真机覆盖安装
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **88 例** + downloader 30 例 + app **4 例**全绿
@@ -26,6 +26,17 @@
 - 改动文件：`floatwindow/{FloatingWindowService,BubbleBar,ClipPopupContent,PopupUiState}.kt`、`ui/home/HomeScreen.kt`、`ui/downloads/DownloadsScreen.kt`、`data/CookieStore.kt`、`parser/model/Platform.kt`、HANDOFF/PROGRESS
 - **待真机复验**：②竖条 64dp 定宽后显示正常 ③默认全选+取消展开挑图 ⑤提醒条与再次解析 ⑦点气泡/点 × 收回 ⑧下载页类别 ⑨弹窗精简观感
 - 本次文档更新时间：10.08 23:59
+
+## 阶段 43 气泡光环紧贴 + 长按关闭气泡 [计划时间：10.09 00:05 BY Qoder][完成时间：10.09 00:20 BY Qoder]
+- 用户两项新需求（真机观感与手感）：
+- **①光环紧贴气泡**：`BubbleCircle` 的 Canvas 原来按 64dp 画布内缩一整个描边取半径（`minDimension/2 - stroke`），环画在半径 29.5dp 处，而头像 logo 只有 52dp（半径 26dp）→ 中间空出约 2.3dp 的间隙。改为**半径 = logo 半径 + 半个描边宽**（`BUBBLE_LOGO_SIZE_DP.dp/2 + stroke/2`），环内缘正好贴住头像外缘；logo 尺寸与光环半径共用常量 `BUBBLE_LOGO_SIZE_DP=52f`，以后改尺寸也不会再脱开
+- **②长按气泡关闭**：在 View 级 `setOnTouchListener` 里加长按判定（`LONG_PRESS_MS=700`）——DOWN 起定时，到点且未移动即 `closeBubble()`；拖拽超过 8px 或提前抬手/取消（`ACTION_UP`/`ACTION_CANCEL`）立即取消定时器；长按已触发时用 `longPressed` 标志吞掉随后的单击/双击，避免"关完又跳主界面"
+  - `closeBubble()`：hidePopup → `stopForeground(REMOVE)` → `stopSelf()` → Toast 提示；**并写 `setFloatEnabled(false)`**，否则开机恢复/应用启动会把气泡再拉起来（用户要的是彻底消失）
+  - 手势语义总表（气泡圆 64dp 区）：单击=识别剪贴板／拖拽=移动／双击=跳主界面／**长按=关闭**；竖条区仍透传给 Compose 控件
+- 测试：`:app:assembleDebug` 全绿（parser/downloader 未改动）
+- 改动文件：`floatwindow/FloatingWindowService.kt`、PROGRESS/HANDOFF
+- 待真机复验：①环与头像目视无间隙 ②长按约 0.7s 关闭且不再触发点击、拖拽不误触
+- 本次文档更新时间：10.09 00:20
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：

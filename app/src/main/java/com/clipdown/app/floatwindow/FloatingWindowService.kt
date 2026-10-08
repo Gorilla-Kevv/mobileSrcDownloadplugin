@@ -137,6 +137,9 @@ class FloatingWindowService : Service() {
     private var singleTapJob: Job? = null
     private var lastTapAt = 0L
 
+    /** 长按关闭气泡的定时器：拖拽或提前抬手都取消 */
+    private var longPressJob: Job? = null
+
     /** 手动识别模式：迷你面板点"识别链接"后置位，下一个链接无条件弹窗 */
     @Volatile
     private var manualRecognize = false
@@ -213,6 +216,7 @@ class FloatingWindowService : Service() {
         recognizeTimeoutJob?.cancel()
         phaseRevertJob?.cancel()
         singleTapJob?.cancel()
+        longPressJob?.cancel()
         autoParseJobs.forEach { it.cancel() }
         removePopup()
         removeBubble()
@@ -289,6 +293,8 @@ class FloatingWindowService : Service() {
         var startTouchY = 0f
         var moved = false
         var gestureInBubble = false
+        /** 长按已触发：本次手势只用于关闭气泡，抬手/拖拽都不再走点击语义 */
+        var longPressed = false
         val bubblePartH = (64 * resources.displayMetrics.density).toInt()
 
         @Suppress("DEPRECATION")
@@ -302,6 +308,15 @@ class FloatingWindowService : Service() {
                 startTouchX = event.rawX
                 startTouchY = event.rawY
                 moved = false
+                longPressed = false
+                // 长按 = 关闭气泡：按住不动到阈值即关闭（拖拽或提前抬手都会取消）
+                longPressJob?.cancel()
+                longPressJob = scope.launch {
+                    delay(LONG_PRESS_MS)
+                    if (moved) return@launch
+                    longPressed = true
+                    closeBubble()
+                }
                 return@setOnTouchListener true
             }
             if (!gestureInBubble) return@setOnTouchListener false
@@ -309,32 +324,43 @@ class FloatingWindowService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - startTouchX).toInt()
                     val dy = (event.rawY - startTouchY).toInt()
-                    if (abs(dx) > 8 || abs(dy) > 8) moved = true
+                    if (abs(dx) > 8 || abs(dy) > 8) {
+                        if (!moved) longPressJob?.cancel()
+                        moved = true
+                    }
                     bubblePos = startX + dx to startTopY + dy
                     params.x = bubblePos.first
                     syncBubbleWindow(uiState.value)
                 }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved) {
-                        // 单击/双击区分：单击延迟到双击窗口过期后执行，双击到来即取消。
-                        // 手势必须在 View 监听器里做——Compose 内容一旦加 pointerInput 就会
-                        // 认领事件，View 级拖拽监听器收不到 DOWN，拖拽直接失效
-                        val now = System.currentTimeMillis()
-                        if (now - lastTapAt <= DOUBLE_TAP_MS) {
-                            lastTapAt = 0L
-                            singleTapJob?.cancel()
-                            onBubbleDoubleClick()
-                        } else {
-                            lastTapAt = now
-                            singleTapJob?.cancel()
-                            singleTapJob = scope.launch {
-                                delay(DOUBLE_TAP_MS)
-                                onBubbleClick()
-                            }
-                        }
-                    } else {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    longPressJob?.cancel()
+                    if (longPressed) {
+                        // 已由长按消费：不再触发单击/双击
+                        longPressed = false
+                        lastTapAt = 0L
+                        singleTapJob?.cancel()
+                        return@setOnTouchListener true
+                    }
+                    if (moved) {
                         scope.launch { settings.saveBubblePosition(bubblePos.first, bubblePos.second) }
                         lastPosition = bubblePos
+                        return@setOnTouchListener true
+                    }
+                    // 单击/双击区分：单击延迟到双击窗口过期后执行，双击到来即取消。
+                    // 手势必须在 View 监听器里做——Compose 内容一旦加 pointerInput 就会
+                    // 认领事件，View 级拖拽监听器收不到 DOWN，拖拽直接失效
+                    val now = System.currentTimeMillis()
+                    if (now - lastTapAt <= DOUBLE_TAP_MS) {
+                        lastTapAt = 0L
+                        singleTapJob?.cancel()
+                        onBubbleDoubleClick()
+                    } else {
+                        lastTapAt = now
+                        singleTapJob?.cancel()
+                        singleTapJob = scope.launch {
+                            delay(DOUBLE_TAP_MS)
+                            onBubbleClick()
+                        }
                     }
                 }
             }
@@ -395,6 +421,23 @@ class FloatingWindowService : Service() {
         }
         // 单击 = 识别剪贴板：借道读取后直接走自动流水线，反馈全在气泡相位
         startManualRecognize()
+    }
+
+    /**
+     * 长按气泡 = 关闭气泡：收起弹层 → 停掉前台服务 → 移除气泡。
+     *
+     * 同时把 `floatEnabled` 记为关闭，否则开机恢复/应用启动会把它再拉起来
+     * （用户想彻底消失，而不是"关了又回来"）；下次在应用内重新开启即可。
+     */
+    private fun closeBubble() {
+        android.util.Log.d("FloatingWindowService", "长按气泡：关闭悬浮窗")
+        hidePopup()
+        scope.launch { settings.setFloatEnabled(false) }
+        android.widget.Toast.makeText(this, "已关闭悬浮气泡，可在应用内重新开启", android.widget.Toast.LENGTH_SHORT).show()
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) stopForeground(STOP_FOREGROUND_REMOVE)
+        }
+        runCatching { stopSelf() }
     }
 
     /** 双击气泡：直接跳主界面 */
@@ -1042,6 +1085,9 @@ class FloatingWindowService : Service() {
 
         /** 双击判定窗口（ms）；单击行为延迟到窗口过期后执行 */
         private const val DOUBLE_TAP_MS = 250L
+
+        /** 长按判定窗口（ms）：按住不动到时即关闭气泡 */
+        private const val LONG_PRESS_MS = 700L
         private const val EXTRA_PHASE = "phase"
         private const val EXTRA_PERCENT = "percent"
 
@@ -1090,6 +1136,9 @@ class FloatingWindowService : Service() {
 // ---------- 气泡视觉 ----------
 
 private val HaloBlue = Color(0xFF4D9FFF)
+
+/** 气泡头像直径（dp）：光环半径与 logo 尺寸共用同一常量，保证二者始终贴合 */
+private const val BUBBLE_LOGO_SIZE_DP = 52f
 
 /** 相位强调色：描边与光环共用，0.3s 过渡 */
 private fun BubblePhase.accent(): Color = when (this) {
@@ -1177,7 +1226,9 @@ private fun BubbleCircle(
     ) {
         Canvas(modifier = Modifier.size(64.dp)) {
             val stroke = 2.5.dp.toPx()
-            val radius = size.minDimension / 2f - stroke
+            // 光环紧贴头像圆：半径 = logo 半径 + 半个描边宽。
+            // 原来按 64dp 画布内缩一整个描边，环与头像之间留了一圈空隙（用户反馈）。
+            val radius = BUBBLE_LOGO_SIZE_DP.dp.toPx() / 2f + stroke / 2f
             when (phase) {
                 // 空闲：蓝色呼吸光圈（alpha 呼吸只触发 draw 重绘，无重组/布局开销）
                 BubblePhase.Idle -> drawCircle(
@@ -1226,10 +1277,10 @@ private fun BubbleCircle(
                 BubblePhase.DownloadFail -> drawCircle(accent, radius = radius, style = Stroke(stroke))
             }
         }
-        // 头像 logo：描边颜色随相位 0.3s 过渡
+        // 头像 logo：描边颜色随相位 0.3s 过渡（尺寸与光环半径共用常量）
         Box(
             modifier = Modifier
-                .size(52.dp)
+                .size(BUBBLE_LOGO_SIZE_DP.dp)
                 .clip(CircleShape)
                 .background(Color(0xFF141824))
                 .border(1.5.dp, accent, CircleShape),
