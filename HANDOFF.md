@@ -93,7 +93,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 45 完成**——①弧线光环间隙真根因：`drawArc` 不传 `topLeft/size` 就按 64dp 画布取半径（只有 `drawCircle` 分支受 radius 控制），三处弧线已统一带 rect 与头像同半径；②X 敏感内容标记/较老推文改走**第三方镜像 fxTwitter 兜底**（`api.fxtwitter.com/i/status/<id>` 免登录，主机实测给 pbs 直链；官方 syndication/oEmbed/老 embed 页实测都拿不到）。X 失败文案仍按 404/敏感/普通三态分诊
+- 当前：**阶段 46 设计已入档（待实现）**——下载时**单击不再查看进度**，改为**长按呼出多功能面板**：面板内展示多路并发下载进度（按 taskId 分行 + 聚合进度条）+「关闭气泡」按钮；关闭动作从"长按即关"下沉为面板内显式按钮（防误关）。并发基础已具备（引擎 `maxConcurrent=3` 队列 + 解析走 IO 协程、下载在 DownloadService，天然异步），待补的是"多路进度的聚合与呈现"。**气泡手势总表（覆盖阶段 43）**：单击=识别剪贴板／双击=跳主界面／拖拽=移动／**长按=多功能面板**／面板内按钮=关闭气泡。实现步骤见 PROGRESS 阶段 46（4 步）
+- 上轮：**阶段 45 完成**——①弧线光环间隙真根因：`drawArc` 不传 `topLeft/size` 就按 64dp 画布取半径（只有 `drawCircle` 分支受 radius 控制），三处弧线已统一带 rect 与头像同半径；②X 敏感内容标记/较老推文改走**第三方镜像 fxTwitter 兜底**（`api.fxtwitter.com/i/status/<id>` 免登录，主机实测给 pbs 直链；官方 syndication/oEmbed/老 embed 页实测都拿不到）。X 失败文案仍按 404/敏感/普通三态分诊
 - 上轮：**阶段 44（真机二轮反馈）完成**——①光环内叠 1dp 无缝融合 ②服务重启过滤 SharedFlow replay 的旧链接（重开气泡不再弹"再次解析"确认卡）③X 图片推文：实测 tweet-result 对近期推文 `photos[].url` 正常、`photo_info` 已被上游移除、老/删除推文 404、**敏感内容标记推文 200 但不下发媒体**——已按 404/敏感/普通三态给文案+分诊日志（oEmbed/embed 页实测拿不到 pbs 直链，均不可作兜底）④`IgRiskGuard` 新增 `countsFailure`（缺 Cookie 传 false 不计入冷却，单篇链路已接，主页链路原有关前置检查）——未配 Cookie 连测 reel 不再误锁 10 分钟
 - 上轮：**阶段 43（气泡光环紧贴 + 长按关闭气泡）完成**——①`BubbleCircle` 光环半径改为「logo 半径 + 半个描边宽」（原按 64dp 画布内缩，环与头像间有约 2.3dp 空隙），logo 尺寸与环半径共用 `BUBBLE_LOGO_SIZE_DP=52f`；②View 级触摸加长按判定（700ms）：未移动即 `closeBubble()`（收弹层→`stopForeground`→`stopSelf`+Toast+`setFloatEnabled(false)` 防自动复活），拖拽/抬手/取消均取消定时器，长按后吞掉单击双击。气泡手势总表：**单击=识别剪贴板／拖拽=移动／双击=跳主界面／长按=关闭**
 - 上轮：**阶段 42（真机测试 9 项反馈修复）完成**——①小红书免登录定性（真机实测可解析，loginRequired=false，Cookie 入口与 loginRequired 解耦）②竖条 64dp 定宽修显示不全 ③多图默认全选/取消全选展开（defaultSelection 四处接线）④首页解析补 UrlUtil.extractFirst 与气泡链路对齐 ⑤已解析链接弹竖条"再次解析"提醒（带抑制窗口）⑥气泡右下角徽标取消 ⑦竖条收回（× 按钮 + 触摸分区恢复）⑧下载页类别按 mimeType（单条不成组/视频/图集）⑨居中弹窗去毛玻璃去投影精简化。详见 PROGRESS 阶段 42，**待真机复验**
