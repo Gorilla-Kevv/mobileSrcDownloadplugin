@@ -78,7 +78,7 @@
 - **更新通道**：`gradle.properties` → `clipdown.updateRepo`（当前 = `Gorilla-Kevv/mobileSrcDownloadplugin`）+ `clipdown.apkAssetName`（默认 `clipdown-release.apk`）。构建时生成 `BuildConfig.UPDATE_MANIFEST_URL` / `UPDATE_APK_URL`，**改发布仓库只需改 gradle.properties，不必动代码**
 - **清单地址用"最新发布固定链接"**：`https://github.com/<repo>/releases/latest/download/update.json` —— 不走 GitHub API，**不需要 token、不吃匿名速率限制**。代价是**发布仓库必须公开**：本仓库已于阶段 34 **转为 public**（用户决策），因此 APK 与清单直接发在主仓库
 - **国内网络注意（阶段 34 实测）**：本机所在网络**直连 github.com 超时**（需代理），模拟器既连不上 GitHub 也到不了主机代理 → 应用内更新在模拟器上必然失败；国内测试机若拉不到清单，把 `clipdown.updateManifestUrl` / `clipdown.updateApkUrl` 指向国内可达托管（Gitee Releases / 阿里云 OSS / 腾讯云 COS / 自建静态服务）即可，**无需改代码**；`clipdown.updateRepo` 仅用于发布脚本
-- **当前线上**：`v1.1.4（versionCode 9）`，2026-10-09 发布（含阶段 42-46：真机 9 项反馈修复、光环/弧线间隙、X 敏感推文镜像兜底、长按呼出多功能面板）；匿名校验 `releases/latest/download/update.json` = 200（versionCode=9）；上一版 `v1.1.3（versionCode 8）`（阶段 45）
+- **当前线上**：`v1.1.5（versionCode 10）`，2026-10-09 发布（含阶段 42-47：真机反馈修复、光环间隙、X 敏感推文镜像兜底、长按多功能面板、胶囊底板、IG carousel_media）；匿名校验 `releases/latest/download/update.json` = 200（versionCode=10）；上一版 `v1.1.4（versionCode 9）`（阶段 46）
 - **一键发布**：`bash scripts/publish-release.sh`（`--bump patch|minor|major|none`、`--notes "…"`、`--repo owner/name`、`--dry-run`、`--skip-build`、`--create-repo`）。它自增版本号 → `assembleRelease`+全量单测 → 生成 `build/dist/{clipdown-release.apk,update.json}`（含 sha256/sizeBytes）→ `gh release create --latest` 上传
 - **每轮修复完成必须走这条链路发布**（用户约定 2026-10-09）：改完 → 本地 `assembleDebug`+全量单测 → commit → `bash scripts/publish-release.sh --bump patch --notes "…"` → 匿名校验清单 200 → 真机在「设置 → 关于与更新」或启动自检一键覆盖安装。本机跑法（PowerShell 调 Git Bash）：`& "C:\Program Files\Git\bin\bash.exe" -lc "cd /f/schoolCompWorks/clone/mobileSrcDownloadplugin && bash scripts/publish-release.sh --bump patch --notes '…'"`（约 2 分钟，含 R8）。**发布后记得把脚本自增的 `version.properties` 提交入库**
 - **CI**：`.github/workflows/release.yml`（手动 dispatch 或 `git tag v1.0.3 && git push origin v1.0.3` 触发）。需配置 secrets `KEYSTORE_BASE64/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD`，否则落回 debug 签名 → 老用户无法覆盖安装
@@ -95,7 +95,7 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 47 已完成（待发布 v1.1.5 + 真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
+- 当前：**阶段 47 已完成并发布 v1.1.5（待真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
 - 上轮：**阶段 46 已实现完成并发布 v1.1.4（待真机复验）**——长按 700ms 呼出多功能面板（64dp 竖条同窗口形态）：头部"下载 N / 已完成 M"+聚合进度条（Σ已下载/Σ总），任务按 taskId 逐行实时刷新（平台色点+类别+百分比/合并中/失败原因），底部「关闭气泡」（危险色，`closeBubble()` 下沉为面板按钮）+「清空已完成」，点已完成行打开文件；气泡相位改显**聚合**进度（多路并发不再互相打回）；面板不自动超时收起、全部完成后 3s 自动收起（行保留可再长按查看）；Panel 态新图集不抢面板→计 pendingCount；旧"下载详情居中卡"（`PopupUiState.Downloads`）删除。**气泡手势总表（覆盖阶段 43）**：单击=识别剪贴板／双击=跳主界面／拖拽=移动／**长按=多功能面板**／面板内按钮=关闭气泡。详见 PROGRESS 阶段 46
 - 上轮：**阶段 45 完成**——①弧线光环间隙真根因：`drawArc` 不传 `topLeft/size` 就按 64dp 画布取半径（只有 `drawCircle` 分支受 radius 控制），三处弧线已统一带 rect 与头像同半径；②X 敏感内容标记/较老推文改走**第三方镜像 fxTwitter 兜底**（`api.fxtwitter.com/i/status/<id>` 免登录，主机实测给 pbs 直链；官方 syndication/oEmbed/老 embed 页实测都拿不到）。X 失败文案仍按 404/敏感/普通三态分诊
 - 上轮：**阶段 44（真机二轮反馈）完成**——①光环内叠 1dp 无缝融合 ②服务重启过滤 SharedFlow replay 的旧链接（重开气泡不再弹"再次解析"确认卡）③X 图片推文：实测 tweet-result 对近期推文 `photos[].url` 正常、`photo_info` 已被上游移除、老/删除推文 404、**敏感内容标记推文 200 但不下发媒体**——已按 404/敏感/普通三态给文案+分诊日志（oEmbed/embed 页实测拿不到 pbs 直链，均不可作兜底）④`IgRiskGuard` 新增 `countsFailure`（缺 Cookie 传 false 不计入冷却，单篇链路已接，主页链路原有关前置检查）——未配 Cookie 连测 reel 不再误锁 10 分钟
@@ -113,4 +113,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.09 19:31 [BY Qoder]
+- 本次文档更新时间：10.09 20:01 [BY Qoder]
