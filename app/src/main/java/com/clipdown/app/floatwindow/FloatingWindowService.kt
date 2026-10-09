@@ -16,6 +16,11 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -36,6 +41,8 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -403,9 +410,14 @@ class FloatingWindowService : Service() {
             (state is PopupUiState.Ready && state.multiSelect) ||
             state is PopupUiState.Panel
         if (!barOpen) {
-            barOnTop.value = false
-            params.gravity = Gravity.TOP or Gravity.START
-            params.y = bubblePos.second
+            // 收起中：保持当前延伸方向（退出动画还在播，立即翻转会让收缩中的竖条跳到气泡另一侧）
+            if (barOnTop.value) {
+                params.gravity = Gravity.BOTTOM or Gravity.START
+                params.y = dm.heightPixels - (bubblePos.second + bubbleH)
+            } else {
+                params.gravity = Gravity.TOP or Gravity.START
+                params.y = bubblePos.second
+            }
             runCatching { wm.updateViewLayout(view, params) }
             return
         }
@@ -1310,22 +1322,39 @@ private fun BubbleWindowContent(
     // 竖条开合/内容变化 → 同步窗口锚点与延伸方向（Compose 状态驱动，替代 Flow）
     LaunchedEffect(barState) { onBarStateChanged(barState) }
     val barOffset = (64 - BAR_OVERLAP_DP).dp
+    // 收起动画期间 barState 已为 null，用最后一份非空状态继续渲染内容（否则退出动画整帧空白）
+    var lastBarState by remember { mutableStateOf<PopupUiState?>(null) }
+    LaunchedEffect(barState) { if (barState != null) lastBarState = barState }
     Box(contentAlignment = if (barOnTop) Alignment.BottomCenter else Alignment.TopCenter) {
-        if (barState != null) {
-            // 先画胶囊（垫底）：向气泡方向偏移 32dp 形成嵌合
-            BarBody(
-                state = barState,
-                barOnTop = barOnTop,
-                modifier = Modifier.padding(
-                    top = if (barOnTop) 0.dp else barOffset,
-                    bottom = if (barOnTop) barOffset else 0.dp
-                ),
-                onRecognize = onRecognize,
-                onConfirmParse = onConfirmParse, onCollapse = onCollapse,
-                onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
-                onOpenTask = onOpenTask,
-                onSelect = onSelect, onDownload = onDownload
+        // 开合动画：从气泡贴合端向自由端展开/收缩（阶段 49：视觉平滑过渡）
+        AnimatedVisibility(
+            visible = barState != null,
+            enter = fadeIn(tween(160)) + expandVertically(
+                animationSpec = tween(240),
+                expandFrom = if (barOnTop) Alignment.Bottom else Alignment.Top
+            ),
+            exit = fadeOut(tween(160)) + shrinkVertically(
+                animationSpec = tween(200),
+                shrinkTowards = if (barOnTop) Alignment.Bottom else Alignment.Top
             )
+        ) {
+            // 退出动画期间渲染最后一份状态（barState 已为 null，不能让内容整帧消失）
+            lastBarState?.let { s ->
+                    // 胶囊先画（垫底）：向气泡方向偏移 32dp 形成嵌合
+                    BarBody(
+                        state = s,
+                        barOnTop = barOnTop,
+                        modifier = Modifier.padding(
+                            top = if (barOnTop) 0.dp else barOffset,
+                            bottom = if (barOnTop) barOffset else 0.dp
+                        ),
+                        onRecognize = onRecognize,
+                        onConfirmParse = onConfirmParse, onCollapse = onCollapse,
+                        onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
+                        onOpenTask = onOpenTask,
+                        onSelect = onSelect, onDownload = onDownload
+                    )
+                }
         }
         // 后画气泡（压顶）：圆盖住胶囊平边一端
         BubbleCircle(phase, pendingCount, parsingCount)

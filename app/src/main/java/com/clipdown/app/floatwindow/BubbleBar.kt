@@ -64,6 +64,9 @@ import com.clipdown.parser.model.MediaKind
 /** 阶段 48 胶囊重设计：气泡圆心落在胶囊平边上，重叠半个气泡（32dp）——胶囊被气泡盖住顶端，视觉上"挂"在圆下 */
 internal const val BAR_OVERLAP_DP = 32
 
+/** 胶囊宽度=气泡头像圆直径（用户真机反馈：64dp 比圆宽，观感突兀） */
+internal const val BAR_WIDTH_DP = 52f
+
 @Composable
 internal fun BarBody(
     state: PopupUiState,
@@ -81,14 +84,14 @@ internal fun BarBody(
     // 参考图形态：与气泡同宽的深色胶囊——靠气泡一端是平边（藏在圆下），另一端半圆收口；
     // 气泡触摸区 64dp，内容从圆的下缘之后开始（重叠 32dp + 8dp 呼吸）
     val shape = if (barOnTop) {
-        RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
+        RoundedCornerShape(topStart = (BAR_WIDTH_DP / 2).dp, topEnd = (BAR_WIDTH_DP / 2).dp, bottomStart = 0.dp, bottomEnd = 0.dp)
     } else {
-        RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 32.dp, bottomEnd = 32.dp)
+        RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = (BAR_WIDTH_DP / 2).dp, bottomEnd = (BAR_WIDTH_DP / 2).dp)
     }
     val bubblePad = 64.dp - BAR_OVERLAP_DP.dp + 8.dp
     Box(
         modifier = modifier
-            .width(64.dp)
+            .width(BAR_WIDTH_DP.dp)
             .clip(shape)
             .background(GlassBase)
             .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
