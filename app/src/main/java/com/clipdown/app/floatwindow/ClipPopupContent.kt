@@ -88,8 +88,8 @@ fun ClipPopupContent(
     onDismiss: () -> Unit
 ) {
     val visible = state !is PopupUiState.Hidden
-    // Mini/图集竖条已并入气泡窗口（修复 12，见 BubbleBar.kt/BubbleWindowContent）——
-    // 这里只承载全屏居中卡：Loading/单选 Ready/Failed/下载详情
+    // Mini/图集竖条/多功能面板已并入气泡窗口（修复 12，见 BubbleBar.kt/BubbleWindowContent）——
+    // 这里只承载全屏居中卡：Loading/单选 Ready/Failed
     AnimatedVisibility(
         visible = visible,
         enter = fadeIn() + slideInVertically { it / 3 },
@@ -112,7 +112,6 @@ fun ClipPopupContent(
                     is PopupUiState.Ready -> ReadyBody(state, remainSeconds, onSelect, onDownload, onOpenApp, onDismiss)
                     is PopupUiState.ProfileReady -> ProfileBody(state, onOpenProfile, onDismiss)
                     is PopupUiState.Failed -> FailedBody(state, onRetry, onDismiss)
-                    is PopupUiState.Downloads -> DownloadsBody(state, onDismiss)
                     else -> Unit
                 }
             }
@@ -482,79 +481,6 @@ private fun FailedBody(
                 }
             }
         }
-    }
-}
-
-@Composable
-private fun DownloadsBody(
-    state: PopupUiState.Downloads,
-    onDismiss: () -> Unit
-) {
-    Column(modifier = Modifier.padding(18.dp)) {
-        HeaderRow(
-            title = "下载任务",
-            subtitle = "${state.tasks.size} 个进行中",
-            remainSeconds = 0,
-            onDismiss = onDismiss
-        )
-        Spacer(Modifier.height(10.dp))
-        state.tasks.forEach { row ->
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(32.dp)
-                        .clip(CircleShape)
-                        .background(SeedBlue.copy(alpha = 0.9f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = row.platformName.take(1),
-                        color = Color.White,
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-                Spacer(Modifier.width(10.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = row.title,
-                        color = Color.White,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    LinearProgressIndicator(
-                        progress = { (row.percent ?: 0) / 100f },
-                        modifier = Modifier.fillMaxWidth(),
-                        color = SeedBlue,
-                        trackColor = Color.White.copy(0.12f)
-                    )
-                    Spacer(Modifier.height(3.dp))
-                    Text(
-                        text = buildList {
-                            add(
-                                when (row.percent) {
-                                    99 -> "正在合并音视频…"
-                                    else -> "下载中 ${row.percent ?: 0}%"
-                                }
-                            )
-                            row.sizeText?.let { add(it) }
-                        }.joinToString(" · "),
-                        color = Color.White.copy(0.65f),
-                        style = MaterialTheme.typography.labelMedium
-                    )
-                }
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        Text(
-            text = "点击空白处收起，下载在后台继续",
-            color = Color.White.copy(0.45f),
-            style = MaterialTheme.typography.labelSmall
-        )
     }
 }
 

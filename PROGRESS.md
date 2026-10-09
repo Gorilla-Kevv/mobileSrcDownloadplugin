@@ -1,97 +1,15 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 46 设计已入档、待实现**：长按气泡呼出多功能面板（查看多路下载进度 + 关闭气泡），单击不再承载"查看下载进度"
-- 下一阶段任务：**实现阶段 46**（4 步，见阶段 46 条目）；真机复验阶段 45（2025-07 敏感推文能否下载）；复验 42/43/44 各项；XHS Cookie 复验主页
+- 当前正在开发任务：**阶段 46 已实现完成（待真机复验）**：长按气泡呼出多功能面板（多路并发下载进度 + 关闭气泡），单击不再承载"查看下载进度"
+- 下一阶段任务：真机复验阶段 46（长按呼面板/多路进度/面板内关闭）+ 复验阶段 45（2025-07 敏感推文能否下载）+ 复验 42/43/44 各项；XHS Cookie 复验主页
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
-- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **92 例** + downloader 30 例 + app **4 例**全绿
+- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证；阶段 46 模拟器三路并发自测（本会话 adb 沙箱受限未跑，交真机复验）
+- 测试基线：parser **93 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.09 11:00
+- 本次文档更新时间：10.09 19:15
 
-
-## 阶段 42 真机测试 9 项反馈修复（竖条/选择流/入口统一/提醒/下载类别/弹窗精简） [计划时间：10.08 23:40 BY Qoder][完成时间：10.08 23:59 BY Qoder]
-- 用户真机测试反馈 9 项（1 项新发现 + 8 项问题），全部处理：
-- **①新发现：小红书免登录可解析**（真机实测）——移动端 UA 直连在真机上免登录解析成功，证实坑 17 的"客户端指纹维度"是模拟器环境问题。落地：`Platform.XIAOHONGSHU.loginRequired=false`（平台列表显示"公开可解析"）；`CookieStore.platformsNeedingCookie()` 与 `loginRequired` 解耦改为显式清单——**主页解析仍需 Cookie**，设置页 Cookie 入口保留
-- **②竖条显示不全（P0）**：`AlbumBarBody`/`MiniBarBody` 的 Column 无宽度约束，WRAP_CONTENT 窗口内 AsyncImage 按图片固有宽度撑爆窗口（真机截图：竖条冲出屏幕右缘、内容错乱）→ 两处 Column 固定 `width(64.dp)`（与气泡同宽的设计初衷）；`syncBubbleWindow` 的 x 钳制（barW=64dp）随之生效
-- **③多图选择顺序错乱**：Ready 创建时 `selectedIndices=setOf(0)` 与"默认全选、取消全选才展开挑图"的交互矛盾（初始态 allSelected=false，点"全选"行反而变成再全选）→ 新增 `defaultSelection()`：`isAlbumMultiSelect` 时全选，否则首位。四处接线（气泡自动流水线/手动弹窗/首页手动解析/首页自动解析）
-- **④首页解析与气泡能力不一致（P0）**：首页 `parse()` 把整段分享文案（标题+链接+引导语）直接当 URL 判平台 → "暂不支持该链接：谁懂！…"；气泡链路在 LinkCenter.quickDetect 里做过 `UrlUtil.extractFirst` → 首页补上同一抽取步骤（含主页提示条 isProfileInput 同步修正）。五入口审查：气泡✓/首页手动✓（本轮修复）/首页自动（lastLink 已抽取）✓/分享✓/无障碍✓
-- **⑤已解析链接提醒**：原逻辑 seen_links 命中即静默跳过 → 改为弹竖条提醒"已解析过，是否要再次解析？"，按钮变"再次解析"（`Mini.confirmLink` 直接 force 重跑该链接，不再读剪贴板）；同时记入抑制窗口防地址栏/剪贴板停留场景反复弹
-- **⑥气泡右下角徽标取消**：`BubbleCircle` 移除下载计数徽标渲染（downloadingCount 状态保留仅作簿记）
-- **⑦竖条收回气泡**：①②的宽度撑爆使触摸分区错乱是"点气泡收不回"的根因；另在缩略图右上角加 × 收回按钮（显式入口）
-- **⑧下载记录类别（P0）**：`buildRows` 把所有带 sourceUrl 的任务一律聚合成"图集 N 张"——单视频也变"图集 1 张"→ 单条记录不成组；组卡类别按 mimeType 统计（全图="图集 N 张"/全视频="视频 N 个"/混合="视频 X + 图片 Y"）；单任务行加类别前缀（视频/音频/图片）
-- **⑨居中弹窗双层+毛玻璃（P0）**：`FLAG_BLUR_BEHIND`+`setBlurBehindRadius(56)` 与卡片 `tonalElevation=12/shadowElevation=24` 叠加出"双层"观感 → 全部移除；卡片改不透明 `GlassBase(0xFF101426)`+18dp 圆角+细描边，遮罩统一 `0x52000000`
-- 测试：`assembleDebug` 全绿 + parser 88 + downloader 30 + app 4 全绿
-- 改动文件：`floatwindow/{FloatingWindowService,BubbleBar,ClipPopupContent,PopupUiState}.kt`、`ui/home/HomeScreen.kt`、`ui/downloads/DownloadsScreen.kt`、`data/CookieStore.kt`、`parser/model/Platform.kt`、HANDOFF/PROGRESS
-- **待真机复验**：②竖条 64dp 定宽后显示正常 ③默认全选+取消展开挑图 ⑤提醒条与再次解析 ⑦点气泡/点 × 收回 ⑧下载页类别 ⑨弹窗精简观感
-- 本次文档更新时间：10.08 23:59
-
-## 阶段 43 气泡光环紧贴 + 长按关闭气泡 [计划时间：10.09 00:05 BY Qoder][完成时间：10.09 00:20 BY Qoder]
-- 用户两项新需求（真机观感与手感）：
-- **①光环紧贴气泡**：`BubbleCircle` 的 Canvas 原来按 64dp 画布内缩一整个描边取半径（`minDimension/2 - stroke`），环画在半径 29.5dp 处，而头像 logo 只有 52dp（半径 26dp）→ 中间空出约 2.3dp 的间隙。改为**半径 = logo 半径 + 半个描边宽**（`BUBBLE_LOGO_SIZE_DP.dp/2 + stroke/2`），环内缘正好贴住头像外缘；logo 尺寸与光环半径共用常量 `BUBBLE_LOGO_SIZE_DP=52f`，以后改尺寸也不会再脱开
-- **②长按气泡关闭**：在 View 级 `setOnTouchListener` 里加长按判定（`LONG_PRESS_MS=700`）——DOWN 起定时，到点且未移动即 `closeBubble()`；拖拽超过 8px 或提前抬手/取消（`ACTION_UP`/`ACTION_CANCEL`）立即取消定时器；长按已触发时用 `longPressed` 标志吞掉随后的单击/双击，避免"关完又跳主界面"
-  - `closeBubble()`：hidePopup → `stopForeground(REMOVE)` → `stopSelf()` → Toast 提示；**并写 `setFloatEnabled(false)`**，否则开机恢复/应用启动会把气泡再拉起来（用户要的是彻底消失）
-  - 手势语义总表（气泡圆 64dp 区）：单击=识别剪贴板／拖拽=移动／双击=跳主界面／**长按=关闭**；竖条区仍透传给 Compose 控件
-- 测试：`:app:assembleDebug` 全绿（parser/downloader 未改动）
-- 改动文件：`floatwindow/FloatingWindowService.kt`、PROGRESS/HANDOFF
-- 待真机复验：①环与头像目视无间隙 ②长按约 0.7s 关闭且不再触发点击、拖拽不误触
-- 本次文档更新时间：10.09 00:20
-
-## 阶段 44 真机二轮反馈（光环无缝 / 重开气泡弹确认卡 / X 图片推文无媒体 / IG 误触冷却） [计划时间：10.09 09:00 BY Qoder][完成时间：10.09 09:40 BY Qoder]
-- 用户真机（v1.1.1）四项反馈：
-- **①光环仍有间隙**：v1.1.1 已把环半径改为 logo 半径+半描边（理论内缘恰好贴合），但截图（时间戳在发版前后之间，疑似旧版）仍见间隙 → 本次直接**内叠 1dp**（`logo半径 + 半描边 - 1dp`，环内缘压进头像边缘），任何相位任何颜色目视无缝
-- **②关闭气泡重开后弹"已解析过，是否要再次解析"**：`LinkCenter.detected` 是 `replay=1` 的 SharedFlow——服务重启（长按关闭后再开）时把上一条旧链接重播进 observeLinks，命中 seen_links 就弹确认竖条。修法：服务记录 `startedAtMs`，**重播的旧时间戳链接直接忽略**（不动 LinkCenter，避免影响 last 状态流的其他消费者）
-- **③X 图片推文"没有可下载的媒体"（严重）**：主机取证（经代理）——syndication tweet-result 对**近期**图片推文返回 `photos[].url`（pbs 直链）+`mediaDetails`，我们提取路径没问题；但 `mediaDetails[].photo_info` 已被上游移除（undefined，旧死代码已删）；**已删除/较老推文返回 404 HTML**；**敏感内容标记（possibly_sensitive）的推文 200 返回但不下发媒体**（entities.media 只剩 t.co 短链，oEmbed/embed 页也拿不到直链，均实测）。修复：①404 给出"推文不存在、已删除或超出公开接口覆盖范围"；②空媒体时按 `possibly_sensitive`/`entities.media` 分诊给明确文案+取证日志（sensitive/entityMedia/created_at/type）。用户那条 2025-07 的推文大概率属于"敏感标记被隐藏"或"超龄"——待用户提供原链接可进一步定性
-- **④IG 未配 Cookie 测 2 次 reel 就触发冷却**：`InstagramParser.parse` 把整个 parseChannels 包在 guard 里——缺 Cookie 时 embed/WebView 通道对 reel 几乎必失败，2 次真实尝试 = 2 次计数 = 冷却 10 分钟（主页链路阶段 41 已做"缺 Cookie 提到 guard 外"，单篇漏了）。修法：`IgRiskGuard.guard` 新增 `countsFailure` 参数（默认 true 不影响既有语义），单篇链路按 `cookieProvider` 是否为空传入；失败异常照常抛、只是不计数。用户实测场景（未配 Cookie 连试）不再触发冷却
-- 测试：parser **91 例全绿**（+2 guard 计数开关用例、+敏感文案用例、+photos 提取用例，-0）；`:app:assembleDebug` 全绿；发布 v1.1.2（versionCode 7）
-- 改动文件：`floatwindow/FloatingWindowService.kt`（①②）、`parser/parsers/{XParser,IgRiskGuard,InstagramParser}.kt`（③④）、`parser/test/{XParserTest,InstagramProfileParserTest}.kt`、文档
-- 待真机复验：①光环无缝 ②重开气泡不再弹确认卡 ③X 图片推文（普通新推文应正常出原图；若再遇"没有可下载的媒体"看新文案与 logcat 分诊日志）④未配 Cookie 连测 reel 不再出现"冷却中"
-- 本次文档更新时间：10.09 09:40
-
-## 阶段 45 弧线光环间隙真根因 + X 敏感内容推文兜底下载 [计划时间：10.09 10:10 BY Qoder][完成时间：10.09 10:45 BY Qoder]
-- **①弧线类光环间隙（真根因，前两轮都没修到）**：`Canvas` 里我之前改的 `radius` 只作用于 `drawCircle` 分支；**`drawArc` 的 `size` 默认是整个画布**，不显式传 `topLeft/size` 就按 64dp 画布（半径 32dp）画弧——所以**黄色解析环、蓝色下载进度环、合并期旋转弧**都在头像圆外面浮着，而空闲蓝环/闪现环（drawCircle）是贴着的。这与用户"只有黄环和蓝环有间隙"的观察完全吻合。修法：三处 `drawArc` 统一传 `topLeft=Offset(center-radius)`、`size=Size(radius*2)`，与 `drawCircle` 同一半径
-- **②敏感内容标记推文的可下载方案（用户要求"请尝试"）**：主机取证（经代理）
-  - syndication `tweet-result` 对敏感标记推文 **200 但不下发媒体**（entities.media 只剩 t.co；oEmbed、platform 老 embed 页实测都拿不到 pbs 直链，均无法兜底）
-  - X 官方时间线 `syndication.twitter.com/srv/timeline-profile/...`：媒体实体只覆盖最近约 100 条且不完整，无法按任意 ID 取；**不可用**
-  - **第三方公开镜像 fxTwitter 可用**：`https://api.fxtwitter.com/i/status/<id>` → 200，`tweet.media.all[]` 给 pbs 直链（photo 带 `?name=orig`，video/gif 给 mp4 变体带码率）。实测 NASA 图片推文拿到 `https://pbs.twimg.com/media/HUHaKxjW4AAKpQt.jpg?name=orig`
-  - 落地：XParser 新增 `fetchFxMedia()`，**仅在 syndication 拿不到媒体时**调用（敏感标记/较老推文/已下线媒体都覆盖），photo→原图、video/gif→按码率降序的 mp4；命中时 result 带 warning 说明"改由第三方镜像获取"；镜像不可用静默失败走原失败文案
-- 测试：parser **92 例全绿**（+敏感推文走镜像兜底用例）；`:app:assembleDebug` 全绿；发布 v1.1.3（versionCode 8）
-- 待真机复验：①黄色解析环/蓝色进度环与头像无缝 ②**用原来那条 2025-07 的敏感推文再试**（预期可解析出原图并下载；若仍失败看 logcat `ParserEngine` 的 fxTwitter 命中日志）
-- 本次文档更新时间：10.09 10:45
-
-## 阶段 46 长按呼出多功能面板（多路下载进度 + 关闭气泡） [计划时间：10.09 11:00 BY Qoder][状态：**设计已入档，待实现**]
-- 用户需求（真机路测提出）：下载时**原本设计为单击气泡查看下载进度**，现在改为**长按呼出多功能面板**，面板里可查看进度也可关闭气泡。**目的：为多路并发下载服务**——下载引擎本来就是队列并发（下载期间下一条链接照样能解析、能入队下载），面板要能同时呈现多路并给出收口操作
-- 交互语义总表（覆盖 阶段 43 的旧表）：
-  | 手势（气泡圆 64dp 区） | 行为 |
-  | --- | --- |
-  | 单击 | 读剪贴板 → 解析 → 自动流水线（**不再**跳下载详情卡） |
-  | 双击 | 跳主界面 |
-  | 拖拽 | 移动气泡（>8px 取消长按/单击） |
-  | **长按 700ms** | **呼出多功能面板**（进度列表 + 关闭气泡入口），不再是"直接关闭" |
-  | 面板内"关闭气泡"按钮 | 执行 `closeBubble()`（收弹层→stopForeground→stopSelf+setFloatEnabled(false)） |
-  - 关闭动作**下沉到面板按钮**：长按从"误触即关"变成"打开面板"，避免刷视频时误关气泡；关闭仍需一次显式点击
-- 多功能面板形态（复用 修复 12 的同窗口一体化方案，与竖条同一套窗口/锚点逻辑）：
-  - 头部：聚合行——`下载中 N / 已完成 M`，聚合进度条 = Σ已下载字节 / Σ总字节
-  - 任务列表：每路一行（平台色点 + 标题 + 类别 + 百分比/合并中/失败原因），**按 taskId 索引**，实时随 `progress` 流刷新；已完成任务可点行打开文件
-  - 底部动作区：「关闭气泡」（危险色）+「清空已完成」；面板内不做暂停/重试（先做最小集，重试沿用下载页）
-  - 窗口：与 Mini/图集竖条同一 64dp 宽度、`barOnTop` 自动翻转、面板开合只改窗口高度；点气泡收起面板（toggle 语义不变）
-- **并发下载现状盘点（写实现前先对齐事实）**：
-  - 引擎侧已有队列并发：`DownloadConfig.maxConcurrent=3`，`DownloadController.enqueue/enqueueAll` 即时入队，`DownloadService` 前台服务执行，进度事件 `DownloadController.engine().progress` 按 `taskId` 分流 → **解析与下载天然异步**（解析走 `Dispatchers.IO` 协程，下载在独立服务）
-  - 服务侧现状：`autoTasks: LinkedHashMap<taskId, DownloadRow>`（主线程读写）、每条任务一个 `watchAutoTask` collect、`downloadingCount` 计数、`refreshDownloadsCard()` 只刷新"下载详情卡"
-  - 现有短板（面板要解决）：①气泡相位只显示"最新一条进度事件"的任务，多任务时不聚合；②详情卡是一次性快照且 `autoTasks` 清空就自动收起；③`uiState` 为单态，下载中弹图集竖条会与详情卡抢弹窗（`popupFreeForAuto` 只在 Hidden/Mini 才让位）
-- 实现步骤（拆 4 步，逐步提交）：
-  1. **手势改造**：`addBubble` 的长按分支 `closeBubble()` → `openBubblePanel()`（`uiState = PopupUiState.Panel`，起 dismiss 计时/或不自动收起）；`onBubbleClick` 删除 `autoTasks.isNotEmpty()` 的详情卡分支；`longPressed` 吞掉单击逻辑保留
-  2. **面板 UI**：`PopupUiState` 新增 `Panel(tasks: List<DownloadRow>, aggregatePercent: Int?)`；`BubbleBar` 新增 `PanelBody`（复用 `BarBody` 的 64dp 定宽与 `onCollapse`）；`BubbleWindowContent` 的 `barState` 判定加上 Panel
-  3. **多路进度聚合**：`watchAutoTask` 改为统一在 `autoTasks` 上按 taskId 更新（已基本满足），新增聚合状态（总数/完成数/聚合百分比）；气泡相位 `Downloading(aggregate)`，徽标保留"下载中 N"（**仅面板内显示**，气泡右下角徽标按用户阶段 42 反馈不上气泡）
-  4. **并发自测**：连发 3 条不同平台链接 → 三路同时下载 → 长按看面板三行都在动 → 期间再复制第 4 条完成解析并入队（验证"下载不阻塞解析"）→ 全部完成后面板自动收起、气泡回 Idle
-- 边界与规则：
-  - 面板打开时新解析结果**不抢面板**（`popupFreeForAuto` 增加：Panel 态下自动路径只更新气泡相位，图集竖条延后到面板收起后触发，或计数进 pendingCount）
-  - 长按阈值 700ms 不变；拖拽超过阈值、抬手/取消都取消长按；长按触发后吞掉单击双击（既有 `longPressed` 标志）
-  - 面板高度设上限（任务多行可滚动），避免窗口超出屏幕；`syncBubbleWindow` 的 `barFull=330dp` 估算需跟随面板实际高度
-  - 关闭气泡后 `floatEnabled=false` 不变（防自动复活）
-- 待实现；本轮**仅文档入库**（用户要求"先写进进度文档"），不改代码、不发版
-- 本次文档更新时间：10.09 11:00
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：
@@ -734,3 +652,93 @@
 - 改动文件：新增 `parser/parsers/{XProfileParser,InstagramProfileParser,IgRiskGuard}.kt` + 两个测试类 + 三个夹具；`parser/core/ParserEngine.kt`（注册 X/IG 主页解析器）、`parser/parsers/InstagramParser.kt`（冷却改用共享保险丝）、`parser/parsers/XiaohongshuProfileParser.kt`（取页失败诊断）、`docs/06`（平台接入状态表更新）
 - 下一步：①IG 主页待有效 Cookie 实测校准（结构样本夹具需换成真响应）②X 主页可选增强（引用推文、更细的图集判定）③B 站/微博主页（免登录，可先验证多平台框架）④XHS 需重新导出 Cookie 复验
 - 本次文档更新时间：10.08 01:35
+
+## 阶段 42 真机测试 9 项反馈修复（竖条/选择流/入口统一/提醒/下载类别/弹窗精简） [计划时间：10.08 23:40 BY Qoder][完成时间：10.08 23:59 BY Qoder]
+- 用户真机测试反馈 9 项（1 项新发现 + 8 项问题），全部处理：
+- **①新发现：小红书免登录可解析**（真机实测）——移动端 UA 直连在真机上免登录解析成功，证实坑 17 的"客户端指纹维度"是模拟器环境问题。落地：`Platform.XIAOHONGSHU.loginRequired=false`（平台列表显示"公开可解析"）；`CookieStore.platformsNeedingCookie()` 与 `loginRequired` 解耦改为显式清单——**主页解析仍需 Cookie**，设置页 Cookie 入口保留
+- **②竖条显示不全（P0）**：`AlbumBarBody`/`MiniBarBody` 的 Column 无宽度约束，WRAP_CONTENT 窗口内 AsyncImage 按图片固有宽度撑爆窗口（真机截图：竖条冲出屏幕右缘、内容错乱）→ 两处 Column 固定 `width(64.dp)`（与气泡同宽的设计初衷）；`syncBubbleWindow` 的 x 钳制（barW=64dp）随之生效
+- **③多图选择顺序错乱**：Ready 创建时 `selectedIndices=setOf(0)` 与"默认全选、取消全选才展开挑图"的交互矛盾（初始态 allSelected=false，点"全选"行反而变成再全选）→ 新增 `defaultSelection()`：`isAlbumMultiSelect` 时全选，否则首位。四处接线（气泡自动流水线/手动弹窗/首页手动解析/首页自动解析）
+- **④首页解析与气泡能力不一致（P0）**：首页 `parse()` 把整段分享文案（标题+链接+引导语）直接当 URL 判平台 → "暂不支持该链接：谁懂！…"；气泡链路在 LinkCenter.quickDetect 里做过 `UrlUtil.extractFirst` → 首页补上同一抽取步骤（含主页提示条 isProfileInput 同步修正）。五入口审查：气泡✓/首页手动✓（本轮修复）/首页自动（lastLink 已抽取）✓/分享✓/无障碍✓
+- **⑤已解析链接提醒**：原逻辑 seen_links 命中即静默跳过 → 改为弹竖条提醒"已解析过，是否要再次解析？"，按钮变"再次解析"（`Mini.confirmLink` 直接 force 重跑该链接，不再读剪贴板）；同时记入抑制窗口防地址栏/剪贴板停留场景反复弹
+- **⑥气泡右下角徽标取消**：`BubbleCircle` 移除下载计数徽标渲染（downloadingCount 状态保留仅作簿记）
+- **⑦竖条收回气泡**：①②的宽度撑爆使触摸分区错乱是"点气泡收不回"的根因；另在缩略图右上角加 × 收回按钮（显式入口）
+- **⑧下载记录类别（P0）**：`buildRows` 把所有带 sourceUrl 的任务一律聚合成"图集 N 张"——单视频也变"图集 1 张"→ 单条记录不成组；组卡类别按 mimeType 统计（全图="图集 N 张"/全视频="视频 N 个"/混合="视频 X + 图片 Y"）；单任务行加类别前缀（视频/音频/图片）
+- **⑨居中弹窗双层+毛玻璃（P0）**：`FLAG_BLUR_BEHIND`+`setBlurBehindRadius(56)` 与卡片 `tonalElevation=12/shadowElevation=24` 叠加出"双层"观感 → 全部移除；卡片改不透明 `GlassBase(0xFF101426)`+18dp 圆角+细描边，遮罩统一 `0x52000000`
+- 测试：`assembleDebug` 全绿 + parser 88 + downloader 30 + app 4 全绿
+- 改动文件：`floatwindow/{FloatingWindowService,BubbleBar,ClipPopupContent,PopupUiState}.kt`、`ui/home/HomeScreen.kt`、`ui/downloads/DownloadsScreen.kt`、`data/CookieStore.kt`、`parser/model/Platform.kt`、HANDOFF/PROGRESS
+- **待真机复验**：②竖条 64dp 定宽后显示正常 ③默认全选+取消展开挑图 ⑤提醒条与再次解析 ⑦点气泡/点 × 收回 ⑧下载页类别 ⑨弹窗精简观感
+- 本次文档更新时间：10.08 23:59
+
+## 阶段 43 气泡光环紧贴 + 长按关闭气泡 [计划时间：10.09 00:05 BY Qoder][完成时间：10.09 00:20 BY Qoder]
+- 用户两项新需求（真机观感与手感）：
+- **①光环紧贴气泡**：`BubbleCircle` 的 Canvas 原来按 64dp 画布内缩一整个描边取半径（`minDimension/2 - stroke`），环画在半径 29.5dp 处，而头像 logo 只有 52dp（半径 26dp）→ 中间空出约 2.3dp 的间隙。改为**半径 = logo 半径 + 半个描边宽**（`BUBBLE_LOGO_SIZE_DP.dp/2 + stroke/2`），环内缘正好贴住头像外缘；logo 尺寸与光环半径共用常量 `BUBBLE_LOGO_SIZE_DP=52f`，以后改尺寸也不会再脱开
+- **②长按气泡关闭**：在 View 级 `setOnTouchListener` 里加长按判定（`LONG_PRESS_MS=700`）——DOWN 起定时，到点且未移动即 `closeBubble()`；拖拽超过 8px 或提前抬手/取消（`ACTION_UP`/`ACTION_CANCEL`）立即取消定时器；长按已触发时用 `longPressed` 标志吞掉随后的单击/双击，避免"关完又跳主界面"
+  - `closeBubble()`：hidePopup → `stopForeground(REMOVE)` → `stopSelf()` → Toast 提示；**并写 `setFloatEnabled(false)`**，否则开机恢复/应用启动会把气泡再拉起来（用户要的是彻底消失）
+  - 手势语义总表（气泡圆 64dp 区）：单击=识别剪贴板／拖拽=移动／双击=跳主界面／**长按=关闭**；竖条区仍透传给 Compose 控件
+- 测试：`:app:assembleDebug` 全绿（parser/downloader 未改动）
+- 改动文件：`floatwindow/FloatingWindowService.kt`、PROGRESS/HANDOFF
+- 待真机复验：①环与头像目视无间隙 ②长按约 0.7s 关闭且不再触发点击、拖拽不误触
+- 本次文档更新时间：10.09 00:20
+
+## 阶段 44 真机二轮反馈（光环无缝 / 重开气泡弹确认卡 / X 图片推文无媒体 / IG 误触冷却） [计划时间：10.09 09:00 BY Qoder][完成时间：10.09 09:40 BY Qoder]
+- 用户真机（v1.1.1）四项反馈：
+- **①光环仍有间隙**：v1.1.1 已把环半径改为 logo 半径+半描边（理论内缘恰好贴合），但截图（时间戳在发版前后之间，疑似旧版）仍见间隙 → 本次直接**内叠 1dp**（`logo半径 + 半描边 - 1dp`，环内缘压进头像边缘），任何相位任何颜色目视无缝
+- **②关闭气泡重开后弹"已解析过，是否要再次解析"**：`LinkCenter.detected` 是 `replay=1` 的 SharedFlow——服务重启（长按关闭后再开）时把上一条旧链接重播进 observeLinks，命中 seen_links 就弹确认竖条。修法：服务记录 `startedAtMs`，**重播的旧时间戳链接直接忽略**（不动 LinkCenter，避免影响 last 状态流的其他消费者）
+- **③X 图片推文"没有可下载的媒体"（严重）**：主机取证（经代理）——syndication tweet-result 对**近期**图片推文返回 `photos[].url`（pbs 直链）+`mediaDetails`，我们提取路径没问题；但 `mediaDetails[].photo_info` 已被上游移除（undefined，旧死代码已删）；**已删除/较老推文返回 404 HTML**；**敏感内容标记（possibly_sensitive）的推文 200 返回但不下发媒体**（entities.media 只剩 t.co 短链，oEmbed/embed 页也拿不到直链，均实测）。修复：①404 给出"推文不存在、已删除或超出公开接口覆盖范围"；②空媒体时按 `possibly_sensitive`/`entities.media` 分诊给明确文案+取证日志（sensitive/entityMedia/created_at/type）。用户那条 2025-07 的推文大概率属于"敏感标记被隐藏"或"超龄"——待用户提供原链接可进一步定性
+- **④IG 未配 Cookie 测 2 次 reel 就触发冷却**：`InstagramParser.parse` 把整个 parseChannels 包在 guard 里——缺 Cookie 时 embed/WebView 通道对 reel 几乎必失败，2 次真实尝试 = 2 次计数 = 冷却 10 分钟（主页链路阶段 41 已做"缺 Cookie 提到 guard 外"，单篇漏了）。修法：`IgRiskGuard.guard` 新增 `countsFailure` 参数（默认 true 不影响既有语义），单篇链路按 `cookieProvider` 是否为空传入；失败异常照常抛、只是不计数。用户实测场景（未配 Cookie 连试）不再触发冷却
+- 测试：parser **91 例全绿**（+2 guard 计数开关用例、+敏感文案用例、+photos 提取用例，-0）；`:app:assembleDebug` 全绿；发布 v1.1.2（versionCode 7）
+- 改动文件：`floatwindow/FloatingWindowService.kt`（①②）、`parser/parsers/{XParser,IgRiskGuard,InstagramParser}.kt`（③④）、`parser/test/{XParserTest,InstagramProfileParserTest}.kt`、文档
+- 待真机复验：①光环无缝 ②重开气泡不再弹确认卡 ③X 图片推文（普通新推文应正常出原图；若再遇"没有可下载的媒体"看新文案与 logcat 分诊日志）④未配 Cookie 连测 reel 不再出现"冷却中"
+- 本次文档更新时间：10.09 09:40
+
+## 阶段 45 弧线光环间隙真根因 + X 敏感内容推文兜底下载 [计划时间：10.09 10:10 BY Qoder][完成时间：10.09 10:45 BY Qoder]
+- **①弧线类光环间隙（真根因，前两轮都没修到）**：`Canvas` 里我之前改的 `radius` 只作用于 `drawCircle` 分支；**`drawArc` 的 `size` 默认是整个画布**，不显式传 `topLeft/size` 就按 64dp 画布（半径 32dp）画弧——所以**黄色解析环、蓝色下载进度环、合并期旋转弧**都在头像圆外面浮着，而空闲蓝环/闪现环（drawCircle）是贴着的。这与用户"只有黄环和蓝环有间隙"的观察完全吻合。修法：三处 `drawArc` 统一传 `topLeft=Offset(center-radius)`、`size=Size(radius*2)`，与 `drawCircle` 同一半径
+- **②敏感内容标记推文的可下载方案（用户要求"请尝试"）**：主机取证（经代理）
+  - syndication `tweet-result` 对敏感标记推文 **200 但不下发媒体**（entities.media 只剩 t.co；oEmbed、platform 老 embed 页实测都拿不到 pbs 直链，均无法兜底）
+  - X 官方时间线 `syndication.twitter.com/srv/timeline-profile/...`：媒体实体只覆盖最近约 100 条且不完整，无法按任意 ID 取；**不可用**
+  - **第三方公开镜像 fxTwitter 可用**：`https://api.fxtwitter.com/i/status/<id>` → 200，`tweet.media.all[]` 给 pbs 直链（photo 带 `?name=orig`，video/gif 给 mp4 变体带码率）。实测 NASA 图片推文拿到 `https://pbs.twimg.com/media/HUHaKxjW4AAKpQt.jpg?name=orig`
+  - 落地：XParser 新增 `fetchFxMedia()`，**仅在 syndication 拿不到媒体时**调用（敏感标记/较老推文/已下线媒体都覆盖），photo→原图、video/gif→按码率降序的 mp4；命中时 result 带 warning 说明"改由第三方镜像获取"；镜像不可用静默失败走原失败文案
+- 测试：parser **92 例全绿**（+敏感推文走镜像兜底用例）；`:app:assembleDebug` 全绿；发布 v1.1.3（versionCode 8）
+- 待真机复验：①黄色解析环/蓝色进度环与头像无缝 ②**用原来那条 2025-07 的敏感推文再试**（预期可解析出原图并下载；若仍失败看 logcat `ParserEngine` 的 fxTwitter 命中日志）
+- 本次文档更新时间：10.09 10:45
+
+## 阶段 46 长按呼出多功能面板（多路下载进度 + 关闭气泡） [计划时间：10.09 11:00 BY Qoder][完成时间：10.09 19:15 BY Qoder]
+- 用户需求（真机路测提出）：下载时**原本设计为单击气泡查看下载进度**，现在改为**长按呼出多功能面板**，面板里可查看进度也可关闭气泡。**目的：为多路并发下载服务**——下载引擎本来就是队列并发（下载期间下一条链接照样能解析、能入队下载），面板要能同时呈现多路并给出收口操作
+- 交互语义总表（覆盖 阶段 43 的旧表）：
+  | 手势（气泡圆 64dp 区） | 行为 |
+  | --- | --- |
+  | 单击 | 读剪贴板 → 解析 → 自动流水线（**不再**跳下载详情卡） |
+  | 双击 | 跳主界面 |
+  | 拖拽 | 移动气泡（>8px 取消长按/单击） |
+  | **长按 700ms** | **呼出多功能面板**（进度列表 + 关闭气泡入口），不再是"直接关闭" |
+  | 面板内"关闭气泡"按钮 | 执行 `closeBubble()`（收弹层→stopForeground→stopSelf+setFloatEnabled(false)） |
+  - 关闭动作**下沉到面板按钮**：长按从"误触即关"变成"打开面板"，避免刷视频时误关气泡；关闭仍需一次显式点击
+- 多功能面板形态（复用 修复 12 的同窗口一体化方案，与竖条同一套窗口/锚点逻辑）：
+  - 头部：聚合行——`下载中 N / 已完成 M`，聚合进度条 = Σ已下载字节 / Σ总字节
+  - 任务列表：每路一行（平台色点 + 标题 + 类别 + 百分比/合并中/失败原因），**按 taskId 索引**，实时随 `progress` 流刷新；已完成任务可点行打开文件
+  - 底部动作区：「关闭气泡」（危险色）+「清空已完成」；面板内不做暂停/重试（先做最小集，重试沿用下载页）
+  - 窗口：与 Mini/图集竖条同一 64dp 宽度、`barOnTop` 自动翻转、面板开合只改窗口高度；点气泡收起面板（toggle 语义不变）
+- **并发下载现状盘点（写实现前先对齐事实）**：
+  - 引擎侧已有队列并发：`DownloadConfig.maxConcurrent=3`，`DownloadController.enqueue/enqueueAll` 即时入队，`DownloadService` 前台服务执行，进度事件 `DownloadController.engine().progress` 按 `taskId` 分流 → **解析与下载天然异步**（解析走 `Dispatchers.IO` 协程，下载在独立服务）
+  - 服务侧现状：`autoTasks: LinkedHashMap<taskId, DownloadRow>`（主线程读写）、每条任务一个 `watchAutoTask` collect、`downloadingCount` 计数、`refreshDownloadsCard()` 只刷新"下载详情卡"
+  - 现有短板（面板要解决）：①气泡相位只显示"最新一条进度事件"的任务，多任务时不聚合；②详情卡是一次性快照且 `autoTasks` 清空就自动收起；③`uiState` 为单态，下载中弹图集竖条会与详情卡抢弹窗（`popupFreeForAuto` 只在 Hidden/Mini 才让位）
+- 实现步骤（拆 4 步，逐步提交）——**1/2/3 已按设计落地**：
+  1. **手势改造**：`addBubble` 的长按分支 `closeBubble()` → `openBubblePanel()`（`uiState = PopupUiState.Panel`，起 dismiss 计时/或不自动收起）；`onBubbleClick` 删除 `autoTasks.isNotEmpty()` 的详情卡分支；`longPressed` 吞掉单击逻辑保留
+  2. **面板 UI**：`PopupUiState` 新增 `Panel(tasks: List<DownloadRow>, aggregatePercent: Int?)`；`BubbleBar` 新增 `PanelBody`（复用 `BarBody` 的 64dp 定宽与 `onCollapse`）；`BubbleWindowContent` 的 `barState` 判定加上 Panel
+  3. **多路进度聚合**：`watchAutoTask` 改为统一在 `autoTasks` 上按 taskId 更新（已基本满足），新增聚合状态（总数/完成数/聚合百分比）；气泡相位 `Downloading(aggregate)`，徽标保留"下载中 N"（**仅面板内显示**，气泡右下角徽标按用户阶段 42 反馈不上气泡）
+  4. **并发自测**：连发 3 条不同平台链接 → 三路同时下载 → 长按看面板三行都在动 → 期间再复制第 4 条完成解析并入队（验证"下载不阻塞解析"）→ 全部完成后面板自动收起、气泡回 Idle
+- 边界与规则：
+  - 面板打开时新解析结果**不抢面板**（`popupFreeForAuto` 增加：Panel 态下自动路径只更新气泡相位，图集竖条延后到面板收起后触发，或计数进 pendingCount）
+  - 长按阈值 700ms 不变；拖拽超过阈值、抬手/取消都取消长按；长按触发后吞掉单击双击（既有 `longPressed` 标志）
+  - 面板高度设上限（任务多行可滚动），避免窗口超出屏幕；`syncBubbleWindow` 的 `barFull=330dp` 估算需跟随面板实际高度
+  - 关闭气泡后 `floatEnabled=false` 不变（防自动复活）
+- **实现落地（10.09 完成，BY Qoder）**：
+  - **步骤1 手势**：长按 700ms → `openBubblePanel()`（设 `Panel(autoTasks 快照, aggregatePercent())`，**不挂 dismiss 计时**——面板常驻到用户收起/点关闭）；`onBubbleClick` 删除详情卡分支，只保留"有弹层→收起（toggle）/无弹层→识别剪贴板"两态；`longPressed` 吞单击双击语义原样保留；`closeBubble()` 本体不动，入口下沉为面板按钮（`onCloseBubble`）
+  - **步骤2 面板 UI**：`PopupUiState.Panel(tasks, aggregatePercent)` + `DownloadRow` 扩 `platformId/kindLabel/status/downloadedBytes/totalBytes/error`；`BubbleBar` 新增 `PanelBarBody`（64dp 定宽、`barOnTop` 自动翻转沿用；头部"下载 N / 已完成 M"+聚合 `LinearProgressIndicator`；行=平台色点+标题 1 行+状态行「类别 %/合并中/失败：原因/已完成」，LazyColumn 上限 220dp 可滚动；底部「关闭气泡」危险色按钮+「清空已完成」；已完成行点击→查任务库 `localUri` 打开文件）；旧"下载详情居中卡" `PopupUiState.Downloads`/`DownloadsBody` 整体删除（无入口的死代码不留）
+  - **步骤3 聚合**：`watchAutoTask` 终态**不再删行**（保留为完成/失败状态行，「清空已完成」或服务重启才清）；新增 `aggregatePercent()`（Σ已下载/Σ总，合并/完成按满额计、取消行剔除、总字节未知→null 不确定弧）；气泡相位统一 `Downloading(aggregate)`；仍有在跑的路时完成单条只更新聚合环不闪终态；`setPhase` 瞬态回退扩展为"解析中→Parsing，仍有下载→Downloading(aggregate)，否则 Idle"（修掉多路并发下单条闪现把进度环打回 Idle 的旧隐患）；全部终态→3s 后面板自动收起、行保留；失败原因经 `fetchFailedReason`（IO 查 `TaskRepository.get`）回填；`syncBubbleWindow`/`barState` 判定加 Panel；Panel 态下自动路径弹图集让位→`pendingCount++`
+  - **步骤4 验证**：`:app:assembleDebug` 全绿；`:parser:test` **93 例** + `:downloader:testDebugUnitTest` 30 例 + `:app:testDebugUnitTest` 4 例全绿（本会话实测计数；阶段 45 记录 92 与实测差 1，以 XML 汇总为准）。三路并发真机自测受 adb 沙箱限制未在本会话执行，列入待真机复验
+- 改动文件：`floatwindow/{FloatingWindowService,BubbleBar,ClipPopupContent,PopupUiState}.kt`、PROGRESS/HANDOFF
+- 待真机复验：①长按 0.7s 呼出面板（不再直接关闭）②面板多行并发进度同时滚动、聚合条与气泡环一致 ③面板内「关闭气泡」=旧长按关闭行为 ④「清空已完成」清行、点完成行打开文件 ⑤连发 3 条+第 4 条下载中解析入队（下载不阻塞解析）⑥全部完成面板 3s 自动收起、气泡回 Idle
+- 下一阶段入口：真机复验阶段 46/45/42-44 各项；XHS Cookie 复验主页；IG 主页实测
+- 本次文档更新时间：10.09 19:15
+

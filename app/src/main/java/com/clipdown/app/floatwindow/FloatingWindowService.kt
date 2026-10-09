@@ -68,6 +68,7 @@ import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.MediaItem
+import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.ParseResult
 import kotlinx.coroutines.CoroutineScope
@@ -88,8 +89,9 @@ import kotlin.math.abs
  *
  * 组成：
  * - 悬浮球：常驻屏幕边缘，可拖动；单击 = 读取剪贴板并直接走自动流水线
- *   （解析→单资源自动下载，图集/失败弹卡），下载中单击 = 下载详情小卡，双击 = 跳主界面；
- * - 毛玻璃弹窗：图集选择卡 / 失败原因卡 / 下载详情卡，若干秒后自动收起。
+ *   （解析→单资源自动下载，图集/失败弹卡），双击 = 跳主界面，
+ *   **长按 = 呼出多功能面板**（多路并发下载进度 + 关闭气泡/清空已完成，阶段 46）；
+ * - 毛玻璃弹窗：图集选择卡 / 失败原因卡，若干秒后自动收起。
  *
  * 视觉实现：Android 12+ 使用系统级 `FLAG_BLUR_BEHIND` + `setBackgroundBlurRadius` 得到真实背景模糊；
  * 低版本退化为半透明遮罩（见 [ClipPopupContent]）。
@@ -243,7 +245,9 @@ class FloatingWindowService : Service() {
                         pendingCount = pendingCount.intValue,
                         parsingCount = parsingCount.intValue,
                         barState = uiState.value.takeIf {
-                            it is PopupUiState.Mini || (it is PopupUiState.Ready && it.multiSelect)
+                            it is PopupUiState.Mini ||
+                                (it is PopupUiState.Ready && it.multiSelect) ||
+                                it is PopupUiState.Panel
                         },
                         barOnTop = barOnTop.value,
                         onRecognize = { startManualRecognize() },
@@ -253,6 +257,9 @@ class FloatingWindowService : Service() {
                             autoRecognize(link, force = true)
                         },
                         onCollapse = { hidePopup() },
+                        onCloseBubble = { closeBubble() },
+                        onClearFinished = { clearFinishedTasks() },
+                        onOpenTask = { taskId -> openTaskFile(taskId) },
                         onSelect = { index ->
                             val s = uiState.value
                             if (s is PopupUiState.Ready) {
@@ -298,7 +305,7 @@ class FloatingWindowService : Service() {
         var startTouchY = 0f
         var moved = false
         var gestureInBubble = false
-        /** 长按已触发：本次手势只用于关闭气泡，抬手/拖拽都不再走点击语义 */
+        /** 长按已触发：本次手势只用于呼出面板，抬手/拖拽都不再走点击语义 */
         var longPressed = false
         val bubblePartH = (64 * resources.displayMetrics.density).toInt()
 
@@ -314,13 +321,13 @@ class FloatingWindowService : Service() {
                 startTouchY = event.rawY
                 moved = false
                 longPressed = false
-                // 长按 = 关闭气泡：按住不动到阈值即关闭（拖拽或提前抬手都会取消）
+                // 长按 = 呼出多功能面板：按住不动到阈值即打开（拖拽或提前抬手都会取消）
                 longPressJob?.cancel()
                 longPressJob = scope.launch {
                     delay(LONG_PRESS_MS)
                     if (moved) return@launch
                     longPressed = true
-                    closeBubble()
+                    openBubblePanel()
                 }
                 return@setOnTouchListener true
             }
@@ -390,7 +397,9 @@ class FloatingWindowService : Service() {
         val barFull = (330 * dm.density).toInt()
         val barW = (64 * dm.density).toInt()
         params.x = bubblePos.first.coerceIn(8, (dm.widthPixels - barW - 8).coerceAtLeast(8))
-        val barOpen = state is PopupUiState.Mini || (state is PopupUiState.Ready && state.multiSelect)
+        val barOpen = state is PopupUiState.Mini ||
+            (state is PopupUiState.Ready && state.multiSelect) ||
+            state is PopupUiState.Panel
         if (!barOpen) {
             barOnTop.value = false
             params.gravity = Gravity.TOP or Gravity.START
@@ -411,25 +420,54 @@ class FloatingWindowService : Service() {
     }
 
     private fun onBubbleClick() {
-        // toggle 语义：已有弹层（竖条/详情卡/失败卡）时点气泡=收回
+        // toggle 语义：已有弹层（竖条/面板/失败卡）时点气泡=收回
         if (uiState.value !is PopupUiState.Hidden) {
             hidePopup()
             return
         }
-        // 自动下载进行中：气泡拉出下载详情竖条
-        if (autoTasks.isNotEmpty()) {
-            uiState.value = PopupUiState.Downloads(autoTasks.values.toList())
-            ensurePopupHost()
-            dismissJob?.cancel()
-            remainSeconds.value = 0
-            return
-        }
         // 单击 = 识别剪贴板：借道读取后直接走自动流水线，反馈全在气泡相位
+        // （查看多路下载进度已改由长按呼出的多功能面板承载，阶段 46）
         startManualRecognize()
     }
 
     /**
-     * 长按气泡 = 关闭气泡：收起弹层 → 停掉前台服务 → 移除气泡。
+     * 长按气泡 = 呼出多功能面板（阶段 46）：多路并发下载进度 + 关闭气泡/清空已完成。
+     * 面板不自动超时收起；点气泡收起（toggle 语义不变），全部下载完成后短暂延迟自动收起。
+     */
+    private fun openBubblePanel() {
+        android.util.Log.d("FloatingWindowService", "长按气泡：呼出多功能面板 tasks=${autoTasks.size}")
+        uiState.value = PopupUiState.Panel(autoTasks.values.toList(), aggregatePercent())
+        dismissJob?.cancel()
+        remainSeconds.value = 0
+    }
+
+    /** 清空已完成/失败/取消的任务行 */
+    private fun clearFinishedTasks() {
+        autoTasks.entries.removeAll { it.value.status.isTerminal }
+        refreshPanel()
+    }
+
+    /** 点已完成行：查任务库拿 localUri，打开文件 */
+    private fun openTaskFile(taskId: String) {
+        scope.launch {
+            val task = withContext(Dispatchers.IO) {
+                runCatching { DownloadController.repository().get(taskId) }.getOrNull()
+            }
+            val uri = task?.localUri ?: return@launch
+            runCatching {
+                startActivity(
+                    Intent(Intent.ACTION_VIEW).apply {
+                        setDataAndType(android.net.Uri.parse(uri), task.mimeType)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
+                )
+            }
+        }
+    }
+
+    /**
+     * 关闭气泡（多功能面板内的显式按钮，阶段 46 起不再由长按直接触发）：
+     * 收起弹层 → 停掉前台服务 → 移除气泡。
      *
      * 同时把 `floatEnabled` 记为关闭，否则开机恢复/应用启动会把它再拉起来
      * （用户想彻底消失，而不是"关了又回来"）；下次在应用内重新开启即可。
@@ -453,14 +491,18 @@ class FloatingWindowService : Service() {
         )
     }
 
-    /** 切换气泡相位；瞬态相位（revertMs 非空）到点自动回 Idle（仍有并发解析在跑则回 Parsing） */
+    /** 切换气泡相位；瞬态相位（revertMs 非空）到点自动回退：并发解析→Parsing、仍有下载→聚合进度环、否则 Idle */
     private fun setPhase(phase: BubblePhase, revertMs: Long? = null) {
         phaseRevertJob?.cancel()
         bubblePhase.value = phase
         if (revertMs != null) {
             phaseRevertJob = scope.launch {
                 delay(revertMs)
-                bubblePhase.value = if (parsingCount.intValue > 0) BubblePhase.Parsing else BubblePhase.Idle
+                bubblePhase.value = when {
+                    parsingCount.intValue > 0 -> BubblePhase.Parsing
+                    autoTasks.values.any { it.status.isActive } -> BubblePhase.Downloading(aggregatePercent())
+                    else -> BubblePhase.Idle
+                }
             }
         }
     }
@@ -583,6 +625,9 @@ class FloatingWindowService : Service() {
                             multiSelect = parsed.isAlbumMultiSelect
                         )
                         startDismissTimer()
+                    } else if (uiState.value is PopupUiState.Panel && !parsed.isEmpty) {
+                        // 面板占用时新解析结果不抢面板（阶段 46）：图集挑选延后，计数进搁置徽标
+                        pendingCount.intValue++
                     }
                 }
             } else {
@@ -639,7 +684,10 @@ class FloatingWindowService : Service() {
                     taskId = taskId,
                     title = parsed.title ?: "未命名作品",
                     platformName = parsed.platform.displayName,
-                    percent = 0
+                    platformId = parsed.platform.id,
+                    kindLabel = kindLabel(item.kind),
+                    percent = 0,
+                    status = DownloadStatus.DOWNLOADING
                 )
                 downloadingCount.intValue++
                 startService(DownloadService.intent(this@FloatingWindowService, DownloadService.ACTION_RESUME))
@@ -656,7 +704,7 @@ class FloatingWindowService : Service() {
         }
     }
 
-    /** 订阅自动任务进度：更新气泡进度环 + 详情卡；终态回写抑制表与退避计数 */
+    /** 订阅自动任务进度：按 taskId 更新面板行 + 气泡聚合进度环；终态回写抑制表与退避计数 */
     private fun watchAutoTask(taskId: String, url: String) {
         scope.launch(Dispatchers.Main.immediate) {
             DownloadController.engine().progress.collect { e ->
@@ -666,14 +714,19 @@ class FloatingWindowService : Service() {
                     DownloadStatus.COMPLETED,
                     DownloadStatus.FAILED,
                     DownloadStatus.CANCELED -> {
-                        autoTasks.remove(taskId)
+                        // 行保留在面板里（完成/失败状态可见），直到用户「清空已完成」或服务重启
+                        autoTasks[taskId] = row.copy(
+                            status = e.status,
+                            percent = if (e.status == DownloadStatus.COMPLETED) 100 else row.percent,
+                            downloadedBytes = if (e.status == DownloadStatus.COMPLETED)
+                                maxOf(row.downloadedBytes, row.totalBytes) else row.downloadedBytes
+                        )
                         downloadingCount.intValue--
                         when (e.status) {
                             DownloadStatus.COMPLETED -> {
                                 consecutiveFailures = 0
                                 autoDownloadSuspendedUntil = 0L
                                 markSuppressed(url)
-                                setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
                             }
                             DownloadStatus.FAILED -> {
                                 consecutiveFailures++
@@ -682,27 +735,45 @@ class FloatingWindowService : Service() {
                                         System.currentTimeMillis() + AUTO_BACKOFF_MS
                                     consecutiveFailures = 0
                                 }
-                                setPhase(BubblePhase.DownloadFail, revertMs = 6_000)
+                                fetchFailedReason(taskId)
                             }
-                            else -> if (autoTasks.isEmpty()) setPhase(BubblePhase.Idle)
+                            else -> Unit
                         }
-                        refreshDownloadsCard()
+                        if (autoTasks.values.any { it.status.isActive }) {
+                            // 多路并发：仍有在跑的路，气泡保持聚合进度环
+                            setPhase(BubblePhase.Downloading(aggregatePercent()))
+                        } else {
+                            when (e.status) {
+                                DownloadStatus.COMPLETED -> setPhase(BubblePhase.DownloadOk, revertMs = 2_000)
+                                DownloadStatus.FAILED -> setPhase(BubblePhase.DownloadFail, revertMs = 6_000)
+                                else -> setPhase(BubblePhase.Idle)
+                            }
+                            schedulePanelAutoCollapse()
+                        }
+                        refreshPanel()
                         currentCoroutineContext()[Job]?.cancel()
                     }
                     DownloadStatus.MERGING -> {
-                        autoTasks[taskId] = row.copy(percent = 99)
-                        setPhase(BubblePhase.Downloading(null))
-                        refreshDownloadsCard()
+                        autoTasks[taskId] = row.copy(
+                            status = DownloadStatus.MERGING,
+                            percent = 99,
+                            downloadedBytes = maxOf(row.downloadedBytes, row.totalBytes)
+                        )
+                        setPhase(BubblePhase.Downloading(aggregatePercent()))
+                        refreshPanel()
                     }
                     else -> {
                         if (e.totalBytes > 0) {
                             val pct = ((e.downloadedBytes * 100) / e.totalBytes).toInt()
                             autoTasks[taskId] = row.copy(
+                                status = e.status,
                                 percent = pct,
+                                downloadedBytes = e.downloadedBytes,
+                                totalBytes = e.totalBytes,
                                 sizeText = "${MediaItem.formatSize(e.downloadedBytes)} / ${MediaItem.formatSize(e.totalBytes)}"
                             )
-                            setPhase(BubblePhase.Downloading(pct))
-                            refreshDownloadsCard()
+                            setPhase(BubblePhase.Downloading(aggregatePercent()))
+                            refreshPanel()
                         }
                     }
                 }
@@ -710,12 +781,62 @@ class FloatingWindowService : Service() {
         }
     }
 
-    /** 详情卡开着时随进度实时刷新；任务清空即收起 */
-    private fun refreshDownloadsCard() {
-        val cur = uiState.value
-        if (cur !is PopupUiState.Downloads) return
-        if (autoTasks.isEmpty()) hidePopup()
-        else uiState.value = PopupUiState.Downloads(autoTasks.values.toList())
+    /** 面板开着时随进度事件刷新行与聚合条 */
+    private fun refreshPanel() {
+        if (uiState.value is PopupUiState.Panel) {
+            uiState.value = PopupUiState.Panel(autoTasks.values.toList(), aggregatePercent())
+        }
+    }
+
+    /** 聚合进度 = Σ已下载 / Σ总（完成/合并中的行按满额计）；总字节未知时 null（不确定弧） */
+    private fun aggregatePercent(): Int? {
+        var downloaded = 0L
+        var total = 0L
+        autoTasks.values.forEach { row ->
+            if (row.status == DownloadStatus.CANCELED) return@forEach
+            total += row.totalBytes
+            downloaded += if (row.status == DownloadStatus.COMPLETED || row.status == DownloadStatus.MERGING) {
+                maxOf(row.downloadedBytes, row.totalBytes)
+            } else {
+                row.downloadedBytes.coerceAtMost(row.totalBytes)
+            }
+        }
+        if (total <= 0L) return null
+        return ((downloaded * 100) / total).toInt().coerceIn(0, 100)
+    }
+
+    /** 全部下载到达终态后，面板延迟收起（行保留，可再次长按呼出查看），气泡回 Idle */
+    private fun schedulePanelAutoCollapse() {
+        scope.launch {
+            delay(3_000)
+            if (uiState.value is PopupUiState.Panel &&
+                autoTasks.values.none { it.status.isActive }
+            ) {
+                hidePopup()
+            }
+        }
+    }
+
+    /** 失败原因取自任务库 errorMessage（IO 线程查库，回主线程更新行） */
+    private fun fetchFailedReason(taskId: String) {
+        scope.launch {
+            val msg = withContext(Dispatchers.IO) {
+                runCatching { DownloadController.repository().get(taskId)?.errorMessage }.getOrNull()
+            }
+            val row = autoTasks[taskId] ?: return@launch
+            if (!msg.isNullOrBlank() && row.status == DownloadStatus.FAILED) {
+                autoTasks[taskId] = row.copy(error = msg.take(40))
+                refreshPanel()
+            }
+        }
+    }
+
+    private fun kindLabel(kind: MediaKind): String = when (kind) {
+        MediaKind.VIDEO -> "视频"
+        MediaKind.IMAGE -> "图片"
+        MediaKind.AUDIO -> "音频"
+        MediaKind.GALLERY -> "图集"
+        MediaKind.UNKNOWN -> "资源"
     }
 
     private fun markSuppressed(url: String) {
@@ -1175,6 +1296,9 @@ private fun BubbleWindowContent(
     onRecognize: () -> Unit,
     onConfirmParse: (com.clipdown.app.clip.DetectedLink) -> Unit,
     onCollapse: () -> Unit,
+    onCloseBubble: () -> Unit,
+    onClearFinished: () -> Unit,
+    onOpenTask: (String) -> Unit,
     onSelect: (Int) -> Unit,
     onDownload: () -> Unit,
     onBarStateChanged: (PopupUiState?) -> Unit
@@ -1186,6 +1310,8 @@ private fun BubbleWindowContent(
             BarBody(
                 state = barState, onRecognize = onRecognize,
                 onConfirmParse = onConfirmParse, onCollapse = onCollapse,
+                onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
+                onOpenTask = onOpenTask,
                 onSelect = onSelect, onDownload = onDownload
             )
         }
@@ -1194,6 +1320,8 @@ private fun BubbleWindowContent(
             BarBody(
                 state = barState, onRecognize = onRecognize,
                 onConfirmParse = onConfirmParse, onCollapse = onCollapse,
+                onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
+                onOpenTask = onOpenTask,
                 onSelect = onSelect, onDownload = onDownload
             )
         }

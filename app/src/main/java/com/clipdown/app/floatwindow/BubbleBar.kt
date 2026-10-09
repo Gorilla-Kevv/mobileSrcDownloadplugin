@@ -17,8 +17,10 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -29,6 +31,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -45,9 +48,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.clipdown.app.R
 import com.clipdown.app.ui.theme.SeedBlue
+import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.parser.model.MediaKind
 
 /**
@@ -62,12 +67,172 @@ internal fun BarBody(
     onConfirmParse: (com.clipdown.app.clip.DetectedLink) -> Unit,
     onCollapse: () -> Unit,
     onSelect: (Int) -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onCloseBubble: () -> Unit,
+    onClearFinished: () -> Unit,
+    onOpenTask: (String) -> Unit
 ) {
     when (state) {
         is PopupUiState.Mini -> MiniBarBody(state, onRecognize, onConfirmParse)
         is PopupUiState.Ready -> AlbumBarBody(state, onCollapse, onSelect, onDownload)
+        is PopupUiState.Panel -> PanelBarBody(state, onCollapse, onCloseBubble, onClearFinished, onOpenTask)
         else -> Unit
+    }
+}
+
+/** 平台色点：面板行前的品牌标识（未登记平台落主色） */
+private fun platformDotColor(platformId: String): Color = when (platformId) {
+    "instagram" -> Color(0xFFE1306C)
+    "x" -> Color(0xFF1DA1F2)
+    "xiaohongshu" -> Color(0xFFFF2442)
+    "youtube" -> Color(0xFFFF0000)
+    "bilibili" -> Color(0xFF00A1D6)
+    "tiktok" -> Color(0xFF00F2EA)
+    "douyin" -> Color(0xFFFE2C55)
+    else -> SeedBlue
+}
+
+/** 面板行状态文案：合并中/失败原因/类别+百分比 */
+private fun panelRowStatus(row: DownloadRow): String = when {
+    row.status == DownloadStatus.FAILED -> "失败${row.error?.let { "：$it" } ?: ""}"
+    row.status == DownloadStatus.CANCELED -> "已取消"
+    row.status == DownloadStatus.COMPLETED -> "已完成"
+    row.status == DownloadStatus.MERGING -> "合并中"
+    else -> "${row.kindLabel} ${row.percent?.let { "$it%" } ?: "0%"}"
+}
+
+/**
+ * 多功能面板竖条（阶段 46）：长按气泡呼出。
+ * 头部聚合行 + 聚合进度条；任务按 taskId 逐行实时刷新；
+ * 底部「关闭气泡」（危险色，替代原长按即关）+「清空已完成」；
+ * 已完成行点行打开文件。不做暂停/重试（沿用下载页）。
+ */
+@Composable
+private fun PanelBarBody(
+    state: PopupUiState.Panel,
+    onCollapse: () -> Unit,
+    onCloseBubble: () -> Unit,
+    onClearFinished: () -> Unit,
+    onOpenTask: (String) -> Unit
+) {
+    val active = state.tasks.count { it.status.isActive }
+    val done = state.tasks.count { it.status == DownloadStatus.COMPLETED }
+    val hasFinished = state.tasks.any { it.status.isTerminal }
+
+    Column(modifier = Modifier.width(64.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text("下载 $active", color = Color.White, style = MaterialTheme.typography.labelSmall)
+            IconButton(onClick = onCollapse, modifier = Modifier.size(16.dp)) {
+                Icon(
+                    Icons.Default.Close,
+                    contentDescription = "收起面板",
+                    tint = Color.White.copy(0.85f),
+                    modifier = Modifier.size(11.dp)
+                )
+            }
+        }
+        Text("已完成 $done", color = Color.White.copy(0.6f), style = MaterialTheme.typography.labelSmall)
+        LinearProgressIndicator(
+            progress = { (state.aggregatePercent ?: 0) / 100f },
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            color = SeedBlue,
+            trackColor = Color.White.copy(0.12f)
+        )
+        Spacer(Modifier.height(4.dp))
+        if (state.tasks.isEmpty()) {
+            Text(
+                "暂无下载任务",
+                color = Color.White.copy(0.5f),
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 2
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier.heightIn(max = 220.dp),
+                verticalArrangement = Arrangement.spacedBy(5.dp)
+            ) {
+                items(state.tasks) { row ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(Color.White.copy(0.06f))
+                            .then(
+                                if (row.status == DownloadStatus.COMPLETED) {
+                                    Modifier.clickable { onOpenTask(row.taskId) }
+                                } else {
+                                    Modifier
+                                }
+                            )
+                            .padding(5.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier
+                                    .size(6.dp)
+                                    .clip(CircleShape)
+                                    .background(platformDotColor(row.platformId))
+                            )
+                            Spacer(Modifier.width(3.dp))
+                            Text(
+                                row.title,
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall,
+                                fontSize = 9.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            panelRowStatus(row),
+                            color = when {
+                                row.status == DownloadStatus.FAILED -> Color(0xFFE5484D)
+                                row.status == DownloadStatus.COMPLETED -> Color(0xFF2EB872)
+                                else -> Color.White.copy(0.6f)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontSize = 8.sp,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        IconButton(
+            onClick = onCloseBubble,
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Color(0xFFE5484D), RoundedCornerShape(10.dp))
+        ) {
+            Icon(Icons.Default.Close, contentDescription = "关闭气泡", tint = Color.White, modifier = Modifier.size(14.dp))
+        }
+        Text(
+            "关闭气泡",
+            color = Color(0xFFE5484D),
+            style = MaterialTheme.typography.labelSmall,
+            fontSize = 9.sp
+        )
+        TextButton(
+            onClick = onClearFinished,
+            enabled = hasFinished,
+            modifier = Modifier.fillMaxWidth(),
+            contentPadding = PaddingValues(vertical = 0.dp)
+        ) {
+            Text(
+                "清空已完成",
+                color = if (hasFinished) Color.White.copy(0.8f) else Color.White.copy(0.3f),
+                style = MaterialTheme.typography.labelSmall,
+                fontSize = 9.sp
+            )
+        }
     }
 }
 
