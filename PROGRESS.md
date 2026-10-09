@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 46 已实现完成（待真机复验）**：长按气泡呼出多功能面板（多路并发下载进度 + 关闭气泡），单击不再承载"查看下载进度"
+- 当前正在开发任务：**阶段 46 已完成并发布 v1.1.4（versionCode 9），待真机复验**：长按气泡呼出多功能面板（多路并发下载进度 + 关闭气泡），单击不再承载"查看下载进度"
 - 下一阶段任务：真机复验阶段 46（长按呼面板/多路进度/面板内关闭）+ 复验阶段 45（2025-07 敏感推文能否下载）+ 复验 42/43/44 各项；XHS Cookie 复验主页
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证；阶段 46 模拟器三路并发自测（本会话 adb 沙箱受限未跑，交真机复验）
 - 测试基线：parser **93 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.09 19:15
+- 本次文档更新时间：10.09 19:31
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -737,8 +737,9 @@
   - **步骤2 面板 UI**：`PopupUiState.Panel(tasks, aggregatePercent)` + `DownloadRow` 扩 `platformId/kindLabel/status/downloadedBytes/totalBytes/error`；`BubbleBar` 新增 `PanelBarBody`（64dp 定宽、`barOnTop` 自动翻转沿用；头部"下载 N / 已完成 M"+聚合 `LinearProgressIndicator`；行=平台色点+标题 1 行+状态行「类别 %/合并中/失败：原因/已完成」，LazyColumn 上限 220dp 可滚动；底部「关闭气泡」危险色按钮+「清空已完成」；已完成行点击→查任务库 `localUri` 打开文件）；旧"下载详情居中卡" `PopupUiState.Downloads`/`DownloadsBody` 整体删除（无入口的死代码不留）
   - **步骤3 聚合**：`watchAutoTask` 终态**不再删行**（保留为完成/失败状态行，「清空已完成」或服务重启才清）；新增 `aggregatePercent()`（Σ已下载/Σ总，合并/完成按满额计、取消行剔除、总字节未知→null 不确定弧）；气泡相位统一 `Downloading(aggregate)`；仍有在跑的路时完成单条只更新聚合环不闪终态；`setPhase` 瞬态回退扩展为"解析中→Parsing，仍有下载→Downloading(aggregate)，否则 Idle"（修掉多路并发下单条闪现把进度环打回 Idle 的旧隐患）；全部终态→3s 后面板自动收起、行保留；失败原因经 `fetchFailedReason`（IO 查 `TaskRepository.get`）回填；`syncBubbleWindow`/`barState` 判定加 Panel；Panel 态下自动路径弹图集让位→`pendingCount++`
   - **步骤4 验证**：`:app:assembleDebug` 全绿；`:parser:test` **93 例** + `:downloader:testDebugUnitTest` 30 例 + `:app:testDebugUnitTest` 4 例全绿（本会话实测计数；阶段 45 记录 92 与实测差 1，以 XML 汇总为准）。三路并发真机自测受 adb 沙箱限制未在本会话执行，列入待真机复验
+  - **发布**：v1.1.4（versionCode 9，用户指令"发版"后 `publish-release.sh --bump patch`），匿名校验清单 = 200，供真机「设置→关于与更新」覆盖安装复验
 - 改动文件：`floatwindow/{FloatingWindowService,BubbleBar,ClipPopupContent,PopupUiState}.kt`、PROGRESS/HANDOFF
 - 待真机复验：①长按 0.7s 呼出面板（不再直接关闭）②面板多行并发进度同时滚动、聚合条与气泡环一致 ③面板内「关闭气泡」=旧长按关闭行为 ④「清空已完成」清行、点完成行打开文件 ⑤连发 3 条+第 4 条下载中解析入队（下载不阻塞解析）⑥全部完成面板 3s 自动收起、气泡回 Idle
 - 下一阶段入口：真机复验阶段 46/45/42-44 各项；XHS Cookie 复验主页；IG 主页实测
-- 本次文档更新时间：10.09 19:15
+- 本次文档更新时间：10.09 19:31
 
