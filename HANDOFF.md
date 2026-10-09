@@ -95,7 +95,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 49 已完成并发布 v1.1.7（待真机复验）**——①胶囊宽度 64→**52dp**（=气泡头像圆直径 `BAR_WIDTH_DP`，两侧与圆相切；窗口仍 64dp 宽保触摸区）②竖条开合加 `AnimatedVisibility`（fadeIn+expandVertically 240ms / fadeOut+shrinkVertically 200ms，以气泡贴合端为生长基准、barOnTop 镜像；退出期用 `lastBarState` 续渲染防空白；`syncBubbleWindow` 收起态保持延伸方向到动画播完防跳边）
+- 当前：**阶段 50 已完成（待发布 v1.1.8 + 真机复验）**——开合动画治卡顿：expandVertically 布局动画（逐帧测量+窗口 resize+LazyColumn 重测）改为**渲染层裁剪揭示**：内容一次性按最终尺寸布局（窗口开/关各 resize 一次），`Animatable`+`foundation GenericShape((Path,Size,LayoutDirection)->Unit)` 逐帧改 clip 矩形 + graphicsLayer alpha 淡入；Compose 1.7.5 三坑（GraphicsLayerScope 无自由裁剪属性 / Shape object 实现报 overrides nothing 必须走 GenericShape / 构造 lambda 重载歧义需显式函数类型）见 PROGRESS 阶段 50
+- 上轮：**阶段 49 已完成并发布 v1.1.7（待真机复验）**——①胶囊宽度 64→**52dp**（=气泡头像圆直径 `BAR_WIDTH_DP`，两侧与圆相切；窗口仍 64dp 宽保触摸区）②竖条开合加 `AnimatedVisibility`（fadeIn+expandVertically 240ms / fadeOut+shrinkVertically 200ms，以气泡贴合端为生长基准、barOnTop 镜像；退出期用 `lastBarState` 续渲染防空白；`syncBubbleWindow` 收起态保持延伸方向到动画播完防跳边）
 - 上轮：**阶段 48 已完成并发布 v1.1.6（待真机复验）**——竖条按用户参考图重设计：气泡与胶囊**叠合**（BubbleWindowContent 改 Box：胶囊先画垫底、气泡后画压顶，圆心落胶囊平边、重叠 32dp=BAR_OVERLAP_DP）；胶囊靠气泡端直角、另一端半圆（barOnTop 镜像）；气泡侧内边距 40dp 保护 64dp 触摸区；面板头部下载图标、底部改**深色圆形 ×**（=关闭气泡，收起面板仍点气泡 toggle）；syncBubbleWindow 去 gap、barFull 360→400。另：真机"检查更新 connection closed"定性为设备 VPN 未覆盖 github.com 的环境问题（用户指示不处理）
 - 上上轮：**阶段 47 已完成并发布 v1.1.5（待真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
 - 上轮：**阶段 46 已实现完成并发布 v1.1.4（待真机复验）**——长按 700ms 呼出多功能面板（64dp 竖条同窗口形态）：头部"下载 N / 已完成 M"+聚合进度条（Σ已下载/Σ总），任务按 taskId 逐行实时刷新（平台色点+类别+百分比/合并中/失败原因），底部「关闭气泡」（危险色，`closeBubble()` 下沉为面板按钮）+「清空已完成」，点已完成行打开文件；气泡相位改显**聚合**进度（多路并发不再互相打回）；面板不自动超时收起、全部完成后 3s 自动收起（行保留可再长按查看）；Panel 态新图集不抢面板→计 pendingCount；旧"下载详情居中卡"（`PopupUiState.Downloads`）删除。**气泡手势总表（覆盖阶段 43）**：单击=识别剪贴板／双击=跳主界面／拖拽=移动／**长按=多功能面板**／面板内按钮=关闭气泡。详见 PROGRESS 阶段 46
@@ -115,4 +116,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.09 21:59 [BY Qoder]
+- 本次文档更新时间：10.09 22:56 [BY Qoder]

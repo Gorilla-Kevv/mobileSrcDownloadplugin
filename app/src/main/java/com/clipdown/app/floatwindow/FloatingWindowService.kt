@@ -16,11 +16,9 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -50,16 +48,20 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationCompat
@@ -1324,37 +1326,55 @@ private fun BubbleWindowContent(
     val barOffset = (64 - BAR_OVERLAP_DP).dp
     // 收起动画期间 barState 已为 null，用最后一份非空状态继续渲染内容（否则退出动画整帧空白）
     var lastBarState by remember { mutableStateOf<PopupUiState?>(null) }
+    // 阶段 50：开合改**渲染层裁剪揭示**——expandVertically 是布局动画，WRAP_CONTENT 悬浮窗
+    // 每帧都要重新测量+resize 窗口（LazyColumn 还要逐帧重测），真机明显掉帧。
+    // 这里内容一次性按最终尺寸布局，逐帧只改 graphicsLayer.clipPath（纯 GPU，不触发布局），
+    // 窗口仅在"开始展开"与"收完消失"各 resize 一次。
+    val reveal = remember { Animatable(0f) }
     LaunchedEffect(barState) { if (barState != null) lastBarState = barState }
+    LaunchedEffect(barState != null) {
+        if (barState != null) {
+            reveal.animateTo(1f, tween(260, easing = FastOutSlowInEasing))
+        } else {
+            reveal.animateTo(0f, tween(220, easing = LinearOutSlowInEasing))
+            lastBarState = null
+        }
+    }
     Box(contentAlignment = if (barOnTop) Alignment.BottomCenter else Alignment.TopCenter) {
-        // 开合动画：从气泡贴合端向自由端展开/收缩（阶段 49：视觉平滑过渡）
-        AnimatedVisibility(
-            visible = barState != null,
-            enter = fadeIn(tween(160)) + expandVertically(
-                animationSpec = tween(240),
-                expandFrom = if (barOnTop) Alignment.Bottom else Alignment.Top
-            ),
-            exit = fadeOut(tween(160)) + shrinkVertically(
-                animationSpec = tween(200),
-                shrinkTowards = if (barOnTop) Alignment.Bottom else Alignment.Top
-            )
-        ) {
-            // 退出动画期间渲染最后一份状态（barState 已为 null，不能让内容整帧消失）
-            lastBarState?.let { s ->
-                    // 胶囊先画（垫底）：向气泡方向偏移 32dp 形成嵌合
-                    BarBody(
-                        state = s,
-                        barOnTop = barOnTop,
-                        modifier = Modifier.padding(
-                            top = if (barOnTop) 0.dp else barOffset,
-                            bottom = if (barOnTop) barOffset else 0.dp
-                        ),
-                        onRecognize = onRecognize,
-                        onConfirmParse = onConfirmParse, onCollapse = onCollapse,
-                        onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
-                        onOpenTask = onOpenTask,
-                        onSelect = onSelect, onDownload = onDownload
+        if (lastBarState != null) {
+            // 逐帧揭示：动画值驱动裁剪矩形（仅改 clip 的绘制节点，不触发布局/窗口 resize）
+            val t = reveal.value
+            val outlineBuilder: (Path, Size, LayoutDirection) -> Unit = { path, size, _ ->
+                val h = size.height
+                path.addRect(
+                    Rect(
+                        0f,
+                        if (barOnTop) h * (1f - t) else 0f,
+                        size.width,
+                        if (barOnTop) h else h * t
                     )
-                }
+                )
+            }
+            val revealShape = remember(barOnTop, t) {
+                androidx.compose.foundation.shape.GenericShape(outlineBuilder)
+            }
+            Box(
+                modifier = Modifier
+                    // 胶囊向气泡方向偏移 32dp 形成嵌合
+                    .padding(top = if (barOnTop) 0.dp else barOffset, bottom = if (barOnTop) barOffset else 0.dp)
+                    .clip(revealShape)
+                    .graphicsLayer { alpha = 0.55f + 0.45f * reveal.value }
+            ) {
+                BarBody(
+                    state = lastBarState!!,
+                    barOnTop = barOnTop,
+                    onRecognize = onRecognize,
+                    onConfirmParse = onConfirmParse, onCollapse = onCollapse,
+                    onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
+                    onOpenTask = onOpenTask,
+                    onSelect = onSelect, onDownload = onDownload
+                )
+            }
         }
         // 后画气泡（压顶）：圆盖住胶囊平边一端
         BubbleCircle(phase, pendingCount, parsingCount)
