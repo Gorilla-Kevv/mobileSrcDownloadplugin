@@ -95,7 +95,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 47 已完成并发布 v1.1.5（待真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
+- 当前：**阶段 48 已完成（待发布 v1.1.6 + 真机复验）**——竖条按用户参考图重设计：气泡与胶囊**叠合**（BubbleWindowContent 改 Box：胶囊先画垫底、气泡后画压顶，圆心落胶囊平边、重叠 32dp=BAR_OVERLAP_DP）；胶囊靠气泡端直角、另一端半圆（barOnTop 镜像）；气泡侧内边距 40dp 保护 64dp 触摸区；面板头部下载图标、底部改**深色圆形 ×**（=关闭气泡，收起面板仍点气泡 toggle）；syncBubbleWindow 去 gap、barFull 360→400。另：真机"检查更新 connection closed"定性为设备 VPN 未覆盖 github.com 的环境问题（用户指示不处理）
+- 上上轮：**阶段 47 已完成并发布 v1.1.5（待真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
 - 上轮：**阶段 46 已实现完成并发布 v1.1.4（待真机复验）**——长按 700ms 呼出多功能面板（64dp 竖条同窗口形态）：头部"下载 N / 已完成 M"+聚合进度条（Σ已下载/Σ总），任务按 taskId 逐行实时刷新（平台色点+类别+百分比/合并中/失败原因），底部「关闭气泡」（危险色，`closeBubble()` 下沉为面板按钮）+「清空已完成」，点已完成行打开文件；气泡相位改显**聚合**进度（多路并发不再互相打回）；面板不自动超时收起、全部完成后 3s 自动收起（行保留可再长按查看）；Panel 态新图集不抢面板→计 pendingCount；旧"下载详情居中卡"（`PopupUiState.Downloads`）删除。**气泡手势总表（覆盖阶段 43）**：单击=识别剪贴板／双击=跳主界面／拖拽=移动／**长按=多功能面板**／面板内按钮=关闭气泡。详见 PROGRESS 阶段 46
 - 上轮：**阶段 45 完成**——①弧线光环间隙真根因：`drawArc` 不传 `topLeft/size` 就按 64dp 画布取半径（只有 `drawCircle` 分支受 radius 控制），三处弧线已统一带 rect 与头像同半径；②X 敏感内容标记/较老推文改走**第三方镜像 fxTwitter 兜底**（`api.fxtwitter.com/i/status/<id>` 免登录，主机实测给 pbs 直链；官方 syndication/oEmbed/老 embed 页实测都拿不到）。X 失败文案仍按 404/敏感/普通三态分诊
 - 上轮：**阶段 44（真机二轮反馈）完成**——①光环内叠 1dp 无缝融合 ②服务重启过滤 SharedFlow replay 的旧链接（重开气泡不再弹"再次解析"确认卡）③X 图片推文：实测 tweet-result 对近期推文 `photos[].url` 正常、`photo_info` 已被上游移除、老/删除推文 404、**敏感内容标记推文 200 但不下发媒体**——已按 404/敏感/普通三态给文案+分诊日志（oEmbed/embed 页实测拿不到 pbs 直链，均不可作兜底）④`IgRiskGuard` 新增 `countsFailure`（缺 Cookie 传 false 不计入冷却，单篇链路已接，主页链路原有关前置检查）——未配 Cookie 连测 reel 不再误锁 10 分钟
@@ -113,4 +114,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.09 20:01 [BY Qoder]
+- 本次文档更新时间：10.09 21:09 [BY Qoder]

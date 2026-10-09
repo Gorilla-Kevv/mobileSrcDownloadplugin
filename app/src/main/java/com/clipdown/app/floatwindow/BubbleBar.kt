@@ -61,9 +61,14 @@ import com.clipdown.parser.model.MediaKind
  * barOnTop=true 时该内容渲染在气泡圆上方。
  */
 
+/** 阶段 48 胶囊重设计：气泡圆心落在胶囊平边上，重叠半个气泡（32dp）——胶囊被气泡盖住顶端，视觉上"挂"在圆下 */
+internal const val BAR_OVERLAP_DP = 32
+
 @Composable
 internal fun BarBody(
     state: PopupUiState,
+    barOnTop: Boolean,
+    modifier: Modifier = Modifier,
     onRecognize: () -> Unit,
     onConfirmParse: (com.clipdown.app.clip.DetectedLink) -> Unit,
     onCollapse: () -> Unit,
@@ -73,19 +78,26 @@ internal fun BarBody(
     onClearFinished: () -> Unit,
     onOpenTask: (String) -> Unit
 ) {
-    // 纯色胶囊底板（阶段 47）：竖条各部件不再浮空——浅色页面/视频上白字看不清
+    // 参考图形态：与气泡同宽的深色胶囊——靠气泡一端是平边（藏在圆下），另一端半圆收口；
+    // 气泡触摸区 64dp，内容从圆的下缘之后开始（重叠 32dp + 8dp 呼吸）
+    val shape = if (barOnTop) {
+        RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp, bottomStart = 0.dp, bottomEnd = 0.dp)
+    } else {
+        RoundedCornerShape(topStart = 0.dp, topEnd = 0.dp, bottomStart = 32.dp, bottomEnd = 32.dp)
+    }
+    val bubblePad = 64.dp - BAR_OVERLAP_DP.dp + 8.dp
     Box(
-        modifier = Modifier
+        modifier = modifier
             .width(64.dp)
-            .clip(RoundedCornerShape(16.dp))
+            .clip(shape)
             .background(GlassBase)
-            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
-            .padding(horizontal = 6.dp, vertical = 8.dp)
+            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .padding(start = 6.dp, end = 6.dp, top = if (barOnTop) 8.dp else bubblePad, bottom = if (barOnTop) bubblePad else 8.dp)
     ) {
         when (state) {
             is PopupUiState.Mini -> MiniBarBody(state, onRecognize, onConfirmParse)
             is PopupUiState.Ready -> AlbumBarBody(state, onCollapse, onSelect, onDownload)
-            is PopupUiState.Panel -> PanelBarBody(state, onCollapse, onCloseBubble, onClearFinished, onOpenTask)
+            is PopupUiState.Panel -> PanelBarBody(state, onCloseBubble, onClearFinished, onOpenTask)
             else -> Unit
         }
     }
@@ -113,15 +125,14 @@ private fun panelRowStatus(row: DownloadRow): String = when {
 }
 
 /**
- * 多功能面板竖条（阶段 46）：长按气泡呼出。
- * 头部聚合行 + 聚合进度条；任务按 taskId 逐行实时刷新；
- * 底部「关闭气泡」（危险色，替代原长按即关）+「清空已完成」；
+ * 多功能面板（阶段 48 按参考图重设计）：气泡嵌在胶囊顶部的展开形态。
+ * 头部下载图标 + 聚合行/聚合进度条；任务按 taskId 逐行实时刷新；
+ * 底部深色圆形 ×（关闭气泡，参考图收口按钮）+「清空已完成」；
  * 已完成行点行打开文件。不做暂停/重试（沿用下载页）。
  */
 @Composable
 private fun PanelBarBody(
     state: PopupUiState.Panel,
-    onCollapse: () -> Unit,
     onCloseBubble: () -> Unit,
     onClearFinished: () -> Unit,
     onOpenTask: (String) -> Unit
@@ -130,30 +141,27 @@ private fun PanelBarBody(
     val done = state.tasks.count { it.status == DownloadStatus.COMPLETED }
     val hasFinished = state.tasks.any { it.status.isTerminal }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("下载 $active", color = Color.White, style = MaterialTheme.typography.labelSmall)
-            IconButton(onClick = onCollapse, modifier = Modifier.size(16.dp)) {
-                Icon(
-                    Icons.Default.Close,
-                    contentDescription = "收起面板",
-                    tint = Color.White.copy(0.85f),
-                    modifier = Modifier.size(11.dp)
-                )
-            }
-        }
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        // 头部：下载图标（参考图 ⇩，紧贴气泡下缘）
+        Icon(
+            Icons.Default.Download,
+            contentDescription = null,
+            tint = Color.White.copy(0.85f),
+            modifier = Modifier.size(16.dp)
+        )
+        Spacer(Modifier.height(4.dp))
+        Text("下载 $active", color = Color.White, style = MaterialTheme.typography.labelSmall)
         Text("已完成 $done", color = Color.White.copy(0.6f), style = MaterialTheme.typography.labelSmall)
         LinearProgressIndicator(
             progress = { (state.aggregatePercent ?: 0) / 100f },
-            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp).height(4.dp).clip(RoundedCornerShape(2.dp)),
             color = SeedBlue,
             trackColor = Color.White.copy(0.12f)
         )
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(6.dp))
         if (state.tasks.isEmpty()) {
             Text(
                 "暂无下载任务",
@@ -216,34 +224,34 @@ private fun PanelBarBody(
                 }
             }
         }
-        Spacer(Modifier.height(6.dp))
-        IconButton(
-            onClick = onCloseBubble,
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(Color(0xFFE5484D), RoundedCornerShape(10.dp))
-        ) {
-            Icon(Icons.Default.Close, contentDescription = "关闭气泡", tint = Color.White, modifier = Modifier.size(14.dp))
+        Spacer(Modifier.height(8.dp))
+        if (hasFinished) {
+            TextButton(
+                onClick = onClearFinished,
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(vertical = 0.dp)
+            ) {
+                Text("清空已完成", color = Color.White.copy(0.7f), style = MaterialTheme.typography.labelSmall, fontSize = 9.sp)
+            }
         }
-        Text(
-            "关闭气泡",
-            color = Color(0xFFE5484D),
-            style = MaterialTheme.typography.labelSmall,
-            fontSize = 9.sp
-        )
-        TextButton(
-            onClick = onClearFinished,
-            enabled = hasFinished,
-            modifier = Modifier.fillMaxWidth(),
-            contentPadding = PaddingValues(vertical = 0.dp)
+        // 底部收口：深色圆形 ×（关闭气泡）——参考图底部按钮形态
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clip(CircleShape)
+                .background(Color.White.copy(0.10f))
+                .border(1.dp, Color.White.copy(0.12f), CircleShape)
+                .clickable { onCloseBubble() },
+            contentAlignment = Alignment.Center
         ) {
-            Text(
-                "清空已完成",
-                color = if (hasFinished) Color.White.copy(0.8f) else Color.White.copy(0.3f),
-                style = MaterialTheme.typography.labelSmall,
-                fontSize = 9.sp
+            Icon(
+                Icons.Default.Close,
+                contentDescription = "关闭气泡",
+                tint = Color.White,
+                modifier = Modifier.size(18.dp)
             )
         }
+        Spacer(Modifier.height(2.dp))
     }
 }
 

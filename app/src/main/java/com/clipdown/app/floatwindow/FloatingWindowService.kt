@@ -30,6 +30,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Text
@@ -387,14 +388,15 @@ class FloatingWindowService : Service() {
      * 修复 12：竖条与气泡同窗口一体化，这里只负责窗口锚点与延伸方向：
      * 气泡靠上边缘 → 竖条向下延伸（TOP 锚，向下生长）；靠下边缘 → 竖条向上延伸
      * （BOTTOM 锚，向上生长）；收起态恢复 TOP 锚原位。拖拽时实时重算（可跨中线翻转）。
+     * 阶段 48：胶囊与气泡重叠 32dp（无 gap），窗口总高 = 气泡 + 竖条 - 重叠。
      */
     private fun syncBubbleWindow(state: PopupUiState) {
         val view = bubbleView ?: return
         val params = bubbleParams ?: return
         val dm = resources.displayMetrics
         val bubbleH = (64 * dm.density).toInt()
-        val gap = (6 * dm.density).toInt()
-        val barFull = (360 * dm.density).toInt()
+        val overlap = (BAR_OVERLAP_DP * dm.density).toInt()
+        val barFull = (400 * dm.density).toInt()
         val barW = (64 * dm.density).toInt()
         params.x = bubblePos.first.coerceIn(8, (dm.widthPixels - barW - 8).coerceAtLeast(8))
         val barOpen = state is PopupUiState.Mini ||
@@ -407,8 +409,8 @@ class FloatingWindowService : Service() {
             runCatching { wm.updateViewLayout(view, params) }
             return
         }
-        val belowSpace = dm.heightPixels - bubblePos.second - bubbleH - gap
-        barOnTop.value = belowSpace < barFull
+        val belowSpace = dm.heightPixels - bubblePos.second
+        barOnTop.value = belowSpace < bubbleH + barFull - overlap
         if (barOnTop.value) {
             params.gravity = Gravity.BOTTOM or Gravity.START
             params.y = dm.heightPixels - (bubblePos.second + bubbleH)
@@ -1281,9 +1283,11 @@ private fun BubblePhase.accent(): Color = when (this) {
 }
 
 /**
- * 气泡窗口整体：圆形气泡（含徽标/动效）+ 可延伸竖条（Mini/图集），同一窗口纵向连接——
- * 竖条开合只改窗口高度，永不遮挡气泡（修复 12）。barOnTop=true 时竖条渲染在气泡上方。
- * 触摸分区在 addBubble 的 View 监听器：气泡圆区域=拖拽/toggle，竖条区=Compose 控件。
+ * 气泡窗口整体（阶段 48 参考图形态）：胶囊竖条垫底、气泡圆压在其上沿——
+ * 气泡圆心正好落在胶囊平边上（重叠 32dp），胶囊被圆盖住顶端，视觉上"挂"在圆下；
+ * 靠气泡一端为直角边（藏在圆下），另一端半圆收口。barOnTop=true 时整体上下镜像。
+ * 触摸分区在 addBubble 的 View 监听器：气泡圆 64dp 区=拖拽/toggle，其余=Compose 控件；
+ * 胶囊内容用 40dp 内边距避开气泡触摸区。
  */
 @Composable
 private fun BubbleWindowContent(
@@ -1305,26 +1309,26 @@ private fun BubbleWindowContent(
 ) {
     // 竖条开合/内容变化 → 同步窗口锚点与延伸方向（Compose 状态驱动，替代 Flow）
     LaunchedEffect(barState) { onBarStateChanged(barState) }
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        if (barOnTop && barState != null) {
+    val barOffset = (64 - BAR_OVERLAP_DP).dp
+    Box(contentAlignment = if (barOnTop) Alignment.BottomCenter else Alignment.TopCenter) {
+        if (barState != null) {
+            // 先画胶囊（垫底）：向气泡方向偏移 32dp 形成嵌合
             BarBody(
-                state = barState, onRecognize = onRecognize,
+                state = barState,
+                barOnTop = barOnTop,
+                modifier = Modifier.padding(
+                    top = if (barOnTop) 0.dp else barOffset,
+                    bottom = if (barOnTop) barOffset else 0.dp
+                ),
+                onRecognize = onRecognize,
                 onConfirmParse = onConfirmParse, onCollapse = onCollapse,
                 onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
                 onOpenTask = onOpenTask,
                 onSelect = onSelect, onDownload = onDownload
             )
         }
+        // 后画气泡（压顶）：圆盖住胶囊平边一端
         BubbleCircle(phase, pendingCount, parsingCount)
-        if (!barOnTop && barState != null) {
-            BarBody(
-                state = barState, onRecognize = onRecognize,
-                onConfirmParse = onConfirmParse, onCollapse = onCollapse,
-                onCloseBubble = onCloseBubble, onClearFinished = onClearFinished,
-                onOpenTask = onOpenTask,
-                onSelect = onSelect, onDownload = onDownload
-            )
-        }
     }
 }
 
