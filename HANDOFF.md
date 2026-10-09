@@ -78,7 +78,7 @@
 - **更新通道**：`gradle.properties` → `clipdown.updateRepo`（当前 = `Gorilla-Kevv/mobileSrcDownloadplugin`）+ `clipdown.apkAssetName`（默认 `clipdown-release.apk`）。构建时生成 `BuildConfig.UPDATE_MANIFEST_URL` / `UPDATE_APK_URL`，**改发布仓库只需改 gradle.properties，不必动代码**
 - **清单地址用"最新发布固定链接"**：`https://github.com/<repo>/releases/latest/download/update.json` —— 不走 GitHub API，**不需要 token、不吃匿名速率限制**。代价是**发布仓库必须公开**：本仓库已于阶段 34 **转为 public**（用户决策），因此 APK 与清单直接发在主仓库
 - **国内网络注意（阶段 34 实测）**：本机所在网络**直连 github.com 超时**（需代理），模拟器既连不上 GitHub 也到不了主机代理 → 应用内更新在模拟器上必然失败；国内测试机若拉不到清单，把 `clipdown.updateManifestUrl` / `clipdown.updateApkUrl` 指向国内可达托管（Gitee Releases / 阿里云 OSS / 腾讯云 COS / 自建静态服务）即可，**无需改代码**；`clipdown.updateRepo` 仅用于发布脚本
-- **当前线上**：`v1.1.7（versionCode 12）`，2026-10-09 发布（含阶段 42-49：真机反馈修复、光环间隙、X 敏感推文镜像兜底、长按多功能面板、胶囊底板/重设计/宽度对齐+开合动画、IG carousel_media）；匿名校验 `releases/latest/download/update.json` = 200（versionCode=12）；上一版 `v1.1.6（versionCode 11）`（阶段 48）
+- **当前线上**：`v1.1.8（versionCode 13）`，2026-10-09 发布（含阶段 42-50：真机反馈修复、光环间隙、X 敏感推文镜像兜底、长按多功能面板、胶囊底板/重设计/宽度对齐、渲染层开合动画、IG carousel_media）；匿名校验 `releases/latest/download/update.json` = 200（versionCode=13）；上一版 `v1.1.7（versionCode 12）`（阶段 49）
 - **一键发布**：`bash scripts/publish-release.sh`（`--bump patch|minor|major|none`、`--notes "…"`、`--repo owner/name`、`--dry-run`、`--skip-build`、`--create-repo`）。它自增版本号 → `assembleRelease`+全量单测 → 生成 `build/dist/{clipdown-release.apk,update.json}`（含 sha256/sizeBytes）→ `gh release create --latest` 上传
 - **每轮修复完成必须走这条链路发布**（用户约定 2026-10-09）：改完 → 本地 `assembleDebug`+全量单测 → commit → `bash scripts/publish-release.sh --bump patch --notes "…"` → 匿名校验清单 200 → 真机在「设置 → 关于与更新」或启动自检一键覆盖安装。本机跑法（PowerShell 调 Git Bash）：`& "C:\Program Files\Git\bin\bash.exe" -lc "cd /f/schoolCompWorks/clone/mobileSrcDownloadplugin && bash scripts/publish-release.sh --bump patch --notes '…'"`（约 2 分钟，含 R8）。**发布后记得把脚本自增的 `version.properties` 提交入库**
 - **CI**：`.github/workflows/release.yml`（手动 dispatch 或 `git tag v1.0.3 && git push origin v1.0.3` 触发）。需配置 secrets `KEYSTORE_BASE64/KEYSTORE_PASSWORD/KEY_ALIAS/KEY_PASSWORD`，否则落回 debug 签名 → 老用户无法覆盖安装
@@ -95,7 +95,7 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 50 已完成（待发布 v1.1.8 + 真机复验）**——开合动画治卡顿：expandVertically 布局动画（逐帧测量+窗口 resize+LazyColumn 重测）改为**渲染层裁剪揭示**：内容一次性按最终尺寸布局（窗口开/关各 resize 一次），`Animatable`+`foundation GenericShape((Path,Size,LayoutDirection)->Unit)` 逐帧改 clip 矩形 + graphicsLayer alpha 淡入；Compose 1.7.5 三坑（GraphicsLayerScope 无自由裁剪属性 / Shape object 实现报 overrides nothing 必须走 GenericShape / 构造 lambda 重载歧义需显式函数类型）见 PROGRESS 阶段 50
+- 当前：**阶段 50 已完成并发布 v1.1.8（待真机复验）**——开合动画治卡顿：expandVertically 布局动画（逐帧测量+窗口 resize+LazyColumn 重测）改为**渲染层裁剪揭示**：内容一次性按最终尺寸布局（窗口开/关各 resize 一次），`Animatable`+`foundation GenericShape((Path,Size,LayoutDirection)->Unit)` 逐帧改 clip 矩形 + graphicsLayer alpha 淡入；Compose 1.7.5 三坑（GraphicsLayerScope 无自由裁剪属性 / Shape object 实现报 overrides nothing 必须走 GenericShape / 构造 lambda 重载歧义需显式函数类型）见 PROGRESS 阶段 50
 - 上轮：**阶段 49 已完成并发布 v1.1.7（待真机复验）**——①胶囊宽度 64→**52dp**（=气泡头像圆直径 `BAR_WIDTH_DP`，两侧与圆相切；窗口仍 64dp 宽保触摸区）②竖条开合加 `AnimatedVisibility`（fadeIn+expandVertically 240ms / fadeOut+shrinkVertically 200ms，以气泡贴合端为生长基准、barOnTop 镜像；退出期用 `lastBarState` 续渲染防空白；`syncBubbleWindow` 收起态保持延伸方向到动画播完防跳边）
 - 上轮：**阶段 48 已完成并发布 v1.1.6（待真机复验）**——竖条按用户参考图重设计：气泡与胶囊**叠合**（BubbleWindowContent 改 Box：胶囊先画垫底、气泡后画压顶，圆心落胶囊平边、重叠 32dp=BAR_OVERLAP_DP）；胶囊靠气泡端直角、另一端半圆（barOnTop 镜像）；气泡侧内边距 40dp 保护 64dp 触摸区；面板头部下载图标、底部改**深色圆形 ×**（=关闭气泡，收起面板仍点气泡 toggle）；syncBubbleWindow 去 gap、barFull 360→400。另：真机"检查更新 connection closed"定性为设备 VPN 未覆盖 github.com 的环境问题（用户指示不处理）
 - 上上轮：**阶段 47 已完成并发布 v1.1.5（待真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
@@ -116,4 +116,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.09 22:56 [BY Qoder]
+- 本次文档更新时间：10.09 23:33 [BY Qoder]
