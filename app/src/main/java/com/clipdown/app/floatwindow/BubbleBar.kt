@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.clipdown.app.R
+import com.clipdown.app.ui.theme.GlassBase
 import com.clipdown.app.ui.theme.SeedBlue
 import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.parser.model.MediaKind
@@ -72,11 +73,21 @@ internal fun BarBody(
     onClearFinished: () -> Unit,
     onOpenTask: (String) -> Unit
 ) {
-    when (state) {
-        is PopupUiState.Mini -> MiniBarBody(state, onRecognize, onConfirmParse)
-        is PopupUiState.Ready -> AlbumBarBody(state, onCollapse, onSelect, onDownload)
-        is PopupUiState.Panel -> PanelBarBody(state, onCollapse, onCloseBubble, onClearFinished, onOpenTask)
-        else -> Unit
+    // 纯色胶囊底板（阶段 47）：竖条各部件不再浮空——浅色页面/视频上白字看不清
+    Box(
+        modifier = Modifier
+            .width(64.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(GlassBase)
+            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(16.dp))
+            .padding(horizontal = 6.dp, vertical = 8.dp)
+    ) {
+        when (state) {
+            is PopupUiState.Mini -> MiniBarBody(state, onRecognize, onConfirmParse)
+            is PopupUiState.Ready -> AlbumBarBody(state, onCollapse, onSelect, onDownload)
+            is PopupUiState.Panel -> PanelBarBody(state, onCollapse, onCloseBubble, onClearFinished, onOpenTask)
+            else -> Unit
+        }
     }
 }
 
@@ -119,7 +130,7 @@ private fun PanelBarBody(
     val done = state.tasks.count { it.status == DownloadStatus.COMPLETED }
     val hasFinished = state.tasks.any { it.status.isTerminal }
 
-    Column(modifier = Modifier.width(64.dp)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -246,7 +257,7 @@ private fun MiniBarBody(
     val confirm = state.confirmLink
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(64.dp)
+        modifier = Modifier.fillMaxWidth()
     ) {
         Spacer(Modifier.height(2.dp))
         Text("剪存", color = Color.White, style = MaterialTheme.typography.labelMedium)
@@ -292,7 +303,7 @@ private fun AlbumBarBody(
     var expanded by remember { mutableStateOf(false) }
     val allSelected = result.media.isNotEmpty() && state.selectedIndices.size == result.media.size
 
-    Column(modifier = Modifier.width(64.dp)) {
+    Column(modifier = Modifier.fillMaxWidth()) {
         Box {
             AsyncImage(
                 model = result.media.firstOrNull()?.url,

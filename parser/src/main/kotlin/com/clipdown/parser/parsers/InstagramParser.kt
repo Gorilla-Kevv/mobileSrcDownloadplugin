@@ -11,6 +11,7 @@ import com.clipdown.parser.spi.PlatformParser
 import com.clipdown.parser.spi.ParserDsl
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
@@ -208,8 +209,32 @@ class InstagramParser : PlatformParser {
         }
 
         addFrom(node, "ig-g-0", 100)
-        (node["edge_sidecar_to_children"]?.jsonObject?.get("edges") as? JsonArray)?.forEachIndexed { i, el ->
+        val sidecar = (node["edge_sidecar_to_children"] ?: node["edge_media_to_sidecar_to_children"])?.jsonObject
+        (sidecar?.get("edges") as? JsonArray)?.forEachIndexed { i, el ->
             el.jsonObject["node"]?.jsonObject?.let { addFrom(it, "ig-g-s$i", 70 - i) }
+        }
+        // 2026 web_info 结构：图集/混合相册（图+视频）子项在 carousel_media 数组，
+        // 每个子项各自带 video_versions 或 image_versions2（阶段 47：真机混合图集帖识别失败）
+        (node["carousel_media"] as? JsonArray)?.forEachIndexed { i, el ->
+            runCatching { el.jsonObject }.getOrNull()?.let { addFrom(it, "ig-g-c$i", 70 - i) }
+        }
+        if (media.isEmpty()) {
+            // 结构再变的兜底：在正帖节点内递归找媒体子节点（限定 xdt_shortcode_media 范围，不碰推荐流）
+            var found = 0
+            fun scan(o: JsonElement) {
+                when (o) {
+                    is JsonObject ->
+                        if (o.containsKey("video_versions") || o.containsKey("image_versions2")) {
+                            addFrom(o, "ig-g-x${found}", 60 - found)
+                            found++
+                        } else {
+                            o.values.forEach(::scan)
+                        }
+                    is JsonArray -> o.forEach(::scan)
+                    else -> Unit
+                }
+            }
+            scan(node)
         }
 
         if (media.isEmpty()) throw ParseException("登录态 GraphQL 未提取到媒体", platform)

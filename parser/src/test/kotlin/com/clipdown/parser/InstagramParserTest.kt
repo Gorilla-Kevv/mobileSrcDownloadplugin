@@ -107,8 +107,7 @@ class InstagramParserTest {
     }
 
     @Test
-    fun `items0 内嵌推荐块时只提取正帖媒体（修复 10）`() {
-        // 2026-09 结构：items[0] 对象内嵌含陌生 code 的数组块（video_versions=null 的空壳），
+    fun `items0 内嵌推荐块时只提取正帖媒体（修复 10）`() {        // 2026-09 结构：items[0] 对象内嵌含陌生 code 的数组块（video_versions=null 的空壳），
         // 正帖 code 与媒体数据在对象顶层——旧逻辑全段扫描会把陌生媒体/封面混进来
         val rendered = """
             <html><head><meta property="og:title" content="Polluted Page" /></head><body>
@@ -138,5 +137,59 @@ class InstagramParserTest {
         )
         assertTrue("应保留正帖视频", result.media.any { it.url.contains("own_reel.mp4") })
         assertTrue("应保留正帖图片", result.media.any { it.url.contains("own_cover.jpg") })
+    }
+
+    private val lsdHtml = """<html><script>require("FDSwitcher","LSD",[],{"token":"LSDTOK123"});</script></html>"""
+
+    private fun graphqlHttp(json: String) = FakeHttp { url ->
+        when {
+            url.contains("/api/graphql") -> ok(json)
+            url.contains("/p/") -> ok(lsdHtml)
+            else -> notFound()
+        }
+    }
+
+    private val igCookie = mapOf(com.clipdown.parser.model.Platform.INSTAGRAM to "sessionid=x; csrftoken=y")
+
+    @Test
+    fun `GraphQL carousel_media 混合相册（图+视频）全部提取`() {
+        // 2026 web_info 结构：图集子项在 carousel_media 数组；视频子项的封面不作为独立媒体
+        val json = """
+            {"data":{"xdt_shortcode_media":{"code":"DeNtxEMCYXJ",
+             "carousel_media":[
+               {"video_versions":null,"image_versions2":{"candidates":[{"width":1080,"height":1080,"url":"https:\\/\\/cdn.example.com\\/a1.jpg"}]}},
+               {"video_versions":[{"width":640,"height":640,"url":"https:\\/\\/cdn.example.com\\/v1.mp4"}],
+                "image_versions2":{"candidates":[{"width":640,"height":640,"url":"https:\\/\\/cdn.example.com\\/vcover.jpg"}]}},
+               {"video_versions":null,"image_versions2":{"candidates":[{"width":1080,"height":1350,"url":"https:\\/\\/cdn.example.com\\/a3.jpg"}]}}
+             ],"caption":{"text":"mixed"}}}}
+        """.trimIndent()
+        val result = parser.parse(
+            "https://www.instagram.com/p/DeNtxEMCYXJ/?img_index=4",
+            testContext(graphqlHttp(json), cookies = igCookie, logs = mutableListOf())
+        )
+        assertEquals("ig-local-v1-private", result.resolverId)
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertTrue("混合相册应含 1 视频: ${result.media.map { it.url }}", videos.size == 1 && videos[0].url.contains("v1.mp4"))
+        assertTrue("混合相册应含 2 图且不含视频封面: ${result.media.map { it.url }}",
+            images.size == 2 && images.none { it.url.contains("vcover") })
+    }
+
+    @Test
+    fun `GraphQL 未知嵌套结构时正帖节点内递归兜底`() {
+        val json = """
+            {"data":{"xdt_shortcode_media":{"code":"ABC123",
+             "media":{"nodes":[
+               {"video_versions":[{"width":720,"height":720,"url":"https:\\/\\/cdn.example.com\\/x1.mp4"}]},
+               {"image_versions2":{"candidates":[{"width":1080,"height":1080,"url":"https:\\/\\/cdn.example.com\\/x2.jpg"}]}}
+             ]}}}}
+        """.trimIndent()
+        val result = parser.parse(
+            "https://www.instagram.com/p/ABC123/",
+            testContext(graphqlHttp(json), cookies = igCookie, logs = mutableListOf())
+        )
+        assertEquals(2, result.media.size)
+        assertTrue(result.media.any { it.url.contains("x1.mp4") })
+        assertTrue(result.media.any { it.url.contains("x2.jpg") })
     }
 }

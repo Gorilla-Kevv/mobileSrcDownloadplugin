@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 46 已完成并发布 v1.1.4（versionCode 9），待真机复验**：长按气泡呼出多功能面板（多路并发下载进度 + 关闭气泡），单击不再承载"查看下载进度"
-- 下一阶段任务：真机复验阶段 46（长按呼面板/多路进度/面板内关闭）+ 复验阶段 45（2025-07 敏感推文能否下载）+ 复验 42/43/44 各项；XHS Cookie 复验主页
+- 当前正在开发任务：**阶段 47 已完成（待发布+真机复验）**：①竖条/面板加纯色胶囊底板 ②IG 混合图集（图+视频）GraphQL 提取修复
+- 下一阶段任务：发版 v1.1.5（待用户指令）；真机复验阶段 47（胶囊背景、该 IG 混合链接重测）+ 阶段 46 面板各项 + 阶段 45 敏感推文；XHS Cookie 复验主页
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
-- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证；阶段 46 模拟器三路并发自测（本会话 adb 沙箱受限未跑，交真机复验）
-- 测试基线：parser **93 例** + downloader 30 例 + app **4 例**全绿
+- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证；阶段 46 模拟器三路并发自测（adb 沙箱受限未跑，交真机复验）
+- 测试基线：parser **95 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.09 19:31
+- 本次文档更新时间：10.09 19:54
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -743,3 +743,16 @@
 - 下一阶段入口：真机复验阶段 46/45/42-44 各项；XHS Cookie 复验主页；IG 主页实测
 - 本次文档更新时间：10.09 19:31
 
+
+## 阶段 47 真机三轮反馈（竖条胶囊背景 / IG 混合图集解析） [计划时间：10.09 19:50 BY Qoder][完成时间：10.09 19:54 BY Qoder]
+- 用户真机（v1.1.4）两项反馈：
+- **①呼出面板无背景（P0）**：竖条/面板各部件直接浮在页面上（真机截图：浅色 App 页上白字完全看不清）→ `BarBody` 外层统一加**纯色胶囊底板**：64dp 定宽、16dp 圆角、`GlassBase(0xFF101426)` 不透明深底+细描边+内边距（横 6dp/纵 8dp），Mini/图集/面板三形态共用；内部各 Column 由 `width(64.dp)` 改 `fillMaxWidth()`（避免与内边距冲突溢出）；`syncBubbleWindow` 的 barFull 估算 330→360dp（底板加了内边距高度）
+- **②IG 图集+视频混合帖解析失败**（`instagram.com/p/DeNtxEMCYXJ/?img_index=4`）：
+  - 主机取证（真实浏览器+curl 双路）：**游客态 embed 页与帖子页都已是 JS 空壳**（embed 633KB/207KB 无任何媒体键；帖子页登录墙，DOM 只有头像）——免登录 embed/WebView/oEmbed 通道对匿名请求全线失效，**带 Cookie 的 GraphQL 是单帖唯一可用通道**（真机面板里 6 条 Instagram 已完成也佐证设备走的就是 Cookie 链路）
+  - 定性：`parsePrivateApi` 只认 `edge_sidecar_to_children`（老结构），2026 起 web_info 把图集子项放在 **`carousel_media` 数组**（每子项各自带 video_versions / image_versions2），混合相册（图+视频）因此提取为 0 → "未提取到媒体"→ 降级到已死的匿名通道 → 整体失败
+  - 修复：GraphQL 通道按 `edge_sidecar_to_children`→`edge_media_to_sidecar_to_children`→`carousel_media` 三级提取；仍为空时在**正帖节点内**递归扫描含 `video_versions`/`image_versions2` 的子节点兜底（限定 xdt_shortcode_media 范围，不碰推荐流）；视频子项只取视频不取封面（沿用修复 10c 原则，addFrom 的 elvis 天然满足）
+- 测试：`:parser:test` **95 例全绿**（+carousel_media 混合相册用例、+未知嵌套递归兜底用例）；`:app:assembleDebug` 全绿
+- 改动文件：`floatwindow/BubbleBar.kt`、`floatwindow/FloatingWindowService.kt`（barFull 估算）、`parser/parsers/InstagramParser.kt`、`parser/test/InstagramParserTest.kt`、PROGRESS/HANDOFF
+- 待真机复验：①Mini/图集/面板三形态在浅色页面上均有深色胶囊底板 ②该 IG 混合链接重测（预期 1 视频+图集多张；若仍失败看 logcat `ig-local-v1` 的"通道选择/登录态解析失败"日志——需确认设备 IG Cookie 有效）
+- 下一阶段入口：发版 v1.1.5（待用户指令）；真机复验阶段 47/46/45
+- 本次文档更新时间：10.09 19:54

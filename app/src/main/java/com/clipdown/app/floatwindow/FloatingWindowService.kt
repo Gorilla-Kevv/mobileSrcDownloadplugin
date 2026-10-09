@@ -394,7 +394,7 @@ class FloatingWindowService : Service() {
         val dm = resources.displayMetrics
         val bubbleH = (64 * dm.density).toInt()
         val gap = (6 * dm.density).toInt()
-        val barFull = (330 * dm.density).toInt()
+        val barFull = (360 * dm.density).toInt()
         val barW = (64 * dm.density).toInt()
         params.x = bubblePos.first.coerceIn(8, (dm.widthPixels - barW - 8).coerceAtLeast(8))
         val barOpen = state is PopupUiState.Mini ||
