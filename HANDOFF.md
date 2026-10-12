@@ -5,7 +5,7 @@
 - 技术栈：Kotlin 2.0.21 + Compose (BOM 2024.10.01)，AGP 8.7.3，minSdk 26 / target 34
 - 模块：`:app`（UI/悬浮窗/剪贴板四通道）、`:parser`（纯 JVM 解析内核）、`:downloader`（下载引擎）
 - git：main，remote `github.com/Gorilla-Kevv/mobileSrcDownloadplugin`（私有），全部已推送
-- 环境（全在 F 盘）：JDK17 `F:\AndroidDev\jdk\jdk-17.0.20.1+1`，SDK `F:\AndroidDev\sdk`，缓存 `F:\AndroidDev\.gradle`；模拟器 AVD `clip34`（1080x2400，时钟 GMT，重启清剪贴板）
+- 环境（全在 F 盘）：JDK17 `F:\AndroidDev\jdk\jdk-17.0.20.1+1`，SDK `F:\AndroidDev\sdk`，缓存 `F:\AndroidDev\.gradle`；**AVD `clip34`（1080x2400，时钟 GMT，重启清剪贴板）住 `F:\AndroidDev\avd`（2026-10-12 从 C:\Users\kevin\.android\avd 迁入，靠用户级环境变量 `ANDROID_AVD_HOME` 定位；C 盘 .android 只剩 89MB 密钥/小文件属正常）**
 
 ## 目标
 - 已达成：剪贴板四通道/分享/无障碍 → 点气泡识别 → 自动流水线（解析→单视频/图下载，图集竖条挑选）→ 下载闭环；下载页图集分组与来源回看；IG/X/YouTube 实测（详见 PROGRESS 阶段 1-29（旧修复 8/9/10 系列已并入阶段 16/18/22-25））
