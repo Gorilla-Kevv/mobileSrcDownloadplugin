@@ -45,7 +45,7 @@ object DownloadController {
         val db = TaskDatabase(ctx)
         db.resetOrphans()
         database = db
-        val repo = TaskRepository.install(db)
+        val repo = TaskRepository.install(db, ctx)
         val e = DownloadEngine(ctx, db, repo, scope, config)
         engine = e
         e.start()
