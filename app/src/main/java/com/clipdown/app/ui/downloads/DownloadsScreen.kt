@@ -143,7 +143,8 @@ fun DownloadsScreen() {
                     onOpenTask = { openTask(context, it) },
                     onPause = { DownloadController.pause(it) },
                     onResume = { DownloadController.resume(it) },
-                    onDelete = { DownloadController.repository().delete(it) }
+                    onDelete = { DownloadController.repository().delete(it) },
+                    onDeleteAll = { row.tasks.forEach { DownloadController.repository().delete(it.id) } }
                 )
             }
         }
@@ -291,7 +292,8 @@ private fun AlbumGroupCard(
     onOpenTask: (TaskEntity) -> Unit,
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
-    onDelete: (String) -> Unit
+    onDelete: (String) -> Unit,
+    onDeleteAll: () -> Unit
 ) {
     val done = tasks.count { it.status == DownloadStatus.COMPLETED }
     val failed = tasks.count { it.status == DownloadStatus.FAILED }
@@ -355,6 +357,9 @@ private fun AlbumGroupCard(
                 TextButton(onClick = onOpenSource) {
                     Text("来源", style = MaterialTheme.typography.labelLarge)
                 }
+            }
+            TextButton(onClick = onDeleteAll, enabled = active == 0) {
+                Text("删除全部", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
             }
             Spacer(Modifier.weight(1f))
             TextButton(onClick = onToggleExpand) {
