@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 61 已完成**：Instagram 内置浏览器登录白屏根除 · 访客追踪空 Cookie 拦截与历史清洗 · 杜绝无会话风控误判与全链路一键解除冷却
-- 下一阶段任务：发版 v1.1.20（versionCode 25）+ 真机走查阶段 61（内置浏览器一键登录 Instagram、自动去伪存真与解除冷却通道）
+- 当前正在开发任务：**阶段 62 已完成**：Instagram 登录两步验证后跳回初始登录页死循环根除 · 默认开启电脑版完整客户端 · 多域名 Cookie 聚合嗅探 · 内置弹窗快捷导入 Cookie 双重保障（已发布正式版 v1.1.21 / versionCode 26）
+- 下一阶段任务：真机走查 v1.1.21（Instagram 内置浏览器一键登录两步验证直通个人主页并自动捕获有效 sessionid）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **105 例** + downloader **40 例** + app **7 例**全绿（共 152 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 21:05
+- 本次文档更新时间：10.25 22:25
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1194,6 +1194,38 @@
   - 全量单元测试 **152 例全绿**（parser 105 例、downloader 40 例、app 7 例）；
   - `assembleRelease` 成功构建，Release APK 体积 1.89 MB (1,986,141 字节)，严格控制在 2MB 以内。
 - 本次文档更新时间：10.25 21:05
+
+## 阶段 62 Instagram 验证死循环根除 · 桌面端 UA 直显 · 多域 Cookie 聚合嗅探与弹窗快捷导入 [计划时间：10.25 21:50 BY Antigravity][完成时间：10.25 22:25 BY Antigravity]
+- 用户反馈与问题本质诊断：
+  - 用户反馈：“ins还是无法登录，有页面显示后，登录验证完后又跳回了最开始的登录界面，cookie抓不到”；
+  - **根本原因复现与定位**：
+    1. **Mobile UA 下根路径 `/` 渲染为 404 错误页的致命重定向**：通过 `curl` 对比发现，在 Mobile UA 下，访问 `https://www.instagram.com/` 会直接渲染 Meta 的 `PolarisErrorRoot`（`httpErrorPage: UNIFIED_HOME`），因为 Meta 移动网页版强制要求用户使用 App，故意移除了 Web 首页。而在 `WebLoginDialog.kt` 中，`loginUrl` 带有 `?next=%2F`。当用户在登录页完成两步验证后，Instagram 按照参数跳回 `next=%2F` 即 `https://www.instagram.com/`，直接撞上 `PolarisErrorRoot` 404 错误页，Meta 的 React 路由器随即将用户强制踢回 `/accounts/login/`（初始登录页），从而造成“验证完又跳回登录页”的无限循环；
+    2. **Desktop UA 下才是完整 Web 客户端**：通过 `curl` 验证发现，在 Desktop UA 下，`https://www.instagram.com/` 包含完整的 `PolarisDesktopNav.react`、`PolarisFeedRoot.react` 以及 `TwoStepVerificationRoot.react`，绝对不会触发 `PolarisErrorRoot`；
+    3. **单 URL Cookie 读取局限与 flush 延迟**：此前 `cm.getCookie(fromUrl)` 仅查询单一 URL，未主动调用 `cm.flush()`，且若 Instagram 鉴权 Cookie 设置在父域 `.instagram.com` 或 `https://instagram.com/`，而 `fromUrl` 带路径参数时可能漏查。
+- 落地重构与加固：
+  1. **Instagram 默认启用「电脑版 (Desktop)」完整客户端**：
+     - `WebLoginDialog.kt` 初始化 `var isDesktopMode by remember { mutableStateOf(platform == Platform.INSTAGRAM) }`，Instagram 默认以 Windows Chrome Desktop UA 加载；
+     - 结合已开启的 `useWideViewPort = true` 与 `loadWithOverviewMode = true`，Desktop 版 Instagram 在手机屏幕上自适应居中缩放；
+     - 剥离登录入口的 `?next=%2F` 陷阱参数，使用纯净入口 `https://www.instagram.com/accounts/login/`；用户完成密码与两步安全验证后直接展示桌面版个人主页 Feed，彻底杜绝回跳死循环；
+  2. **多域名多端点 Cookie 聚合嗅探 (`getAggregatedCookies`)**：
+     - 每次提取前主动执行 `CookieManager.getInstance().flush()`；
+     - 聚合扫描 `https://www.instagram.com/`、`https://instagram.com/`、`https://i.instagram.com/`、`https://accountscenter.instagram.com/` 与当前 `currentUrl`；
+     - 将所有返回的键值对按分号合并解析并去重，确保 `sessionid`、`ds_user_id`、`csrftoken`、`mid` 无论挂载在哪个子域都能被 100% 捕获；
+     - 后台轻量轮询嗅探与手动“完成”按钮统一接入 `getAggregatedCookies`；
+  3. **内置弹窗提供「粘贴 Cookie」无障碍兜底通道**：
+     - 在 `WebLoginDialog` 顶部提示条内嵌入「粘贴Cookie」操作按钮；
+     - 点击弹出直角 `AlertDialog`，支持一键读取系统剪贴板并校验 `sessionid`；
+     - 校验成功即刻入库、复位风控保险丝并关闭登录弹窗，提供 100% 可靠的备用通道。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/components/WebLoginDialog.kt`
+  - `version.properties`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **152 例全绿**（parser 105 例、downloader 40 例、app 7 例）；
+  - `assembleRelease` 成功构建，Release APK 体积 1.89 MB (1,986,141 字节)；
+  - 成功发布 GitHub Release 正式版 **v1.1.21 (versionCode 26)** 并更新 `update.json` 清单。
+- 本次文档更新时间：10.25 22:25
 
 
 

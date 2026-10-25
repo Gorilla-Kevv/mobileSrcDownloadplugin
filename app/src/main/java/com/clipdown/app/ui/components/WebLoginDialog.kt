@@ -23,6 +23,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -38,10 +39,12 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -49,6 +52,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -64,6 +68,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -103,14 +108,17 @@ fun WebLoginDialog(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val clipboardManager = LocalClipboardManager.current
 
     val mobileUa = "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
     val desktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
-    var isDesktopMode by remember { mutableStateOf(false) }
+    // Instagram 移动端根路由（/）在手机 UA 下被 Meta 设为 404 错误页 (PolarisErrorRoot)，
+    // 会导致登录验证后无限跳回登录页死循环。默认启用 Desktop 电脑版 UA，直接加载完整 Feed 与安全验证。
+    var isDesktopMode by remember { mutableStateOf(platform == Platform.INSTAGRAM) }
 
     val loginUrl = when (platform) {
-        Platform.INSTAGRAM -> "https://www.instagram.com/accounts/login/?next=%2F"
+        Platform.INSTAGRAM -> "https://www.instagram.com/accounts/login/"
         Platform.XIAOHONGSHU -> "https://www.xiaohongshu.com/login"
         Platform.FACEBOOK -> "https://m.facebook.com/login/"
         else -> "https://www.instagram.com/"
@@ -130,11 +138,58 @@ fun WebLoginDialog(
     var hasMainFrameError by remember { mutableStateOf(false) }
     var mainFrameErrorMessage by remember { mutableStateOf<String?>(null) }
     var loginCaptured by remember { mutableStateOf(false) }
+    var showManualPasteDialog by remember { mutableStateOf(false) }
+
+    fun getAggregatedCookies(fromUrl: String?): String {
+        val cm = CookieManager.getInstance()
+        runCatching { cm.flush() }
+        val targetUrls = when (platform) {
+            Platform.INSTAGRAM -> listOf(
+                "https://www.instagram.com/",
+                "https://instagram.com/",
+                "https://i.instagram.com/",
+                "https://accountscenter.instagram.com/",
+                "https://www.instagram.com/accounts/login/"
+            )
+            Platform.XIAOHONGSHU -> listOf(
+                "https://www.xiaohongshu.com/",
+                "https://xiaohongshu.com/",
+                "https://edith.xiaohongshu.com/"
+            )
+            Platform.FACEBOOK -> listOf(
+                "https://m.facebook.com/",
+                "https://www.facebook.com/",
+                "https://facebook.com/"
+            )
+            else -> listOf(watchDomain)
+        }.toMutableList()
+
+        if (!fromUrl.isNullOrBlank()) {
+            targetUrls.add(0, fromUrl)
+        }
+
+        val cookieMap = LinkedHashMap<String, String>()
+        for (url in targetUrls.distinct()) {
+            val raw = runCatching { cm.getCookie(url) }.getOrNull() ?: continue
+            for (pair in raw.split(';')) {
+                val trimmed = pair.trim()
+                if (trimmed.isEmpty()) continue
+                val eqIdx = trimmed.indexOf('=')
+                if (eqIdx > 0) {
+                    val k = trimmed.substring(0, eqIdx).trim()
+                    val v = trimmed.substring(eqIdx + 1).trim()
+                    if (k.isNotEmpty() && !cookieMap.containsKey(k)) {
+                        cookieMap[k] = v
+                    }
+                }
+            }
+        }
+        return cookieMap.entries.joinToString("; ") { "${it.key}=${it.value}" }
+    }
 
     fun checkAndSaveCookies(fromUrl: String): Boolean {
         if (loginCaptured) return true
-        val cm = CookieManager.getInstance()
-        val cookie = cm.getCookie(fromUrl) ?: cm.getCookie(watchDomain) ?: ""
+        val cookie = getAggregatedCookies(fromUrl)
         if (cookie.isBlank()) return false
 
         if (CookieStore.isValidSessionCookie(platform, cookie)) {
@@ -303,8 +358,7 @@ fun WebLoginDialog(
                     // 手动完成/保存按钮（严格校验 sessionid，杜绝游客空 Cookie 充数）
                     Button(
                         onClick = {
-                            val cm = CookieManager.getInstance()
-                            val cookie = cm.getCookie(currentUrl) ?: cm.getCookie(watchDomain) ?: ""
+                            val cookie = getAggregatedCookies(currentUrl)
                             if (CookieStore.isValidSessionCookie(platform, cookie)) {
                                 CookieStore.put(context, platform, cookie)
                                 IgRiskGuard.reset()
@@ -320,7 +374,7 @@ fun WebLoginDialog(
                                 }
                                 Toast.makeText(
                                     context,
-                                    "未检测到有效登录态（缺少 $tokenName），请先在页面中登录账号后再点完成！",
+                                    "未检测到有效登录态（缺少 $tokenName），请先在页面中登录账号后再点完成！亦可使用「粘贴Cookie」备用通道。",
                                     Toast.LENGTH_LONG
                                 ).show()
                             }
@@ -369,7 +423,10 @@ fun WebLoginDialog(
                         )
                         .padding(horizontal = AppTheme.spacing.md, vertical = AppTheme.spacing.xs)
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         if (loginCaptured) {
                             Icon(
                                 imageVector = Icons.Default.Check,
@@ -395,14 +452,34 @@ fun WebLoginDialog(
                             Text(
                                 "页面加载受阻：请确保已打开加速器/VPN；亦可点击右上角切换为「电脑版」重试",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onErrorContainer
+                                color = MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.weight(1f)
                             )
                         } else {
                             Text(
-                                "提示：在下方官方页面安全登录后会自动捕获凭据；若页面白屏请确保 VPN 开启或切换右上角电脑版。",
+                                if (platform == Platform.INSTAGRAM)
+                                    "提示：默认开启「电脑版」避免验证后死循环回跳；若遇阻可点右侧手动粘贴。"
+                                else
+                                    "提示：在下方安全登录后会自动捕获凭据；遇阻可点右侧手动粘贴。",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.weight(1f)
                             )
+                            Spacer(Modifier.width(AppTheme.spacing.xs))
+                            OutlinedButton(
+                                onClick = { showManualPasteDialog = true },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(26.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContentPaste,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text("粘贴Cookie", style = MaterialTheme.typography.labelSmall)
+                            }
                         }
                     }
                 }
@@ -560,5 +637,96 @@ fun WebLoginDialog(
                 }
             }
         }
+    }
+
+    if (showManualPasteDialog) {
+        var pasteInput by remember { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { showManualPasteDialog = false },
+            shape = RectangleShape,
+            title = {
+                Text(
+                    "手动导入 ${platform.displayName} Cookie",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            },
+            text = {
+                Column {
+                    Text(
+                        "若在内置浏览器中遇到二次验证回跳、风控卡顿，可直接将其他浏览器已登录的 Cookie 粘贴至此。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(Modifier.height(AppTheme.spacing.sm))
+                    OutlinedTextField(
+                        value = pasteInput,
+                        onValueChange = { pasteInput = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("粘贴包含核心令牌的完整 Cookie 文本…") },
+                        maxLines = 4,
+                        shape = RectangleShape
+                    )
+                    Spacer(Modifier.height(AppTheme.spacing.xs))
+                    OutlinedButton(
+                        onClick = {
+                            val clipText = clipboardManager.getText()?.text ?: ""
+                            if (clipText.isNotBlank()) {
+                                pasteInput = clipText.trim()
+                            } else {
+                                Toast.makeText(context, "剪贴板为空", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        shape = RectangleShape,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(32.dp),
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Icon(Icons.Default.ContentPaste, null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("读取剪贴板内容", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val trimmed = pasteInput.trim()
+                        if (CookieStore.isValidSessionCookie(platform, trimmed)) {
+                            CookieStore.put(context, platform, trimmed)
+                            IgRiskGuard.reset()
+                            Toast.makeText(context, "${platform.displayName} Cookie 保存成功！", Toast.LENGTH_SHORT).show()
+                            showManualPasteDialog = false
+                            onCookieSaved(trimmed)
+                            onDismiss()
+                        } else {
+                            val tokenName = when (platform) {
+                                Platform.INSTAGRAM -> "sessionid"
+                                Platform.XIAOHONGSHU -> "web_session"
+                                Platform.FACEBOOK -> "c_user"
+                                else -> "核心鉴权令牌"
+                            }
+                            Toast.makeText(
+                                context,
+                                "Cookie 无效：未包含核心鉴权令牌 ($tokenName)！请重新复制。",
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
+                    },
+                    shape = RectangleShape
+                ) {
+                    Text("确认保存")
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = { showManualPasteDialog = false },
+                    shape = RectangleShape
+                ) {
+                    Text("取消")
+                }
+            }
+        )
     }
 }
