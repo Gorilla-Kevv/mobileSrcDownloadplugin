@@ -38,6 +38,7 @@ import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
@@ -93,6 +94,7 @@ import com.clipdown.parser.model.MediaKind
 import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.ParseResult
 import com.clipdown.parser.model.Platform
+import com.clipdown.parser.parsers.IgRiskGuard
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -355,7 +357,37 @@ fun HomeScreen(
             item {
                 Column {
                     NoticeBar(msg, Tone.Danger)
-                    if (msg.contains("Instagram") && (msg.contains("Cookie") || msg.contains("登录") || msg.contains("Reel") || msg.contains("限制"))) {
+                    val isIgCooldown = msg.contains("Instagram") && (msg.contains("冷却") || msg.contains("风控"))
+                    if (isIgCooldown) {
+                        VSpace(AppTheme.spacing.xs)
+                        Row(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.xs)) {
+                            OutlinedButton(
+                                onClick = {
+                                    IgRiskGuard.reset()
+                                    error = null
+                                    if (input.isNotBlank()) parse(input)
+                                },
+                                shape = RectangleShape,
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) {
+                                Text("立即解除冷却并重试", style = MaterialTheme.typography.labelMedium)
+                            }
+                            Button(
+                                onClick = {
+                                    IgRiskGuard.reset()
+                                    loginPlatformPrompt = Platform.INSTAGRAM
+                                },
+                                shape = RectangleShape,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.primary,
+                                    contentColor = MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.weight(1f).height(38.dp)
+                            ) {
+                                Text("一键登录", style = MaterialTheme.typography.labelMedium)
+                            }
+                        }
+                    } else if (msg.contains("Instagram") && (msg.contains("Cookie") || msg.contains("登录") || msg.contains("Reel") || msg.contains("限制"))) {
                         VSpace(AppTheme.spacing.xs)
                         Button(
                             onClick = { loginPlatformPrompt = Platform.INSTAGRAM },

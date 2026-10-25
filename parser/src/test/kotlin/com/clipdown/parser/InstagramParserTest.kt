@@ -355,4 +355,49 @@ class InstagramParserTest {
         assertEquals(1, videos.size)
         assertTrue(videos[0].url.contains("hook_reel.mp4"))
     }
+
+    @Test
+    fun `无有效 sessionid 的假 Cookie 不计入风控连续失败且不触发冷却`() {
+        val http = FakeHttp { notFound() }
+        val guestCookie = "mid=Z7rX1wAE; csrftoken=abc123xyz"
+        val ctx = testContext(http, cookies = mapOf(com.clipdown.parser.model.Platform.INSTAGRAM to guestCookie))
+
+        // 连续 3 次解析失败（超过 THRESHOLD=2）
+        repeat(3) {
+            val err = runCatching {
+                parser.parse("https://www.instagram.com/reel/Fail123/", ctx)
+            }.exceptionOrNull()
+            assertTrue(err != null)
+        }
+
+        // 验证 IgRiskGuard 未被触发，remainingMinutes 为 0
+        assertEquals(0, IgRiskGuard.remainingMinutes)
+    }
+
+    @Test
+    fun `持有有效 sessionid 时连续失败达到阈值触发 IgRiskGuard 冷却`() {
+        val http = FakeHttp { notFound() }
+        val validCookie = "mid=Z7rX1wAE; csrftoken=abc; sessionid=123456%3Aabcd"
+        val ctx = testContext(http, cookies = mapOf(com.clipdown.parser.model.Platform.INSTAGRAM to validCookie))
+
+        // 连续 2 次失败达到 THRESHOLD=2
+        repeat(2) {
+            runCatching {
+                parser.parse("https://www.instagram.com/reel/Fail123/", ctx)
+            }
+        }
+
+        // 验证 IgRiskGuard 触发冷却
+        assertTrue(IgRiskGuard.remainingMinutes > 0)
+
+        // 第 3 次应直接被 IgRiskGuard 拦截
+        val err = runCatching {
+            parser.parse("https://www.instagram.com/reel/Fail123/", ctx)
+        }.exceptionOrNull()
+        assertTrue(err?.message?.contains("冷却") == true)
+
+        // reset 后应立即恢复
+        IgRiskGuard.reset()
+        assertEquals(0, IgRiskGuard.remainingMinutes)
+    }
 }

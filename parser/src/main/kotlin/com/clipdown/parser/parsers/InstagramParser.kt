@@ -46,8 +46,9 @@ class InstagramParser : PlatformParser {
     // 风控保护（修复 11）：连续失败冷却；状态与主页链路共用 IgRiskGuard，避免两条链路各自计数被绕过。
     // 缺登录态或认证失效的失败不计入，避免用户"试两次"就锁进 10 分钟冷却。
     override fun parse(url: String, ctx: ParseContext): ParseResult {
-        val hasCookie = !ctx.cookieProvider(platform).isNullOrBlank()
-        return IgRiskGuard.guard(ctx, id, countsFailure = hasCookie) { parseChannels(url, ctx) }
+        val cookie = ctx.cookieProvider(platform)
+        val hasSession = !cookie.isNullOrBlank() && cookie.contains("sessionid=")
+        return IgRiskGuard.guard(ctx, id, countsFailure = hasSession) { parseChannels(url, ctx) }
     }
 
     private fun parseChannels(url: String, ctx: ParseContext): ParseResult {

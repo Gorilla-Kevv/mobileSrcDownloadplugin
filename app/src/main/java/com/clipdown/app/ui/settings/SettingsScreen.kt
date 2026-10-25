@@ -62,6 +62,7 @@ import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.update.UpdateSection
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.model.Platform
+import com.clipdown.parser.parsers.IgRiskGuard
 import kotlinx.coroutines.launch
 
 /**
@@ -303,10 +304,34 @@ fun SettingsScreen() {
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                val remainMin = IgRiskGuard.remainingMinutes
+                                if (remainMin > 0) {
+                                    Spacer(Modifier.height(2.dp))
+                                    Text(
+                                        "当前处于风控冷却中（剩余约 $remainMin 分钟）",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.error,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
                             }
                         }
 
                         Row(verticalAlignment = Alignment.CenterVertically) {
+                            if (p == Platform.INSTAGRAM && IgRiskGuard.remainingMinutes > 0) {
+                                OutlinedButton(
+                                    onClick = {
+                                        IgRiskGuard.reset()
+                                        cookieRefreshToken++
+                                        Toast.makeText(context, "已解除 Instagram 风控冷却", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RectangleShape,
+                                    modifier = Modifier.height(34.dp)
+                                ) {
+                                    Text("解除冷却", style = MaterialTheme.typography.labelMedium)
+                                }
+                                Spacer(Modifier.width(AppTheme.spacing.xs))
+                            }
                             Button(
                                 onClick = { activeLoginPlatform = p },
                                 shape = RectangleShape,

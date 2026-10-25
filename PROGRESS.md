@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 60 已完成**：前台下载服务常驻通知三段式状态展示与实时感知刷新（同时显示正在下载数、已完成数与失败数三段 · 下载完成时自动切为完成终态可滑除通知 · 下载管理页同步三段统计对齐）
-- 下一阶段任务：发版 v1.1.19（versionCode 24）+ 真机走查阶段 60（通知栏三段式展示与完成状态感知）+ 阶段 59（内置浏览器快速一键登录 Instagram）
+- 当前正在开发任务：**阶段 61 已完成**：Instagram 内置浏览器登录白屏根除 · 访客追踪空 Cookie 拦截与历史清洗 · 杜绝无会话风控误判与全链路一键解除冷却
+- 下一阶段任务：发版 v1.1.20（versionCode 25）+ 真机走查阶段 61（内置浏览器一键登录 Instagram、自动去伪存真与解除冷却通道）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **103 例** + downloader **40 例** + app **4 例**全绿（共 147 例）
+- 测试基线：parser **105 例** + downloader **40 例** + app **7 例**全绿（共 152 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 20:35
+- 本次文档更新时间：10.25 21:05
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1140,6 +1140,61 @@
   - 全量单元测试 **147 例全绿**（parser 103 例、downloader 40 例、app 4 例）；
   - 新增 `DownloadNotifierTest` 2 例覆盖三段式文本格式化与标题状态迁移。
 - 本次文档更新时间：10.25 20:35
+
+## 阶段 61 Instagram 内置浏览器登录白屏根除 · 访客追踪空 Cookie 拦截清洗 · 杜绝无会话风控误判与全链路一键解除冷却 [计划时间：10.25 20:50 BY Antigravity][完成时间：10.25 21:05 BY Antigravity]
+- 用户反馈："新增的内置浏览器登录功能，ins的点进去登录后显示空白，无任何内容，未登录点击完成后显示Cookie提取成功，我看了下确实出现了cookie，应该是我们这里在开发时留下的，无解析能力，然后才用了两次解析就说风控了"
+- 痛点与根因排查：
+  1. **Instagram 登录页白屏无内容**：
+     - **Meta 移动端路由缺陷**：移动 UA 访问 `https://www.instagram.com/accounts/login/` 会被 Meta 直接渲染为 `PolarisErrorRoot`（返回 HTTP 404 错误页，WebView 内全白）；必须带有 `?next=%2F` 即 `https://www.instagram.com/accounts/login/?next=%2F` 才会下发 `PolarisLoginController` 真实登录表单；
+     - **`X-Requested-With` 反爬拦截**：Android WebView 默认自动对所有请求追加 `X-Requested-With: com.clipdown.app`，Meta 根据此标头直接识别并拦截内嵌 WebView，导致页面空白；
+     - **DeepLink 崩溃白屏**：移动网页端会触发 `instagram://` 协议跳转，WebView 缺少 `shouldOverrideUrlLoading` 过滤时直接报 `net::ERR_UNKNOWN_URL_SCHEME` 崩溃白屏；
+  2. **“未登录点击完成显示Cookie提取成功”**：
+     - Instagram 在未登录匿名访客初次握手时，HTTP 200 响应就会下发 `csrftoken` 与 `mid` 两个追踪 Cookie；
+     - `WebLoginDialog` 此前在用户点"完成"时仅做了 `if (cookie.isNotBlank())` 的简单非空判断，误把访客追踪 Cookie 当作登录态存入了 `CookieStore`；
+  3. **“才用了两次解析就说风控了”**：
+     - 存入只有 `mid/csrftoken` 的假 Cookie 后，`InstagramParser` 误判为 `hasCookie = true`，调用私有 GraphQL/REST 接口直接被拒（401/重定向）；
+     - `InstagramParser.kt` 只要 `hasCookie == true` 就传入 `countsFailure = true`，连续失败 2 次直接触发 `IgRiskGuard` 的 10 分钟风控冷却锁死；且弹窗只有 `[知道了]` 按钮，用户完全被困在锁定期内无法自救。
+- 落地重构与增强：
+  1. **`WebLoginDialog.kt` 深度抗白屏与鲁棒性重构**：
+     - 引入 `androidx.webkit:webkit:1.12.0`；
+     - 调用 `WebSettingsCompat.setRequestedWithHeaderOriginAllowList(settings, emptySet())` 剥离 `X-Requested-With` 头标记，瓦解 Meta 反爬白屏封锁；
+     - Instagram 登录入口精确指定为带有 `next` 路由的标准入口 `https://www.instagram.com/accounts/login/?next=%2F`；
+     - `shouldOverrideUrlLoading` 拦截外部 DeepLink（`instagram://`, `intent://` 等），杜绝 scheme 错误崩溃白屏；
+     - `onReceivedSslError` 增加容错放行（`handler.proceed()`），防止国内代理/加速器证书被拒白屏；
+     - 增加主帧加载错误（`onReceivedError`）友好兜底重试面板；
+     - 顶部增加一键「电脑版 / 手机版」UA 实时切换与「系统浏览器打开」备用通道；
+     - 手动“完成”按钮严格校验：必须包含核心 `sessionid`，否则 Toast 明确提醒拒绝入库，严禁将访客追踪 Cookie 当作凭据；
+  2. **`CookieStore.kt` 鉴权令牌真伪校验与自动历史清洗**：
+     - 新增 `isValidSessionCookie(platform, cookie)` 严格校验核心令牌（Instagram 必含 `sessionid=`；小红书必含 `web_session=`/`a1=`；Facebook 必含 `c_user=`/`xs=`）；
+     - `get(context, platform)` 自动防御清洗历史存储中无 `sessionid=` 的伪 Cookie 并重置冷却；
+     - `put()` 与 `remove()` 均主动触发 `IgRiskGuard.reset()` 清空风控熔断；
+  3. **`InstagramParser.kt` 熔断逻辑校准**：
+     - 修正 `countsFailure = hasSession`：只有持有真实 `sessionid` 且遭遇真实风控限流时才计入风控计数，无登录态或假 Cookie 失败绝不触发 10 分钟锁死；
+  4. **悬浮窗、设置页与首页一键解除冷却闭环**：
+     - `ClipPopupContent.kt`（悬浮窗）：遭遇风控锁定时，在"知道了"旁边新增 `[解除冷却重试]` 按钮，点击一键复位 `IgRiskGuard` 并即刻重试；
+     - `HomeScreen.kt`（首页）：展示明确的 `[立即解除冷却并重试]` 与 `[一键登录]` 双通道操作；
+     - `SettingsScreen.kt`（设置页）：Instagram 登录卡片中实时显示风控冷却剩余倒计时，并提供 `[解除冷却]` 按钮；
+  5. **自动化测试套件扩充**：
+     - 新增 `CookieStoreTest.kt`（3 组测试）：覆盖 Instagram / 小红书 / Facebook 核心鉴权令牌格式严格校验；
+     - 扩充 `InstagramParserTest.kt`（2 组测试）：验证假 Cookie 不触发冷却、有效 Cookie 连续失败触发冷却及 reset 恢复。
+- 改动文件：
+  - `app/build.gradle.kts`
+  - `app/src/main/java/com/clipdown/app/data/CookieStore.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/WebLoginDialog.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/ClipPopupContent.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/settings/SettingsScreen.kt`
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/InstagramParser.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/InstagramParserTest.kt`
+  - `app/src/test/java/com/clipdown/app/data/CookieStoreTest.kt` (新建)
+  - `scripts/publish-release.sh`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **152 例全绿**（parser 105 例、downloader 40 例、app 7 例）；
+  - `assembleRelease` 成功构建，Release APK 体积 1.89 MB (1,986,141 字节)，严格控制在 2MB 以内。
+- 本次文档更新时间：10.25 21:05
+
 
 
 

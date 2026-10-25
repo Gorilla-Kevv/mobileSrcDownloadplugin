@@ -8,7 +8,8 @@ import com.clipdown.parser.parsers.IgRiskGuard
  * 平台登录态仓库。
  *
  * 需要登录才能拿到原画质资源的平台（Instagram / 小红书 / Facebook 等），
- * 由用户在设置页粘贴 Cookie，解析内核在请求时通过 cookieProvider 回调取用。
+ * 由用户在设置页粘贴 Cookie 或通过内置浏览器一键登录捕获，
+ * 解析内核在请求时通过 cookieProvider 回调取用。
  *
  * 存储用独立 SP，且只在本地保存，绝不随任何网络请求外发到第三方。
  */
@@ -18,7 +19,14 @@ object CookieStore {
 
     fun get(context: Context, platform: Platform): String? {
         val sp = context.getSharedPreferences(PREF, Context.MODE_PRIVATE)
-        return sp.getString(platform.id, null)?.takeIf { it.isNotBlank() }
+        val raw = sp.getString(platform.id, null)?.takeIf { it.isNotBlank() } ?: return null
+        // 自动防御：清理历史留下的无核心鉴权会话令牌的非登录态伪 Cookie（如仅包含 mid/csrftoken），
+        // 避免误判为已登录而发起私有请求撞风控
+        if (!isValidSessionCookie(platform, raw)) {
+            remove(context, platform)
+            return null
+        }
+        return raw
     }
 
     fun put(context: Context, platform: Platform, cookie: String) {
@@ -42,6 +50,14 @@ object CookieStore {
     }
 
     fun has(context: Context, platform: Platform): Boolean = !get(context, platform).isNullOrBlank()
+
+    /** 校验 Cookie 是否真正包含核心鉴权会话令牌，杜绝以游客匿名 Cookie 充数 */
+    fun isValidSessionCookie(platform: Platform, cookie: String): Boolean = when (platform) {
+        Platform.INSTAGRAM -> cookie.contains("sessionid=")
+        Platform.XIAOHONGSHU -> cookie.contains("web_session=") || cookie.contains("a1=")
+        Platform.FACEBOOK -> cookie.contains("c_user=") || cookie.contains("xs=")
+        else -> cookie.isNotBlank() && cookie.length >= 20
+    }
 
     /**
      * 提供"补充 Cookie"入口的平台。

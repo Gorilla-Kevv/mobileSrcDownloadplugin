@@ -68,6 +68,8 @@ import com.clipdown.app.ui.theme.GlassBase
 import com.clipdown.app.ui.theme.SeedBlue
 import com.clipdown.app.ui.theme.WarningAmber
 import com.clipdown.parser.model.MediaKind
+import com.clipdown.parser.model.Platform
+import com.clipdown.parser.parsers.IgRiskGuard
 
 /**
  * 悬浮弹窗内容。
@@ -450,10 +452,16 @@ private fun FailedBody(
     state: PopupUiState.Failed,
     onRetry: () -> Unit,
     onDismiss: () -> Unit
-) {    Column(modifier = Modifier.padding(18.dp)) {
+) {
+    val isIgCooldown = state.link.platform == Platform.INSTAGRAM &&
+        (IgRiskGuard.remainingMinutes > 0 ||
+         state.message.contains("冷却") ||
+         state.message.contains("风控"))
+
+    Column(modifier = Modifier.padding(18.dp)) {
         HeaderRow(
             title = state.link.platform.displayName,
-            subtitle = "解析失败",
+            subtitle = if (isIgCooldown) "风控保护冷却中" else "解析失败",
             remainSeconds = 0,
             onDismiss = onDismiss
         )
@@ -464,11 +472,29 @@ private fun FailedBody(
             style = MaterialTheme.typography.bodyMedium
         )
         Spacer(Modifier.height(16.dp))
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             TextButton(onClick = onDismiss) {
                 Text("知道了", color = Color.White.copy(0.7f))
             }
-            if (state.retryable) {
+            if (isIgCooldown) {
+                Spacer(Modifier.width(8.dp))
+                Button(
+                    onClick = {
+                        IgRiskGuard.reset()
+                        onRetry()
+                    },
+                    shape = RoundedCornerShape(14.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = SeedBlue)
+                ) {
+                    Icon(Icons.Default.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text("解除冷却重试")
+                }
+            } else if (state.retryable) {
                 Spacer(Modifier.width(8.dp))
                 Button(
                     onClick = onRetry,

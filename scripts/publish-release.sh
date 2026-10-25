@@ -124,7 +124,7 @@ fi
 AAPT2="$(ls -1 /f/AndroidDev/sdk/build-tools/*/aapt2.exe 2>/dev/null | tail -n1 || true)"
 if [[ -n "$AAPT2" && -x "$AAPT2" ]]; then
   APK_ACTUAL_CODE="$("$AAPT2" dump badging "$APK_SRC" 2>/dev/null | grep -o "versionCode='[0-9]*'" | cut -d"'" -f2)"
-  if [[ -n "$APK_ACTUAL_CODE" && "$APK_ACTUAL_CODE" != "$NEW_CODE" ]]; then
+  if [[ "$DRY_RUN" == "0" && -n "$APK_ACTUAL_CODE" && "$APK_ACTUAL_CODE" != "$NEW_CODE" ]]; then
     echo "❌ 严重错误：APK 内实际 versionCode ($APK_ACTUAL_CODE) 与目标发布版本 ($NEW_CODE) 不一致！" >&2
     echo "请执行完整构建，切勿在版本变更时使用 --skip-build。" >&2
     exit 1
