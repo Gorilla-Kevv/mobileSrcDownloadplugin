@@ -4,6 +4,7 @@ import android.content.Intent
 import android.provider.Settings
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -27,9 +28,13 @@ import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
+import androidx.compose.material.icons.filled.Warning
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.layout.ContentScale
 import coil.request.ImageRequest
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +43,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -50,6 +56,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.clipdown.app.ClipDownApp
@@ -109,6 +118,25 @@ fun HomeScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf(setOf(0)) }
     var isDuplicateParse by remember { mutableStateOf(false) }
+
+    var overlayGranted by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
+    var accessibilityGranted by remember { mutableStateOf(AccessibilityState.isEnabled(context)) }
+
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val hasOverlay = FloatingWindowService.hasPermission(context)
+                overlayGranted = hasOverlay
+                accessibilityGranted = AccessibilityState.isEnabled(context)
+                if (hasOverlay) {
+                    FloatingWindowService.tryStartIfEnabled(context)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val lastLink by LinkCenter.last.collectAsStateWithLifecycle()
     val tasks by DownloadController.repository().tasks.collectAsStateWithLifecycle()
@@ -201,6 +229,55 @@ fun HomeScreen(
                 title = "剪存 ClipDown",
                 subtitle = "复制链接后气泡会自动提示下载，也可以在这里手动粘贴解析"
             )
+        }
+
+        if (!overlayGranted) {
+            item {
+                AppCard(
+                    shape = RectangleShape,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.error.copy(alpha = 0.5f))
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(AppTheme.spacing.sm))
+                        Text(
+                            "悬浮球未显示（缺少悬浮窗权限）",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+                    VSpace(AppTheme.spacing.xs)
+                    Text(
+                        "检测到「悬浮窗权限」尚未开启，桌面悬浮球无法正常常驻显示。清理应用缓存/数据或系统重置后通常需要重新授权。\n授权后悬浮球将自动恢复，复制链接可在任意应用上一键识别下载。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    VSpace(AppTheme.spacing.md)
+                    Button(
+                        onClick = {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        },
+                        shape = RectangleShape,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        ),
+                        modifier = Modifier.fillMaxWidth().height(42.dp)
+                    ) {
+                        Text("立即开启悬浮窗权限", style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
         }
 
         item {
@@ -315,7 +392,7 @@ fun HomeScreen(
             }
         }
 
-        item { PermissionSection() }
+        item { PermissionSection(overlayGranted = overlayGranted, accessibilityGranted = accessibilityGranted) }
 
         item { PlatformSection() }
     }
@@ -561,11 +638,11 @@ private fun HairlineRow() {
 }
 
 @Composable
-private fun PermissionSection() {
+private fun PermissionSection(
+    overlayGranted: Boolean,
+    accessibilityGranted: Boolean
+) {
     val context = LocalContext.current
-    val overlayGranted = remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
-
-    LaunchedEffect(Unit) { overlayGranted.value = FloatingWindowService.hasPermission(context) }
 
     AppCard {
         CardHeader(title = "必要权限", subtitle = "开启后即可在复制链接时自动识别")
@@ -573,7 +650,7 @@ private fun PermissionSection() {
         PermissionRow(
             title = "悬浮窗",
             desc = "在其他应用上方弹出下载提示",
-            granted = overlayGranted.value,
+            granted = overlayGranted,
             onClick = {
                 context.startActivity(
                     Intent(
@@ -586,7 +663,7 @@ private fun PermissionSection() {
         PermissionRow(
             title = "无障碍服务",
             desc = "Android 10+ 后台读不到剪贴板，开启后可在复制时自动识别",
-            granted = AccessibilityState.isEnabled(context),
+            granted = accessibilityGranted,
             onClick = { context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
         )
     }

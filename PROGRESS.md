@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 56 已完成**：彻底修复 Instagram 媒体下载传输中断与半截截断黑图硬伤（文件物理完整性强校验 + 协议提前终止异常转译 + 移动端 UA 注入 + 最高画质 candidates 选举）
-- 下一阶段任务：发版 v1.1.15（versionCode 20）+ 真机走查阶段 56（Instagram 单图/图集下载不再出现截断黑图、画质完整原图）+ 阶段 55（下载记录方形卡片/路径复制/平直进度条/直角弹窗）+ 阶段 54（重复链接剪贴板与主应用内下载确认交互）
+- 当前正在开发任务：**阶段 57 已完成**：彻底修复清理应用缓存/数据后悬浮球消失问题（启动与生命周期自愈拉起服务 + 智能授权引导弹窗 + 首页直角警告卡片 + 设置页联动跳转）
+- 下一阶段任务：发版 v1.1.16（versionCode 21）+ 真机走查阶段 57（清理缓存后悬浮球自愈拉起与授权引导）+ 阶段 56（Instagram 完整性强校验与防截断）+ 阶段 55（下载记录方形风格与路径复制）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **99 例** + downloader **38 例** + app **4 例**全绿（共 141 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 16:50
+- 本次文档更新时间：10.25 17:10
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1006,6 +1006,34 @@
   - 新增 `MediaIntegrityValidatorTest` 7 例（覆盖空文件、残缺文件、标准 JPEG、带 padding JPEG、无 EOI 截断 JPEG、标准 PNG、无 IEND 截断 PNG）；
   - 新增 `HttpFileDownloaderTest.incompleteDownload_throwsExceptionWhenLengthMismatch` 覆盖传输体截断场景。
 - 本次文档更新时间：10.25 16:50
+
+## 阶段 57 清理应用缓存/数据后悬浮球消失问题彻底自愈与全流程引导 [计划时间：10.25 17:00 BY Antigravity][完成时间：10.25 17:10 BY Antigravity]
+- 用户反馈："清理应用缓存后，悬浮球不见了，应该是权限等被删除了，需要添加引导或者直接修复逻辑"
+- 根因分析：
+  1. **应用进程与前台服务被杀后无自愈恢复**：用户在系统设置中清理缓存/数据时，Android 系统会彻底杀死 ClipDown 进程与前台悬浮窗服务 `FloatingWindowService`。此前仅在 `BootReceiver`（开机）或 `SettingsScreen` 手动开关切换时才启动服务；用户清理完缓存重新打开应用时，`MainActivity` 从未自愈拉起服务，导致悬浮球永久消失；
+  2. **权限状态单次静态读取、缺少生命周期响应**：`HomeScreen.kt` 此前仅在 `LaunchedEffect(Unit)` 执行一次 `hasPermission` 检查。当用户前往系统设置授权或清理数据导致授权重置后，返回首页不会触发重新检查，状态药丸卡死在"去开启"，且不会联动拉起悬浮球服务；
+  3. **设置页开关静默失败无任何引导反馈**：在 `SettingsScreen.kt` 中，若用户在未授予悬浮窗权限状态下打开「启用悬浮球」，`FloatingWindowService.tryStart` 直接静默 `return`，既不给 Toast 提醒也不跳转授权页，用户误以为开关失效；
+  4. **缺少启动与显眼指引兜底**：清理应用缓存/存储后，部分定制系统可能会重置悬浮窗权限，用户不知为何悬浮球消失。
+- 落地重构与增强：
+  1. **核心自愈逻辑（MainActivity + HomeScreen + SettingsScreen）**：
+     - 在 `MainActivity.onResume()` 中注入自愈拉起逻辑：只要读取到 `floatEnabled` 为 true（默认即为 true）且具有悬浮窗权限，即刻自动拉起 `FloatingWindowService`，清理缓存后只要打开一次应用悬浮球立即恢复常驻；
+     - 在 `HomeScreen.kt` 与 `SettingsScreen.kt` 中挂载 `LifecycleEventObserver`（`Lifecycle.Event.ON_RESUME`）：当用户从系统设置授权返回应用时，即刻更新权限状态为「已开启」并调用 `tryStartIfEnabled` 实时弹出悬浮球，完全无需重启应用或手动拨动开关；
+  2. **多层级智能引导体系（直角设计规范）**：
+     - **MainActivity 智能引导弹窗**：`FloatPermissionGuidanceDialog` 检测到 `floatEnabled && !hasPermission` 时温和弹出引导弹窗（采用 `RectangleShape` 直角技术风格），说明清理缓存/数据可能导致权限重置，提供一键「前往开启权限」直达系统悬浮窗设置页；
+     - **HomeScreen 首页顶部直角警告卡片**：在页面标题下方显著展示「悬浮球未显示（缺少悬浮窗权限）」卡片，采用红底描边与直角按钮，用户点击即可直达系统设置，授权返回后自动消失并拉起悬浮球；
+     - **SettingsScreen 设置页联动**：未授权时在「悬浮窗」分组展示醒目警告条；用户开启「启用悬浮球」开关若无权限，自动 Toast 提示并直接跳转系统授权页；
+  3. **权限卡片响应式刷新**：
+     - `PermissionSection` 接入响应式 `overlayGranted` 与 `accessibilityGranted`，生命周期变化即时生效。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/settings/SettingsScreen.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **141 例全绿**（parser 99 例、downloader 38 例、app 4 例）；
+  - `:app:compileDebugKotlin` 编译无任何报错与警告。
+- 本次文档更新时间：10.25 17:10
 
 
 

@@ -5,15 +5,37 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
 import com.clipdown.app.clip.ClipboardMonitor
+import com.clipdown.app.data.SettingsRepository
+import com.clipdown.app.floatwindow.FloatingWindowService
 import com.clipdown.app.ui.nav.AppNav
 import com.clipdown.app.ui.theme.ClipDownTheme
 import com.clipdown.app.update.UpdateCenter
 import com.clipdown.app.update.UpdateLaunchDialog
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -43,6 +65,8 @@ class MainActivity : ComponentActivity() {
                 // 启动静默检查更新：有新版时弹一次提示框（用户点"稍后"本次启动不再打扰）
                 LaunchedEffect(Unit) { runCatching { UpdateCenter.check() } }
                 UpdateLaunchDialog()
+                // 悬浮球权限失效智能引导弹窗（清理缓存/数据后自动引导授权）
+                FloatPermissionGuidanceDialog()
                 AppNav(openParse = openParse, openProfile = openProfile || demoProfile)
             }
         }
@@ -52,6 +76,16 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         ClipboardMonitor.onForeground()
         ClipboardMonitor.readAndSubmit(com.clipdown.app.clip.LinkSource.FOREGROUND_CLIP)
+
+        // 核心自愈逻辑：清理缓存/数据或杀进程后重新打开应用时，若已开启悬浮球开关且已授权，自动拉起悬浮球服务
+        lifecycleScope.launch {
+            runCatching {
+                val enabled = SettingsRepository(this@MainActivity).floatEnabled.first()
+                if (enabled && FloatingWindowService.hasPermission(this@MainActivity)) {
+                    FloatingWindowService.tryStart(this@MainActivity)
+                }
+            }
+        }
     }
 
     override fun onPause() {
@@ -77,5 +111,69 @@ class MainActivity : ComponentActivity() {
                 .putExtra(EXTRA_OPEN_PARSE, openParse)
                 .putExtra(EXTRA_OPEN_PROFILE, openProfile)
                 .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    }
+}
+
+/**
+ * 悬浮球权限智能引导弹窗：
+ * 当用户清理缓存/数据后导致权限失效或服务终止时，启动时温和弹窗指引开启，点击直接跳系统设置，返回后自动启动悬浮球。
+ */
+@Composable
+private fun FloatPermissionGuidanceDialog() {
+    val context = LocalContext.current
+    val settings = remember { SettingsRepository(context) }
+    val floatEnabled by settings.floatEnabled.collectAsStateWithLifecycle(initialValue = true)
+    var dismissed by rememberSaveable { mutableStateOf(false) }
+    var hasPermission by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasPermission = FloatingWindowService.hasPermission(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    if (floatEnabled && !hasPermission && !dismissed) {
+        AlertDialog(
+            shape = RectangleShape,
+            onDismissRequest = { dismissed = true },
+            title = {
+                Text("恢复屏幕悬浮球", style = MaterialTheme.typography.titleMedium)
+            },
+            text = {
+                Text(
+                    "检测到「悬浮窗权限」尚未开启（清理应用缓存/数据或系统重置后可能需要重新授权）。\n\n开启权限后悬浮球将自动恢复常驻桌面，复制链接即可在任意应用上一键识别下载。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    shape = RectangleShape,
+                    onClick = {
+                        dismissed = true
+                        context.startActivity(
+                            Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                android.net.Uri.parse("package:${context.packageName}")
+                            )
+                        )
+                    }
+                ) {
+                    Text("前往开启权限", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    shape = RectangleShape,
+                    onClick = { dismissed = true }
+                ) {
+                    Text("暂不需要")
+                }
+            }
+        )
     }
 }

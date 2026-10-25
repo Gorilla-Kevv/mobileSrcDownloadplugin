@@ -1,5 +1,8 @@
 package com.clipdown.app.ui.settings
 
+import android.content.Intent
+import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +23,7 @@ import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -31,6 +35,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.clipdown.app.ClipDownApp
 import com.clipdown.app.data.CookieStore
@@ -38,6 +45,7 @@ import com.clipdown.app.floatwindow.FloatingWindowService
 import com.clipdown.app.ui.components.AppCard
 import com.clipdown.app.ui.components.CardHeader
 import com.clipdown.app.ui.components.Hairline
+import com.clipdown.app.ui.components.NoticeBar
 import com.clipdown.app.ui.components.PageHeader
 import com.clipdown.app.ui.components.SettingSwitchRow
 import com.clipdown.app.ui.components.StatusPill
@@ -72,6 +80,22 @@ fun SettingsScreen() {
     val remoteToken by settings.remoteToken.collectAsStateWithLifecycle(initialValue = "")
     val enabledPlatforms by settings.enabledPlatforms.collectAsStateWithLifecycle(initialValue = emptySet())
 
+    var hasOverlayPermission by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                val granted = FloatingWindowService.hasPermission(context)
+                hasOverlayPermission = granted
+                if (granted && floatEnabled) {
+                    FloatingWindowService.tryStart(context)
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(AppTheme.spacing.screen),
@@ -87,6 +111,21 @@ fun SettingsScreen() {
         item {
             AppCard {
                 CardHeader(title = "悬浮窗", subtitle = "在其他应用上方的常驻入口")
+                if (floatEnabled && !hasOverlayPermission) {
+                    VSpace(AppTheme.spacing.xs)
+                    NoticeBar(
+                        text = "检测到悬浮窗权限未开启，桌面悬浮球无法显示。点此前往系统设置开启授权",
+                        tone = Tone.Warning,
+                        modifier = Modifier.clickable {
+                            context.startActivity(
+                                Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    android.net.Uri.parse("package:${context.packageName}")
+                                )
+                            )
+                        }
+                    )
+                }
                 VSpace(AppTheme.spacing.xs)
                 SettingSwitchRow(
                     title = "启用悬浮球",
@@ -95,7 +134,21 @@ fun SettingsScreen() {
                 ) { v ->
                     scope.launch {
                         settings.setFloatEnabled(v)
-                        if (v) FloatingWindowService.tryStart(context) else FloatingWindowService.stop(context)
+                        if (v) {
+                            if (FloatingWindowService.hasPermission(context)) {
+                                FloatingWindowService.tryStart(context)
+                            } else {
+                                Toast.makeText(context, "请先授予悬浮窗权限以显示桌面悬浮球", Toast.LENGTH_LONG).show()
+                                context.startActivity(
+                                    Intent(
+                                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                        android.net.Uri.parse("package:${context.packageName}")
+                                    )
+                                )
+                            }
+                        } else {
+                            FloatingWindowService.stop(context)
+                        }
                     }
                 }
                 Hairline()
