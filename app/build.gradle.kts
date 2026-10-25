@@ -100,6 +100,8 @@ android {
             // 签名：signing.properties 存在时用正式签名（keystore 不入 git），否则落回 debug 签名保证可装
             if (rootProject.file("signing.properties").exists()) {
                 signingConfig = signingConfigs.getByName("release")
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
             }
         }
     }

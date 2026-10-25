@@ -1,8 +1,9 @@
 name: Release APK
 
-# 两种触发方式：
-#   1. 手动：Actions 页面 → Run workflow（可选是否自增版本号）
-#   2. 打标签：git tag v1.0.3 && git push origin v1.0.3
+# 触发方式：
+#   手动：Actions 页面 → Run workflow（可选是否自增版本号）
+#   注：已禁用 push tags 自动触发，因为本地发布脚本 publish-release.sh 会直接生成正式签名包并发布，
+#   避免打 tag 时 CI 重复构建且因缺少 Secrets 签名失败。
 #
 # 需要在本仓库 Settings → Secrets and variables → Actions 配置（否则 release 会落回 debug 签名，
 # 签名不一致会导致老用户无法覆盖安装）：
@@ -27,9 +28,6 @@ on:
         description: '更新说明（可留空）'
         required: false
         default: ''
-  push:
-    tags:
-      - 'v*'
 
 permissions:
   contents: write
