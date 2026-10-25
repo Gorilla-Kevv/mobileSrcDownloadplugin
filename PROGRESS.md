@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 55 已完成**：下载记录页视觉美化与四方形组件重构（完全摒弃圆角，采用 RectangleShape）+ 真实文件路径展示与一键快捷复制
-- 下一阶段任务：发版 v1.1.14（versionCode 19）+ 真机走查阶段 55（下载记录方形卡片/路径复制/平直进度条/直角弹窗）+ 阶段 54（重复链接剪贴板与主应用内下载确认交互）+ 阶段 53（缩略图显示与内置播放器视觉/交互体验）
+- 当前正在开发任务：**阶段 56 已完成**：彻底修复 Instagram 媒体下载传输中断与半截截断黑图硬伤（文件物理完整性强校验 + 协议提前终止异常转译 + 移动端 UA 注入 + 最高画质 candidates 选举）
+- 下一阶段任务：发版 v1.1.15（versionCode 20）+ 真机走查阶段 56（Instagram 单图/图集下载不再出现截断黑图、画质完整原图）+ 阶段 55（下载记录方形卡片/路径复制/平直进度条/直角弹窗）+ 阶段 54（重复链接剪贴板与主应用内下载确认交互）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿（共 133 例）
+- 测试基线：parser **99 例** + downloader **38 例** + app **4 例**全绿（共 141 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 16:30
+- 本次文档更新时间：10.25 16:50
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -967,6 +967,46 @@
   - 全量单元测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
   - `:app:compileDebugKotlin` 编译全绿无报错。
 - 本次文档更新时间：10.25 16:30
+
+## 阶段 56 彻底修复 Instagram 媒体下载传输中断与半截截断黑图硬伤 [计划时间：10.25 16:35 BY Antigravity][完成时间：10.25 16:50 BY Antigravity]
+- 用户反馈："ins的下载还是有很大问题：如图 解析只下载到了一半的图片"（提供两张对比图：图 1 为 Instagram 原帖全身雨伞照，图 2 为 ClipDown 媒体浏览器仅显示上半身雨伞与头部、下半截截断全黑、大小仅 94.0 KB）
+- 根因分析：
+  1. **下载器无完整性校验与提前终止断言**：`HttpFileDownloader` 在读取服务端响应流时，未对接收字节数与响应头 `Content-Length` 进行一致性校验。当手机在 VPN/代理或不稳定移动网络环境下，服务端/代理提前终止 TCP 传输流时，`input.read(buffer)` 返回 -1 或抛出 `ProtocolException: unexpected end of stream`；此前逻辑不仅未将传输流异常统一转译为可重试异常，且在未读满情况下直接返回不完整字节数（94.0 KB），导致 `DownloadEngine` 误判为成功并静默将残缺半截文件 `db.markCompleted`；
+  2. **缺少 JPEG / PNG 文件物理完整性签名校验**：标准 JPEG 图像必须以 SOI (0xFF, 0xD8) 起始并以 EOI (0xFF, 0xD9) 结束。当仅下载到 94.0 KB 前半段数据时，底部的 scanlines 缺失，Android Skia 解码器将缺失的后半截直接填充为纯黑色；
+  3. **Meta CDN 针对 `okhttp/4.12.0` 默认 UA 的连接掐断**：解析器生成的 media 直链请求头中缺少 User-Agent，OkHttp 默认发送 `okhttp/4.12.0`。在手机使用 VPN / 移动网络高频拉取 Instagram CDN 时极易被 Meta 反爬边缘节点主动重置连接或限速丢包；
+  4. **Instagram 候选分辨率选举缺陷**：此前在 `parseMediaNode` 中简单获取 `candidates.firstOrNull()`，可能取到低画质或预览候选，未按 `width` 最大值进行最高清晰度原图选举。
+- 落地重构与增强：
+  1. **落地 `MediaIntegrityValidator`**：
+     - 文件大小与 Content-Length 强制对齐断言；
+     - JPEG 尾部 256 字节 EOI (0xFF, 0xD9) 物理标记扫描校验；未读取到 EOI 则坚决判定为截断坏图并抛出 `DownloadHttpException`；
+     - PNG 尾部 128 字节 IEND chunk 完整性校验；
+  2. **`HttpFileDownloader` 强化**：
+     - 当服务端给出 Content-Length 时，若落盘文件字节小于预期，强制抛出 `DownloadHttpException`；
+     - 捕获 OkHttp 底层 `ProtocolException` 并统一转换为带有详细诊断原因的 `DownloadHttpException`；
+     - 在请求头未带 User-Agent 时自动注入移动端主流拟真浏览器 UA（Chrome 128 Mobile），防止 CDN 掐断连接；
+  3. **`DownloadEngine` 重试机制与坏块清理**：
+     - 捕获截断异常后自动进入指数退避重试（最多 3 次），利用 HTTP 206 Range 续传未完成部分；
+     - 若多次重试仍校验失败（怀疑断点 offset 紊乱），在末次重试时自动清理半截文件（`targetFile.delete()`）并从 0 开始全新拉取；
+  4. **`InstagramParser` 优化**：
+     - 在媒体请求头中显式注入移动端真实 `User-Agent` 与 `Referer`；
+     - `candidates` 按 `width` 取最大分辨率原图（如 1080x1350），保证画质最高且与原帖一致；
+     - 当存在 `carousel_media` 时仅提取图集子项，消除根节点第一张预览图导致的重复混入。
+- 改动文件：
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/MediaIntegrityValidator.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/HttpFileDownloader.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/DownloadEngine.kt`
+  - `downloader/src/test/kotlin/com/clipdown/downloader/engine/MediaIntegrityValidatorTest.kt`
+  - `downloader/src/test/kotlin/com/clipdown/downloader/engine/HttpFileDownloaderTest.kt`
+  - `downloader/src/test/kotlin/com/clipdown/downloader/TestHttpServer.kt`
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/InstagramParser.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **141 例全绿**（parser 99 例、downloader 38 例、app 4 例）；
+  - 新增 `MediaIntegrityValidatorTest` 7 例（覆盖空文件、残缺文件、标准 JPEG、带 padding JPEG、无 EOI 截断 JPEG、标准 PNG、无 IEND 截断 PNG）；
+  - 新增 `HttpFileDownloaderTest.incompleteDownload_throwsExceptionWhenLengthMismatch` 覆盖传输体截断场景。
+- 本次文档更新时间：10.25 16:50
+
 
 
 

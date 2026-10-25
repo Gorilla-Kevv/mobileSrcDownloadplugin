@@ -99,7 +99,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 55 已完成**——下载记录页视觉美化与四方形组件重构（完全摒弃圆角，统一采用 RectangleShape，含卡片/缩略图/状态标签/进度条/操作钮/确认弹窗）+ 真实本地物理路径展示（等宽字体/防溢出/一键复制入剪贴板）+ 图集存储目录汇总与子项明细路径。
+- 当前：**阶段 56 已完成**——彻底修复 Instagram 媒体下载传输中断与半截截断黑图硬伤：①落地 `MediaIntegrityValidator` 校验文件大小及 JPEG (SOI/EOI)、PNG (IEND) 物理签名，杜绝半截黑图静默落库；②`HttpFileDownloader` 强化 Content-Length 断言及 `ProtocolException` 统一转译，补齐移动端拟真 UA；③`DownloadEngine` 联动 Range 续传重试与坏块清理；④`InstagramParser` 优化原图清晰度选举与 UA 注入。
+- 上轮：**阶段 55 已完成并发布 v1.1.14（versionCode 19）**——下载记录页视觉美化与四方形组件重构（完全摒弃圆角，统一采用 RectangleShape，含卡片/缩略图/状态标签/进度条/操作钮/确认弹窗）+ 真实本地物理路径展示（等宽字体/防溢出/一键复制入剪贴板）+ 图集存储目录汇总与子项明细路径。
 - 上轮：**阶段 54 已完成并发布正式版 v1.1.13（versionCode 18）**——识别/下载过链接的重复下载提醒全链路恢复 + 发布脚本 aapt2 强制自检防版本错位（解决手机端 1.1.12 更新循环提示）。
 - 上上轮：**阶段 53 已完成并发布 v1.1.10（versionCode 15）**——①预览缩略图全链路打通：解决 `DownloadController` 丢弃 `coverUrl` 的硬伤，引入 `coil-video:2.7.0` 与全局 `ImageLoaderFactory` 解码视频首秒帧，并在 `DownloadsScreen` 与相册画廊配置本地直接加载与占位兜底；②内置视频播放器现代化重构：彻底移除 Android 2008 年代原生 `MediaController`，打造 Compose 原生居中磨砂玻璃胶囊操作钮 + 底部渐变进度滑块与等宽时间戳 + 单曲循环切换 + 3.5s 智能沉浸显隐动画。
 - 上轮：**阶段 52 已完成并发布 v1.1.9（versionCode 14）**——Instagram 解析失败多通道全面修复与风控误锁根治：①shortcode 换算 numeric media ID (pk) 支持官方原生移动端 REST `/api/v1/media/{id}/info/` 端点，无 LSD / doc_id 风险；②GraphQL 2026 结构适配：支持 `xig_polaris_media` 与 `if_not_gated_logged_out`，自动补齐缺失的 `csrftoken`，补全 `X-Requested-With`、`X-FB-Friendly-Name` 防止被 302 重定向到登录页；③WebView 增强：轮询探测增加 `image_versions2` / `xig_polaris_media` 避免图集帖白等超时，DOM `<video src>` / `<source>` 直链兜底，/reel/ 与 /p/ 双路径探测；④`CookieStore` 联动 `IgRiskGuard.reset()`，设置页更新 Cookie 即刻清除冷却，无需等待 10 分钟。已成功生成正式 Release 资产与更新清单
@@ -125,4 +126,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.25 16:30 [BY Antigravity]
+- 本次文档更新时间：10.25 16:50 [BY Antigravity]

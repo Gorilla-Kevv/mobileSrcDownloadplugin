@@ -290,7 +290,10 @@ class InstagramParser : PlatformParser {
         resolverId: String,
         ctx: ParseContext
     ): ParseResult {
-        val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
+        val igHeaders = mapOf(
+            "Referer" to "https://www.instagram.com/",
+            "User-Agent" to ctx.ua(desktop = false)
+        )
         val media = mutableListOf<MediaItem>()
 
         fun addFrom(node: JsonObject, idPrefix: String, rank: Int) {
@@ -305,8 +308,15 @@ class InstagramParser : PlatformParser {
                     mimeType = "video/mp4",
                     headers = igHeaders
                 )
-            } ?: (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)?.firstOrNull()
-                ?.jsonObject?.str("url")?.let { u ->
+            } ?: run {
+                val candidates = (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)
+                val bestImageUrl = candidates?.mapNotNull { it as? JsonObject }
+                    ?.maxByOrNull { it.int("width") ?: 0 }
+                    ?.str("url")
+                    ?: candidates?.firstOrNull()?.jsonObject?.str("url")
+                    ?: node.str("display_url")
+
+                bestImageUrl?.let { u ->
                     media += MediaItem(
                         id = "$idPrefix-i",
                         url = u,
@@ -317,17 +327,25 @@ class InstagramParser : PlatformParser {
                         headers = igHeaders
                     )
                 }
+            }
         }
 
-        addFrom(node, "ig-g-0", 100)
         val sidecar = (node["edge_sidecar_to_children"] ?: node["edge_media_to_sidecar_to_children"])?.jsonObject
-        (sidecar?.get("edges") as? JsonArray)?.forEachIndexed { i, el ->
-            el.jsonObject["node"]?.jsonObject?.let { addFrom(it, "ig-g-s$i", 70 - i) }
+        val sidecarEdges = (sidecar?.get("edges") as? JsonArray)
+        val carouselMedia = (node["carousel_media"] as? JsonArray)
+
+        if (!carouselMedia.isNullOrEmpty()) {
+            carouselMedia.forEachIndexed { i, el ->
+                runCatching { el.jsonObject }.getOrNull()?.let { addFrom(it, "ig-g-c$i", 70 - i) }
+            }
+        } else if (!sidecarEdges.isNullOrEmpty()) {
+            sidecarEdges.forEachIndexed { i, el ->
+                el.jsonObject["node"]?.jsonObject?.let { addFrom(it, "ig-g-s$i", 70 - i) }
+            }
+        } else {
+            addFrom(node, "ig-g-0", 100)
         }
-        // 图集/混合相册（图+视频）子项在 carousel_media 数组，每个子项各自带 video_versions 或 image_versions2
-        (node["carousel_media"] as? JsonArray)?.forEachIndexed { i, el ->
-            runCatching { el.jsonObject }.getOrNull()?.let { addFrom(it, "ig-g-c$i", 70 - i) }
-        }
+
         if (media.isEmpty()) {
             // 兜底递归寻找媒体子节点
             var found = 0
@@ -351,6 +369,13 @@ class InstagramParser : PlatformParser {
 
         ctx.log(id, "$resolverId 成功 media=${media.size} " + media.joinToString("|") { "${it.kind.name[0]}:${it.url.take(70)}" })
 
+        val coverCandidates = (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)
+        val coverUrl = coverCandidates?.mapNotNull { it as? JsonObject }
+            ?.maxByOrNull { it.int("width") ?: 0 }
+            ?.str("url")
+            ?: coverCandidates?.firstOrNull()?.jsonObject?.str("url")
+            ?: node.str("display_url")
+
         return ParserDsl.result(
             platform = platform,
             resolverId = resolverId,
@@ -362,8 +387,7 @@ class InstagramParser : PlatformParser {
                 ?: node.str("title")?.take(60),
             author = node["owner"]?.jsonObject?.str("username")
                 ?: node["user"]?.jsonObject?.str("username"),
-            cover = (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)
-                ?.firstOrNull()?.jsonObject?.str("url"),
+            cover = coverUrl,
             source = ParseSource.LOCAL
         )
     }

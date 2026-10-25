@@ -74,7 +74,6 @@ class HttpFileDownloaderTest {
         TestHttpServer { TestResponse(body = data, acceptRanges = false) }.use { server ->
             val out = File(dir, "a.mp4")
             out.writeBytes(ByteArray(3_000)) // 脏数据：长度小于目标，若被续传追加则结果必错
-
             val state = HttpFileDownloader.State()
             downloader().download(server.url("/a.mp4"), out, emptyMap(), state)
 
@@ -115,6 +114,23 @@ class HttpFileDownloaderTest {
 
             assertTrue("期望抛出 DownloadCanceledException，实际：$captured", captured is DownloadCanceledException)
             assertTrue("取消后不应写满文件", out.length() < data.size)
+        }
+    }
+
+    @Test
+    fun incompleteDownload_throwsExceptionWhenLengthMismatch() = runBlocking {
+        val data = payload(10_000)
+        TestHttpServer {
+            TestResponse(body = data, overrideContentLength = 20_000L)
+        }.use { server ->
+            val out = File(dir, "incomplete.mp4")
+            val state = HttpFileDownloader.State()
+            val ex = runCatching {
+                downloader().download(server.url("/incomplete.mp4"), out, emptyMap(), state)
+            }.exceptionOrNull()
+
+            assertTrue("期望抛出数据未接收完整异常，实际: $ex", ex is DownloadHttpException)
+            assertTrue("异常信息应包含未接收完整说明", ex?.message?.contains("未接收完整") == true)
         }
     }
 

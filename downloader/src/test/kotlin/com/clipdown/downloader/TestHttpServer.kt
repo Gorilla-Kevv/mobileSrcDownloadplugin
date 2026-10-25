@@ -11,7 +11,8 @@ import java.util.concurrent.Executors
  * 设计要点：
  * - 路由按 path 返回 [TestResponse]，支持 Range（206）/ 全量（200）/ 任意状态码；
  * - 记录每次请求（method/path/headers）供断言（如核对续传 Range 头）；
- * - 支持分块慢速响应，用于验证取消语义。
+ * - 支持分块慢速响应，用于验证取消语义；
+ * - 支持模拟 Content-Length 与实际传输体不符的异常截断场景（[overrideContentLength]）。
  */
 internal class TestResponse(
     val code: Int = 200,
@@ -19,7 +20,8 @@ internal class TestResponse(
     val contentType: String = "application/octet-stream",
     val acceptRanges: Boolean = true,
     val chunkSize: Int = 0,
-    val chunkDelayMs: Long = 0L
+    val chunkDelayMs: Long = 0L,
+    val overrideContentLength: Long? = null
 )
 
 internal class RecordedRequest(
@@ -121,9 +123,10 @@ internal class TestHttpServer(
             extra = if (resp.acceptRanges) "Accept-Ranges: bytes\r\n" else ""
         }
 
+        val cLen = resp.overrideContentLength ?: payload.size.toLong()
         val head = "$status\r\n" +
             "Content-Type: ${resp.contentType}\r\n" +
-            "Content-Length: ${payload.size}\r\n" +
+            "Content-Length: $cLen\r\n" +
             extra +
             "Connection: close\r\n\r\n"
         out.write(head.toByteArray(Charsets.US_ASCII))
@@ -138,22 +141,26 @@ internal class TestHttpServer(
                 out.write(payload, off, n)
                 out.flush()
                 off += n
-                Thread.sleep(resp.chunkDelayMs)
+                if (resp.chunkDelayMs > 0 && off < payload.size) {
+                    Thread.sleep(resp.chunkDelayMs)
+                }
             }
-        } else {
+        } else if (payload.isNotEmpty()) {
             out.write(payload)
+            out.flush()
         }
-        out.flush()
     }
 
-    private fun parseRange(value: String, size: Int): Pair<Int, Int>? {
-        val spec = value.substringAfter("bytes=", "").substringBefore(',')
-        if (spec.isBlank()) return null
-        val start = spec.substringBefore('-').trim().toIntOrNull() ?: return null
-        val endRaw = spec.substringAfter('-', "").trim()
-        val end = if (endRaw.isEmpty()) size - 1 else endRaw.toIntOrNull() ?: (size - 1)
-        if (start >= size || start > end) return null
-        return start to minOf(end, size - 1)
+    private fun parseRange(header: String, total: Int): Pair<Int, Int>? {
+        val prefix = "bytes="
+        if (!header.startsWith(prefix)) return null
+        val spec = header.removePrefix(prefix).trim()
+        val parts = spec.split("-")
+        if (parts.size != 2) return null
+        val start = parts[0].toIntOrNull() ?: return null
+        val end = if (parts[1].isEmpty()) total - 1 else parts[1].toIntOrNull() ?: return null
+        if (start > end || start >= total) return null
+        return start to minOf(end, total - 1)
     }
 
     override fun close() {

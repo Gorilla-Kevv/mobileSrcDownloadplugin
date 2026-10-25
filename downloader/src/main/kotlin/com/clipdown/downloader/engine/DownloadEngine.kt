@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
  * - DASH：视频轨与音频轨分别下载后合并为 MP4。
  *
  * 失败策略：可重试异常按指数退避重试 [DownloadConfig.maxRetry] 次，
- * 取消与手动暂停不触发重试。
+ * 取消与手动暂停不触发重试。落库前进行文件物理完整性强校验（杜绝截断黑图）。
  */
 class DownloadEngine(
     private val context: Context,
@@ -174,6 +174,11 @@ class DownloadEngine(
                 else -> {
                     attempt++
                     db.incrementRetry(taskId)
+                    // 当多次断点续传重试仍不通过时，清理可能因中断损坏或错位的半截文件，在末次重试时从 0 字节全新拉取
+                    val targetFile = File(workDir, task.fileName)
+                    if (attempt >= 3 && targetFile.exists()) {
+                        targetFile.delete()
+                    }
                     if (attempt > config.maxRetry) {
                         // 诊断日志：终态失败此前完全静默（阶段 17 排查 403 时 logcat 无任何线索）
                         android.util.Log.w(
@@ -202,11 +207,13 @@ class DownloadEngine(
         when (task.kind) {
             TaskKind.SINGLE -> {
                 httpFile.download(task.url, target, task.headers, state)
+                MediaIntegrityValidator.validate(target, state.total, task.mimeType)
             }
 
             TaskKind.HLS -> {
                 val ok = m3u8.download(task.url, task.headers, tmpDir, target, state)
                 if (!ok) throw DownloadHttpException(-1, "分片下载未完成")
+                MediaIntegrityValidator.validate(target, state.total, task.mimeType)
             }
 
             TaskKind.DASH -> {
@@ -223,6 +230,7 @@ class DownloadEngine(
                 }
                 state.downloaded = target.length()
                 state.total = target.length()
+                MediaIntegrityValidator.validate(target, state.total, task.mimeType)
             }
         }
 
