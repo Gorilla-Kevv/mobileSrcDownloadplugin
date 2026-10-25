@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 57 已完成**：彻底修复清理应用缓存/数据后悬浮球消失问题（启动与生命周期自愈拉起服务 + 智能授权引导弹窗 + 首页直角警告卡片 + 设置页联动跳转）
-- 下一阶段任务：发版 v1.1.16（versionCode 21）+ 真机走查阶段 57（清理缓存后悬浮球自愈拉起与授权引导）+ 阶段 56（Instagram 完整性强校验与防截断）+ 阶段 55（下载记录方形风格与路径复制）
+- 当前正在开发任务：**阶段 58 已完成**：Instagram Reel 视频解析彻底强化与视频类型不变性（Reel Type Invariance，严禁降级为 25KB 封面图，移动端 UA + 网络请求钩子拦截 + code 切段修复 + 多 doc_id 兜底）
+- 下一阶段任务：发版 v1.1.17（versionCode 22）+ 真机走查阶段 58（Instagram Reel 视频解析与下载）+ 阶段 57（清理缓存后悬浮球自愈与授权引导）+ 阶段 56（下载文件完整性强校验与防截断）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **99 例** + downloader **38 例** + app **4 例**全绿（共 141 例）
+- 测试基线：parser **103 例** + downloader **38 例** + app **4 例**全绿（共 145 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 17:10
+- 本次文档更新时间：10.25 18:00
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1034,6 +1034,44 @@
   - 全量单元测试 **141 例全绿**（parser 99 例、downloader 38 例、app 4 例）；
   - `:app:compileDebugKotlin` 编译无任何报错与警告。
 - 本次文档更新时间：10.25 17:10
+
+## 阶段 58 Instagram Reel 视频解析强化与视频类型不变性（Reel Type Invariance） [计划时间：10.25 17:30 BY Antigravity][完成时间：10.25 18:00 BY Antigravity]
+- 用户反馈："ins视频链接被解析成了图片， 然后图片解析还是只有一半，视频链接：https://www.instagram.com/reel/DeeW_yhPcqD/?mdxt=MWVjd203NnBjNjRwNA=="
+- 根因分析：
+  1. **Reel 链接错误降级为图片 (Reel Type Violation)**：当用户输入 `/reel/` 或 `/reels/` 视频链接时，若直接提取视频直链未命中，旧逻辑在 `embedFallback`、`extractFromPageHtml`、`oEmbed` 中把视频首帧缩略图（含居中播放键半截图，仅 25.6 KB）打包为 `MediaKind.IMAGE`，并作为唯一可用媒体返回给下载器，导致用户输入 Reel 视频却下载到半截 25KB 封面图；
+  2. **`ownCodeSegment` 极端截断 Bug**：旧代码中 `Regex(""""(?:code|shortcode)":"([^"]+)"""")` 误匹配了 JSON 中的通用语言/国家代码（如 `"code":"en"`、`"code":"US"`），如果正帖 shortcode 后面紧跟语言代码，切段逻辑立刻提前截断，导致随后的 `video_versions` / `video_url` 全被砍掉；
+  3. **Android WebView 桌面 UA 触发 Meta 风控**：`WebViewHtmlFetcher` 对 Instagram 默认使用了 Windows Desktop UA，在 Android 触控设备与移动端视口指纹下被 Meta 反爬拦截跳转至 `PolarisErrorRoute` 登录墙；
+  4. **WebView 轮询媒体探针过早收口**：轮询探针只要命中 `image_versions2`（封面图首帧极快下发）便立即返回 HTML，此时视频 React 脚本与 GraphQL 网络请求尚在路上，导致页面中仅存在封面图；
+  5. **缺少客户端网络请求拦截钩子**：现代 Instagram 移动网页版异步通过 `fetch()` 或 `XMLHttpRequest` 请求 GraphQL / API 端点，渲染到 DOM 往往被延迟或无 video 标签。
+- 落地重构与增强：
+  1. **Reel 视频类型不变性 (Reel Type Invariance)**：
+     - 在 `InstagramParser` 中针对所有 `/reel/` 与 `/reels/` 链接确立严格的视频类型不变性：若未提取到有效 `MediaKind.VIDEO`，严禁将封面帧伪造成图片加入 `media` 列表；
+     - `embed`、`webFetcher`、`oEmbed` 全链路对 Reel 禁绝图片降级，绝不返回 25KB 封面欺骗用户；
+     - 若所有免登录通道因 Instagram 账号/IP 限制未拿到视频，直接抛出诚实且具备行动指引的 `ParseException`（指导用户在设置中配置 Cookie 或配置远端解析服务），绝不静默下载坏图；
+  2. **`ownCodeSegment` 修复防误截断**：
+     - 正则限定合法 shortcode 规范 `Regex(""""(?:code|shortcode)":"([A-Za-z0-9_-]{9,15})"""")`，并且 `end` 切段时强断言 `groupValues[1] != code`，语言代码/国家代码不再截断正帖视频；
+  3. **现代视频直链全字段支持与 CDN 兜底扫描**：
+     - 新增支持 `browser_native_hd_url`、`browser_native_sd_url`、`progressive_download_url`、`playable_url_quality_hd`、`video_url`、`playable_url`；
+     - 支持正帖段内直接扫描 `cdninstagram.com` / `fbcdn.net` 的 `.mp4` 直链；
+     - `parseMediaNode` 补齐 `browser_native_hd_url` 等顶层直链支持；
+     - GraphQL 私有 API 增加备选 `doc_id` `7950326061742207` 自动重试；
+  4. **WebView 移动端拟真与网络请求钩子 (IG Hook)**：
+     - 将 `uaFor(url)` 中 Instagram 统一改为真实 `MOBILE_UA`，并在初始请求注入 `Referer: https://www.instagram.com/`；
+     - 在 `WebViewHtmlFetcher` 中注入 `installIgHook`：挂钩 `XMLHttpRequest.prototype.open` 与 `window.fetch`，自动捕获含 `graphql`、`api/v1`、`video_versions`、`browser_native`、`.mp4` 的请求响应暂存至 `window.__ig_pages`，通过 `<<<IG_PAGES>>>` 安全回传给解析器；
+     - `startPolling` 探针对 Reel 链接禁止因 `image_versions2` 提前收口，必须检测到视频直链、视频标签、或拦截到网络包才视为媒体就绪。
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/InstagramParser.kt`
+  - `app/src/main/java/com/clipdown/app/clip/WebViewHtmlFetcher.kt`
+  - `scripts/check-inject-js.js`
+  - `parser/src/test/kotlin/com/clipdown/parser/InstagramParserTest.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **145 例全绿**（parser 103 例、downloader 38 例、app 4 例）；
+  - 新增 `InstagramParserTest` 4 例（覆盖 Reel 严禁降级为图片、`browser_native_hd_url` 提取、语言代码防切断、`IG_PAGES` 拦截响应解析）；
+  - `node scripts/check-inject-js.js` 验证注入 JS 语法 100% 通过。
+- 本次文档更新时间：10.25 18:00
+
 
 
 

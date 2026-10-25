@@ -13,6 +13,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -53,16 +54,22 @@ class InstagramParser : PlatformParser {
         val code = shortcodeRegex.find(url)?.groupValues?.getOrNull(1)
             ?: throw ParseException("无法从链接中提取作品 ID", platform, retryable = false)
 
+        val isReel = url.contains("/reel/", ignoreCase = true) || url.contains("/reels/", ignoreCase = true)
         val cookie = ctx.cookieProvider(platform)
         val headers = ctx.headersFor(platform, desktop = false) +
             mapOf("Referer" to "https://www.instagram.com/", "Accept" to "*/*")
         // 通道选择取证：登录态缺失时 private 被跳过，图集子图数据（carousel）只有登录态或渲染页能给全
-        ctx.log(id, "通道选择 cookie=${!cookie.isNullOrBlank()} code=$code")
+        ctx.log(id, "通道选择 cookie=${!cookie.isNullOrBlank()} code=$code isReel=$isReel")
 
         // 1) 登录态直连（移动端 REST info 接口 + 网页端 GraphQL 双通道）
         if (!cookie.isNullOrBlank()) {
-            val r = runCatching { parsePrivateApi(code, headers + mapOf("Cookie" to cookie), ctx) }
-            if (r.isSuccess) return r.getOrThrow().copy(source = ParseSource.LOCAL)
+            val r = runCatching { parsePrivateApi(code, headers + mapOf("Cookie" to cookie), ctx, isReel) }
+            if (r.isSuccess) {
+                val res = r.getOrThrow()
+                if (!isReel || res.media.any { it.kind == MediaKind.VIDEO }) {
+                    return res.copy(source = ParseSource.LOCAL)
+                }
+            }
             ctx.log(id, "登录态解析失败：${r.exceptionOrNull()?.message}")
         }
         // 2) 免登录 embed
@@ -72,7 +79,7 @@ class InstagramParser : PlatformParser {
         if (!embedHtml.isNullOrBlank()) {
             val parsed = parseEmbed(embedHtml, url, code, ctx)
             if (parsed.media.any { it.kind == MediaKind.VIDEO }) return parsed
-            if (!parsed.isEmpty) {
+            if (!parsed.isEmpty && !isReel) {
                 // embed 只有图片时，先别急着返回——WebView 渲染页可能拿到视频（见 2.5）
                 embedFallback = parsed
             }
@@ -80,54 +87,71 @@ class InstagramParser : PlatformParser {
 
         // 2.5) WebView 渲染抓取（App 层注入；带登录态 Cookie 渲染帖子页，HTML 内含视频数据）。
         // 优先沿用用户链接的原路径，若渲染未拿到媒体则自动切换路径（/reel/ 与 /p/ 分别探测）
-        val primary = if (url.contains("/reel/", ignoreCase = true)) "reel" else "p"
+        val primary = if (isReel) "reel" else "p"
         val secondary = if (primary == "reel") "p" else "reel"
 
         var rendered = runCatching { ctx.webFetcher?.invoke("https://www.instagram.com/$primary/$code/") }.getOrNull()
         if (!rendered.isNullOrBlank()) {
             val fromPage = extractFromPageHtml(rendered, url, code)
-            if (!fromPage.isEmpty) return fromPage
+            if (!fromPage.isEmpty) {
+                if (!isReel || fromPage.media.any { it.kind == MediaKind.VIDEO }) return fromPage
+            }
         }
         rendered = runCatching { ctx.webFetcher?.invoke("https://www.instagram.com/$secondary/$code/") }.getOrNull()
         if (!rendered.isNullOrBlank()) {
             val fromPage = extractFromPageHtml(rendered, url, code)
-            if (!fromPage.isEmpty) return fromPage
-        }
-        if (!embedFallback.isEmpty) return embedFallback
-
-        // 3) oEmbed 兜底
-        val oembed = runCatching {
-            ctx.http.get("https://api.instagram.com/oembed/?url=$url", headers).body
-        }.getOrNull()
-        if (!oembed.isNullOrBlank()) {
-            val thumbnail = HtmlUtil.jsonField(oembed, "thumbnail_url").firstOrNull()
-            val author = HtmlUtil.jsonField(oembed, "author_name").firstOrNull()
-            val title = HtmlUtil.jsonField(oembed, "title").firstOrNull()
-            if (thumbnail != null) {
-                val ext = thumbnail.substringBefore('?').substringAfterLast('.', "jpg")
-                    .takeIf { it.length in 3..4 } ?: "jpg"
-                return ParserDsl.result(
-                    platform = platform,
-                    resolverId = "$id-oembed",
-                    sourceUrl = url,
-                    media = listOf(
-                        MediaItem(
-                            id = "ig-thumb",
-                            url = thumbnail,
-                            kind = MediaKind.IMAGE,
-                            quality = "缩略图",
-                            rank = 10,
-                            container = ext,
-                            headers = mapOf("Referer" to "https://www.instagram.com/")
-                        )
-                    ),
-                    title = title,
-                    author = author,
-                    cover = thumbnail,
-                    source = ParseSource.OFFICIAL,
-                    warning = "Instagram 已限制免登录访问，当前仅能获取缩略图。补充 Cookie 或开启远端解析可获得原画质"
-                )
+            if (!fromPage.isEmpty) {
+                if (!isReel || fromPage.media.any { it.kind == MediaKind.VIDEO }) return fromPage
             }
+        }
+        if (!embedFallback.isEmpty && (!isReel || embedFallback.media.any { it.kind == MediaKind.VIDEO })) {
+            return embedFallback
+        }
+
+        // 3) oEmbed 兜底（Reel 视频严禁将缩略图封面作为下载内容）
+        if (!isReel) {
+            val oembed = runCatching {
+                ctx.http.get("https://api.instagram.com/oembed/?url=$url", headers).body
+            }.getOrNull()
+            if (!oembed.isNullOrBlank()) {
+                val thumbnail = HtmlUtil.jsonField(oembed, "thumbnail_url").firstOrNull()
+                val author = HtmlUtil.jsonField(oembed, "author_name").firstOrNull()
+                val title = HtmlUtil.jsonField(oembed, "title").firstOrNull()
+                if (thumbnail != null) {
+                    val ext = thumbnail.substringBefore('?').substringAfterLast('.', "jpg")
+                        .takeIf { it.length in 3..4 } ?: "jpg"
+                    return ParserDsl.result(
+                        platform = platform,
+                        resolverId = "$id-oembed",
+                        sourceUrl = url,
+                        media = listOf(
+                            MediaItem(
+                                id = "ig-thumb",
+                                url = thumbnail,
+                                kind = MediaKind.IMAGE,
+                                quality = "缩略图",
+                                rank = 10,
+                                container = ext,
+                                headers = mapOf("Referer" to "https://www.instagram.com/")
+                            )
+                        ),
+                        title = title,
+                        author = author,
+                        cover = thumbnail,
+                        source = ParseSource.OFFICIAL,
+                        warning = "Instagram 已限制免登录访问，当前仅能获取缩略图。补充 Cookie 或开启远端解析可获得原画质"
+                    )
+                }
+            }
+        }
+
+        if (isReel) {
+            val tip = if (cookie.isNullOrBlank()) {
+                "未能提取到 Instagram Reel 视频直链（Instagram 已限制该视频的免登录匿名访问）。\n请在「设置 → 账号与 Cookie」中配置 Instagram 登录 Cookie，或配置远端解析服务获取完整高清视频。"
+            } else {
+                "Instagram Reel 视频解析失败，已配置的 Cookie 可能已过期或失效。\n建议在「设置 → 账号与 Cookie」中更新 Cookie，或配置远端解析服务。"
+            }
+            throw ParseException(tip, platform)
         }
 
         if (!cookie.isNullOrBlank()) {
@@ -153,7 +177,12 @@ class InstagramParser : PlatformParser {
         return pk.toString()
     }
 
-    private fun parsePrivateApi(code: String, headers: Map<String, String>, ctx: ParseContext): ParseResult {
+    private fun parsePrivateApi(
+        code: String,
+        headers: Map<String, String>,
+        ctx: ParseContext,
+        isReel: Boolean = false
+    ): ParseResult {
         val cookie = headers["Cookie"] ?: ""
         val mediaId = shortcodeToMediaId(code)
 
@@ -176,7 +205,7 @@ class InstagramParser : PlatformParser {
                     val firstItem = root?.get("items")?.jsonArray?.firstOrNull()?.jsonObject
                     if (firstItem != null) {
                         val parsed = runCatching { parseMediaNode(firstItem, code, "$id-v1-info", ctx) }.getOrNull()
-                        if (parsed != null && !parsed.isEmpty) {
+                        if (parsed != null && !parsed.isEmpty && (!isReel || parsed.media.any { it.kind == MediaKind.VIDEO })) {
                             ctx.log(id, "REST info 成功: media=${parsed.media.size}")
                             return parsed
                         }
@@ -188,14 +217,16 @@ class InstagramParser : PlatformParser {
         }
 
         // 2. 网页端 GraphQL 通道
+        val path = if (isReel) "reel" else "p"
         val pageHeaders = mapOf(
-            "User-Agent" to ctx.ua(desktop = true),
+            "User-Agent" to ctx.ua(desktop = false),
             "Accept-Language" to "zh-CN,zh;q=0.9,en;q=0.8",
             "Referer" to "https://www.instagram.com/",
             "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Cookie" to cookie
         )
-        val page = runCatching { ctx.http.get("https://www.instagram.com/p/$code/", pageHeaders) }.getOrNull()
+        val page = runCatching { ctx.http.get("https://www.instagram.com/$path/$code/", pageHeaders) }.getOrNull()
+            ?: runCatching { ctx.http.get("https://www.instagram.com/p/$code/", pageHeaders) }.getOrNull()
             ?: throw ParseException("无法获取帖子页面", platform)
         val html = page.body ?: throw ParseException("帖子页面返回为空", platform)
         val lsd = Regex(""""LSD",\[\],\{"token":"([^"]+)"""").find(html)?.groupValues?.getOrNull(1)
@@ -216,9 +247,8 @@ class InstagramParser : PlatformParser {
         else cookie
 
         val variables = """{"shortcode":"$code","fetch_tagged_user_count":null,"hoisted_comment_id":null,"hoisted_reply_id":null}"""
-        val form = "lsd=${urlEncode(lsd)}&fb_api_caller_class=RelayModern&fb_api_req_friendly_name=PolarisPostActionLoadPostQueryQuery&variables=${urlEncode(variables)}&doc_id=8845758582119845&server_timestamps=true"
         val apiHeaders = mapOf(
-            "User-Agent" to ctx.ua(desktop = true),
+            "User-Agent" to ctx.ua(desktop = false),
             "X-IG-App-ID" to "936619743392459",
             "X-CSRF-Token" to extractedCsrf,
             "X-CSRFToken" to extractedCsrf,
@@ -226,20 +256,24 @@ class InstagramParser : PlatformParser {
             "X-ASBD-ID" to "129477",
             "X-FB-Friendly-Name" to "PolarisPostActionLoadPostQueryQuery",
             "X-Requested-With" to "XMLHttpRequest",
-            "Referer" to "https://www.instagram.com/p/$code/",
+            "Referer" to "https://www.instagram.com/$path/$code/",
             "Cookie" to effectiveCookie,
             "Accept" to "*/*"
         )
 
         var body: String? = null
-        for (endpoint in listOf("https://www.instagram.com/api/graphql", "https://www.instagram.com/graphql/query")) {
-            val resp = runCatching { ctx.http.postForm(endpoint, form, apiHeaders) }.getOrNull()
-            if (resp != null && resp.isSuccessful && !resp.body.isNullOrBlank() && resp.body.trimStart().startsWith("{")) {
-                body = resp.body
-                break
-            } else if (resp != null) {
-                ctx.log(id, "GraphQL $endpoint code=${resp.code} head=${resp.body?.take(100)?.replace(Regex("\\s+"), " ")}")
+        for (docId in listOf("8845758582119845", "7950326061742207")) {
+            val form = "lsd=${urlEncode(lsd)}&fb_api_caller_class=RelayModern&fb_api_req_friendly_name=PolarisPostActionLoadPostQueryQuery&variables=${urlEncode(variables)}&doc_id=$docId&server_timestamps=true"
+            for (endpoint in listOf("https://www.instagram.com/api/graphql", "https://www.instagram.com/graphql/query")) {
+                val resp = runCatching { ctx.http.postForm(endpoint, form, apiHeaders) }.getOrNull()
+                if (resp != null && resp.isSuccessful && !resp.body.isNullOrBlank() && resp.body.trimStart().startsWith("{")) {
+                    body = resp.body
+                    break
+                } else if (resp != null) {
+                    ctx.log(id, "GraphQL $endpoint doc_id=$docId code=${resp.code} head=${resp.body?.take(100)?.replace(Regex("\\s+"), " ")}")
+                }
             }
+            if (!body.isNullOrBlank()) break
         }
         if (body.isNullOrBlank()) {
             throw ParseException("GraphQL 请求失败或未返回有效 JSON 数据", platform)
@@ -297,18 +331,29 @@ class InstagramParser : PlatformParser {
         val media = mutableListOf<MediaItem>()
 
         fun addFrom(node: JsonObject, idPrefix: String, rank: Int) {
-            (node["video_versions"] as? JsonArray)?.firstOrNull()?.jsonObject?.str("url")?.let { u ->
+            val videoUrl = (node["video_versions"] as? JsonArray)?.firstOrNull()?.jsonObject?.str("url")
+                ?: node.str("browser_native_hd_url")
+                ?: node.str("browser_native_sd_url")
+                ?: node.str("video_url")
+                ?: node.str("playable_url_quality_hd")
+                ?: node.str("playable_url")
+                ?: node.str("progressive_download_url")
+
+            if (!videoUrl.isNullOrBlank()) {
+                val height = (node["video_versions"] as? JsonArray)?.firstOrNull()?.jsonObject?.int("height")
+                    ?: node.int("video_height")
+                    ?: 0
                 media += MediaItem(
                     id = "$idPrefix-v",
-                    url = u,
+                    url = videoUrl,
                     kind = MediaKind.VIDEO,
-                    quality = "${node["video_versions"]?.jsonArray?.firstOrNull()?.jsonObject?.int("height") ?: 0}p",
+                    quality = if (height > 0) "${height}p" else "原画质",
                     rank = rank,
                     container = "mp4",
                     mimeType = "video/mp4",
                     headers = igHeaders
                 )
-            } ?: run {
+            } else {
                 val candidates = (node["image_versions2"]?.jsonObject?.get("candidates") as? JsonArray)
                 val bestImageUrl = candidates?.mapNotNull { it as? JsonObject }
                     ?.maxByOrNull { it.int("width") ?: 0 }
@@ -437,9 +482,9 @@ class InstagramParser : PlatformParser {
      */
     private fun ownCodeSegment(scope: String, code: String): String {
         if (code.isBlank()) return scope
-        val codeMatches = Regex(""""(?:code|shortcode)":"([^"]+)"""").findAll(scope).toList()
+        val codeMatches = Regex(""""(?:code|shortcode)":"([A-Za-z0-9_-]{9,15})"""").findAll(scope).toList()
         val own = codeMatches.firstOrNull { it.groupValues[1] == code } ?: return scope
-        val end = codeMatches.firstOrNull { it.range.first > own.range.first }?.range?.first ?: scope.length
+        val end = codeMatches.firstOrNull { it.range.first > own.range.first && it.groupValues[1] != code }?.range?.first ?: scope.length
         return scope.substring(own.range.first, end)
     }
 
@@ -476,34 +521,76 @@ class InstagramParser : PlatformParser {
 
     /** 渲染后的帖子页 HTML 提取（WebView 通道）：新版 xdt_api / xig_polaris 结构 + DOM 标签兜底 */
     private fun extractFromPageHtml(html: String, sourceUrl: String, code: String): ParseResult {
+        val isReel = sourceUrl.contains("/reel/", ignoreCase = true) || sourceUrl.contains("/reels/", ignoreCase = true)
+        val igPagesRaw = if (html.contains("<<<IG_PAGES>>>")) html.substringAfter("<<<IG_PAGES>>>") else null
+        val baseHtml = if (html.contains("<<<IG_PAGES>>>")) html.substringBefore("<<<IG_PAGES>>>") else html
+
         // 关键隔离：页面还含有"更多帖子"推荐流的数据（image_versions2 可达 35 个），
         // 正帖数据在 xdt_api / xig_polaris_media / items[0]，限定在此范围内提取。
-        val scope = ownPostScope(html, code)
+        val scope = ownPostScope(baseHtml, code)
         val segment = ownCodeSegment(scope, code)
         val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
         val media = mutableListOf<MediaItem>()
 
         val videos = linkedSetOf<String>()
-        // 新版结构：video_versions:[{width,height,url}]
+        // 1. 新版结构：video_versions:[{width,height,url}]
         Regex(""""video_versions":\[(.*?)\]""").findAll(segment).forEach { block ->
             Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
                 videos.add(HtmlUtil.unescapeJsonOf(u.groupValues[1]))
             }
         }
-        // 旧版键名兜底
+        // 2. 现代直接视频直链字段与旧版键名
+        HtmlUtil.jsonField(segment, "browser_native_hd_url").firstOrNull()?.let { videos.add(it) }
+        HtmlUtil.jsonField(segment, "browser_native_sd_url").firstOrNull()?.let { videos.add(it) }
+        HtmlUtil.jsonField(segment, "progressive_download_url").forEach { videos.add(it) }
         HtmlUtil.jsonField(segment, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
         HtmlUtil.jsonField(segment, "video_url").forEach { videos.add(it) }
         HtmlUtil.jsonField(segment, "playable_url").forEach { videos.add(it) }
-        // 从整页 meta 标签取（meta 在 <head> 中，不能仅在 scope 查）
-        Regex("""<meta property="og:video" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)?.let {
+
+        // 3. 拦截到的 Instagram 原生 GraphQL / API 请求响应 (<<<IG_PAGES>>>)
+        if (!igPagesRaw.isNullOrBlank()) {
+            runCatching {
+                val array = json.parseToJsonElement(igPagesRaw).jsonArray
+                for (pageElement in array) {
+                    val pageStr = when (pageElement) {
+                        is JsonPrimitive -> pageElement.contentOrNull ?: ""
+                        else -> pageElement.toString()
+                    }
+                    if (pageStr.isBlank()) continue
+                    if (code.isNotBlank() && !pageStr.contains(code)) continue
+                    val pageSegment = ownCodeSegment(ownPostScope(pageStr, code), code)
+                    Regex(""""video_versions":\[(.*?)\]""").findAll(pageSegment).forEach { block ->
+                        Regex(""""url":"([^"]+)"""").findAll(block.groupValues[1]).forEach { u ->
+                            videos.add(HtmlUtil.unescapeJsonOf(u.groupValues[1]))
+                        }
+                    }
+                    HtmlUtil.jsonField(pageSegment, "browser_native_hd_url").firstOrNull()?.let { videos.add(it) }
+                    HtmlUtil.jsonField(pageSegment, "browser_native_sd_url").firstOrNull()?.let { videos.add(it) }
+                    HtmlUtil.jsonField(pageSegment, "progressive_download_url").forEach { videos.add(it) }
+                    HtmlUtil.jsonField(pageSegment, "playable_url_quality_hd").firstOrNull()?.let { videos.add(it) }
+                    HtmlUtil.jsonField(pageSegment, "video_url").forEach { videos.add(it) }
+                    Regex("""https?://[a-zA-Z0-9.\-_]*(?:cdninstagram\.com|fbcdn\.net)[^"'<>\s]+\.mp4[^"'<>\s]*""").findAll(pageSegment).forEach { m ->
+                        videos.add(HtmlUtil.unescapeJsonOf(m.value))
+                    }
+                }
+            }
+        }
+
+        // 4. segment / scope 中的 cdninstagram / fbcdn 视频直链扫描
+        Regex("""https?://[a-zA-Z0-9.\-_]*(?:cdninstagram\.com|fbcdn\.net)[^"'<>\s]+\.mp4[^"'<>\s]*""").findAll(segment).forEach { m ->
+            videos.add(HtmlUtil.unescapeJsonOf(m.value))
+        }
+
+        // 5. 从整页 meta 标签取（meta 在 <head> 中，不能仅在 scope 查）
+        Regex("""<meta property="og:video" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(baseHtml)?.let {
             videos.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
-        // DOM <video> / <source> 标签兜底（WebView 中若播放器已渲染出 DOM）
-        Regex("""<video[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
+        // 6. DOM <video> / <source> 标签兜底（WebView 中若播放器已渲染出 DOM）
+        Regex("""<video[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(baseHtml).forEach { m ->
             val u = HtmlUtil.unescapeHtmlOf(m.groupValues[1])
             if (u.startsWith("http") && !u.startsWith("blob:")) videos.add(u)
         }
-        Regex("""<source[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(html).forEach { m ->
+        Regex("""<source[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE).findAll(baseHtml).forEach { m ->
             val u = HtmlUtil.unescapeHtmlOf(m.groupValues[1])
             if (u.startsWith("http") && !u.startsWith("blob:")) videos.add(u)
         }
@@ -522,8 +609,7 @@ class InstagramParser : PlatformParser {
         }
 
         val images = linkedSetOf<String>()
-        // 新版结构：image_versions2.candidates:[{width,height,url}]——图集每个子项一块，
-        // 每块取宽度最大的一个（candidates 是同一张图的多尺寸候选），并跳过视频首帧缩略图
+        // 新版结构：image_versions2.candidates:[{width,height,url}]
         Regex(""""image_versions2":\{"candidates":\[(.*?)\]\}""").findAll(segment).forEach { block ->
             val pairs = Regex(""""width":(\d+),"height":\d+,"url":"([^"]+)"""")
                 .findAll(block.groupValues[1])
@@ -538,13 +624,13 @@ class InstagramParser : PlatformParser {
         }
         HtmlUtil.jsonField(segment, "display_url").forEach { images.add(it) }
         // 从整页 meta 标签取
-        Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(html)?.let {
+        Regex("""<meta property="og:image" content="([^"]+)"""", RegexOption.IGNORE_CASE).find(baseHtml)?.let {
             images.add(HtmlUtil.unescapeHtmlOf(it.groupValues[1]))
         }
 
         // WebView 渲染页对图集帖可能只给首图（子图走懒加载不进 HTML）——但图集子图已在 DOM 渲染为 <img>。兜底提取
-        if (images.size <= 1 && videos.isEmpty()) {
-            Regex("""<img[^>]+src="(https://scontent[^"]+)"[^>]*>""").findAll(html).forEach { m ->
+        if (!isReel && images.size <= 1 && videos.isEmpty()) {
+            Regex("""<img[^>]+src="(https://scontent[^"]+)"[^>]*>""").findAll(baseHtml).forEach { m ->
                 val u = HtmlUtil.unescapeHtmlOf(m.groupValues[1])
                 when {
                     u.contains("t51.2885-19") || u.contains("s150x150") -> Unit
@@ -553,35 +639,40 @@ class InstagramParser : PlatformParser {
                 }
             }
         }
-        images.filter { it.startsWith("http") }.take(12).forEachIndexed { i, u ->
-            media += MediaItem(
-                id = "ig-w-i-$i",
-                url = u,
-                kind = MediaKind.IMAGE,
-                quality = if (images.size > 1) "图 ${i + 1}" else "原图",
-                rank = 80 - i,
-                container = "jpg",
-                headers = igHeaders
-            )
-        }
 
-        // 链接带 img_index=N 时（用户在图集里复制了第 N 张），把该图排到首位作为默认选中
-        val imgIndex = Regex("img_index=(\\d+)").find(sourceUrl)?.groupValues?.get(1)?.toInt()
-        if (imgIndex != null && imgIndex in 1..images.size) {
-            val list = images.toList()
-            val ordered = listOf(imgIndex - 1) + list.indices.filter { it != imgIndex - 1 }
-            media.removeAll { it.id.startsWith("ig-w-i-") }
-            ordered.forEachIndexed { i, idx ->
-                val u = list[idx]
+        // 【核心约束】Reel 视频类型不变性 (Reel Type Invariance)：
+        // 链接为 Reel 时，如果未提取到视频，绝不能把缩略图封面伪造成可下载图片加入媒体列表！
+        if (!isReel || videos.isNotEmpty()) {
+            images.filter { it.startsWith("http") }.take(12).forEachIndexed { i, u ->
                 media += MediaItem(
                     id = "ig-w-i-$i",
                     url = u,
                     kind = MediaKind.IMAGE,
-                    quality = if (i == 0) "你选的第 $imgIndex 张" else "图 ${idx + 1}",
-                    rank = 90 - i,
+                    quality = if (images.size > 1) "图 ${i + 1}" else "原图",
+                    rank = 80 - i,
                     container = "jpg",
                     headers = igHeaders
                 )
+            }
+
+            // 链接带 img_index=N 时（用户在图集里复制了第 N 张），把该图排到首位作为默认选中
+            val imgIndex = Regex("img_index=(\\d+)").find(sourceUrl)?.groupValues?.get(1)?.toInt()
+            if (imgIndex != null && imgIndex in 1..images.size) {
+                val list = images.toList()
+                val ordered = listOf(imgIndex - 1) + list.indices.filter { it != imgIndex - 1 }
+                media.removeAll { it.id.startsWith("ig-w-i-") }
+                ordered.forEachIndexed { i, idx ->
+                    val u = list[idx]
+                    media += MediaItem(
+                        id = "ig-w-i-$i",
+                        url = u,
+                        kind = MediaKind.IMAGE,
+                        quality = if (i == 0) "你选的第 $imgIndex 张" else "图 ${idx + 1}",
+                        rank = 90 - i,
+                        container = "jpg",
+                        headers = igHeaders
+                    )
+                }
             }
         }
 
@@ -592,15 +683,16 @@ class InstagramParser : PlatformParser {
             resolverId = "$id-page",
             sourceUrl = sourceUrl,
             media = media.sanitized(),
-            title = HtmlUtil.meta(html, "og:title")?.take(60),
-            author = HtmlUtil.jsonField(html, "username").firstOrNull()
-                ?: Regex("""instagram\.com/([A-Za-z0-9_.]+)/""").find(html)?.groupValues?.getOrNull(1),
+            title = HtmlUtil.meta(baseHtml, "og:title")?.take(60),
+            author = HtmlUtil.jsonField(baseHtml, "username").firstOrNull()
+                ?: Regex("""instagram\.com/([A-Za-z0-9_.]+)/""").find(baseHtml)?.groupValues?.getOrNull(1),
             cover = images.firstOrNull(),
             source = ParseSource.LOCAL
         )
     }
 
     private fun parseEmbed(html: String, sourceUrl: String, code: String, ctx: ParseContext): ParseResult {
+        val isReel = sourceUrl.contains("/reel/", ignoreCase = true) || sourceUrl.contains("/reels/", ignoreCase = true)
         val media = mutableListOf<MediaItem>()
         val igHeaders = mapOf("Referer" to "https://www.instagram.com/")
 
@@ -618,6 +710,20 @@ class InstagramParser : PlatformParser {
                 headers = igHeaders
             )
         }
+        if (media.isEmpty()) {
+            Regex("""https?://[a-zA-Z0-9.\-_]*(?:cdninstagram\.com|fbcdn\.net)[^"'<>\s]+\.mp4[^"'<>\s]*""").findAll(segment).firstOrNull()?.let { m ->
+                media += MediaItem(
+                    id = "ig-e-v",
+                    url = HtmlUtil.unescapeJsonOf(m.value),
+                    kind = MediaKind.VIDEO,
+                    quality = "原画质",
+                    rank = 100,
+                    container = "mp4",
+                    mimeType = "video/mp4",
+                    headers = igHeaders
+                )
+            }
+        }
 
         val poster = Regex("""<video[^>]+poster=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
             .find(html)?.groupValues?.getOrNull(1)?.let { HtmlUtil.unescapeHtmlOf(it) }
@@ -627,16 +733,19 @@ class InstagramParser : PlatformParser {
         HtmlUtil.jsonField(segment, "display_url").forEach { images += it }
         poster?.let { images += it }
 
-        images.forEachIndexed { i, u ->
-            media += MediaItem(
-                id = "ig-e-i$i",
-                url = u,
-                kind = MediaKind.IMAGE,
-                quality = if (i == 0) "原图" else "图片 ${i + 1}",
-                rank = 90 - i,
-                container = "jpg",
-                headers = igHeaders
-            )
+        // Reel 严禁将单张封面作为图片下载内容
+        if (!isReel && media.none { it.kind == MediaKind.VIDEO }) {
+            images.forEachIndexed { i, u ->
+                media += MediaItem(
+                    id = "ig-e-i$i",
+                    url = u,
+                    kind = MediaKind.IMAGE,
+                    quality = if (i == 0) "原图" else "图片 ${i + 1}",
+                    rank = 90 - i,
+                    container = "jpg",
+                    headers = igHeaders
+                )
+            }
         }
 
         if (media.isEmpty()) return ParserDsl.result(platform, "$id-embed", sourceUrl, emptyList())

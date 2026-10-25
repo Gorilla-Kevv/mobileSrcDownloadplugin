@@ -15,6 +15,7 @@ function extractJs(fnName) {
 let failed = 0;
 for (const [name, marker] of [
   ['installPageHook', 'private fun installPageHook'],
+  ['installIgHook', 'private fun installIgHook'],
 ]) {
   const js = extractJs(marker);
   if (!js) { console.log(name, 'NOT FOUND'); failed++; continue; }

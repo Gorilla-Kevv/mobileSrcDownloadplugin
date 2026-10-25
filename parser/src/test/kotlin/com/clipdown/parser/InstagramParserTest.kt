@@ -277,4 +277,82 @@ class InstagramParserTest {
         assertTrue(result.media.any { it.url.contains("x1.mp4") })
         assertTrue(result.media.any { it.url.contains("x2.jpg") })
     }
+
+    @Test
+    fun `Reel 视频未提取到视频流时严禁降级为图片并给出明确提示`() {
+        val http = FakeHttp { notFound() }
+        val renderedOnlyThumbnail = """
+            <html><head><title>Reel</title>
+            <meta property="og:image" content="https://cdn.example.com/25k_thumb.jpg" />
+            </head><body>
+            <script type="text/javascript">window.__additionalDataLoaded('extra',{"xdt_api__v1__media__shortcode__web_info":{"items":[{
+                "code":"DeeW_yhPcqD",
+                "image_versions2":{"candidates":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/25k_thumb.jpg"}]}}]}});</script>
+            </body></html>
+        """.trimIndent()
+        val err = runCatching {
+            parser.parse(
+                "https://www.instagram.com/reel/DeeW_yhPcqD/",
+                testContext(http, webFetcher = { renderedOnlyThumbnail })
+            )
+        }.exceptionOrNull()
+        assertTrue("Reel 提取不到视频流时应抛出提示异常而非返回缩略图: ${err?.message}", err != null)
+        assertTrue("提示应包含引导用户补充 Cookie 或使用远端解析", err!!.message!!.contains("未能提取到 Instagram Reel 视频直链"))
+    }
+
+    @Test
+    fun `Reel 页面包含 browser_native_hd_url 正常解析为视频`() {
+        val http = FakeHttp { notFound() }
+        val rendered = """
+            <html><head><title>Modern Reel</title></head><body>
+            <script type="text/javascript">window.__additionalDataLoaded('extra',{"xdt_api__v1__media__shortcode__web_info":{"items":[{
+                "code":"DeeW_yhPcqD",
+                "browser_native_hd_url":"https:\\/\\/scontent.cdninstagram.com\\/v\\/hd_video.mp4?oe=123",
+                "image_versions2":{"candidates":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/thumb.jpg"}]}}]}});</script>
+            </body></html>
+        """.trimIndent()
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DeeW_yhPcqD/",
+            testContext(http, webFetcher = { rendered })
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals(1, videos.size)
+        assertTrue(videos[0].url.contains("hd_video.mp4"))
+    }
+
+    @Test
+    fun `Reel 页面包含短语言代码时 ownCodeSegment 不会错误截断`() {
+        val http = FakeHttp { notFound() }
+        // 模拟页面 JSON 中 code 紧跟 "code":"en" 的情况（之前会把 JSON 切断导致丢失后面的 video_versions）
+        val rendered = """
+            <html><head><title>Lang Code Reel</title></head><body>
+            <script type="text/javascript">window.__additionalDataLoaded('extra',{"xdt_api__v1__media__shortcode__web_info":{"items":[{
+                "code":"DeeW_yhPcqD",
+                "locale":{"code":"en","country":"US"},
+                "video_versions":[{"width":1080,"height":1920,"url":"https:\\/\\/scontent.cdninstagram.com\\/v\\/full_reel.mp4"}],
+                "image_versions2":{"candidates":[{"width":720,"height":1280,"url":"https:\\/\\/cdn.example.com\\/thumb.jpg"}]}}]}});</script>
+            </body></html>
+        """.trimIndent()
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DeeW_yhPcqD/",
+            testContext(http, webFetcher = { rendered })
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals("语言代码不应截断正帖视频", 1, videos.size)
+        assertTrue(videos[0].url.contains("full_reel.mp4"))
+    }
+
+    @Test
+    fun `WebView 拦截网络请求 IG_PAGES 成功提取视频`() {
+        val http = FakeHttp { notFound() }
+        val igPagesJson = """[{"data":{"xdt_shortcode_media":{"code":"DeeW_yhPcqD","video_versions":[{"width":720,"height":1280,"url":"https:\/\/cdn.example.com\/hook_reel.mp4"}]}}}]"""
+        val renderedWithPages = "<html><body>no video in dom</body></html><<<IG_PAGES>>>$igPagesJson"
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DeeW_yhPcqD/",
+            testContext(http, webFetcher = { renderedWithPages })
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals(1, videos.size)
+        assertTrue(videos[0].url.contains("hook_reel.mp4"))
+    }
 }

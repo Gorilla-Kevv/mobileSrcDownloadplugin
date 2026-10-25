@@ -38,9 +38,9 @@ object WebViewHtmlFetcher {
     private const val MOBILE_UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/113.0.0.0 Mobile Safari/537.36"
 
-    /** 按站点选择 UA：小红书走移动端，其余保持桌面端 */
+    /** 按站点选择 UA：小红书与 Instagram 走移动端，其余保持桌面端 */
     private fun uaFor(url: String): String =
-        if (url.contains("xiaohongshu.com") || url.contains("xhslink.")) MOBILE_UA else DESKTOP_UA
+        if (url.contains("xiaohongshu.com") || url.contains("xhslink.") || url.contains("instagram.com")) MOBILE_UA else DESKTOP_UA
 
     /** 页面中是否已出现媒体数据的探针（IG React 异步填充后命中） */
     private const val MEDIA_PRESENT_JS =
@@ -109,6 +109,7 @@ object WebViewHtmlFetcher {
                      */
                     override fun onPageStarted(v: WebView, u: String, favicon: android.graphics.Bitmap?) {
                         if (u.contains("xiaohongshu.com")) installPageHook(v)
+                        if (u.contains("instagram.com")) installIgHook(v)
                     }
 
                     override fun onPageFinished(v: WebView, u: String) {
@@ -141,6 +142,7 @@ object WebViewHtmlFetcher {
                     if (!cookieHeader.isNullOrBlank()) put("Cookie", cookieHeader!!)
                     put("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
                     if (url.contains("xiaohongshu.com")) put("Referer", "https://www.xiaohongshu.com/")
+                    if (url.contains("instagram.com")) put("Referer", "https://www.instagram.com/")
                 }
                 view.loadUrl(url, extra)
                 Handler(Looper.getMainLooper()).postDelayed({
@@ -186,12 +188,28 @@ object WebViewHtmlFetcher {
             var stable = 0
             override fun run() {
                 attempt++
-                v.evaluateJavascript("document.documentElement.outerHTML") { raw ->
+                val curUrl = v.url ?: ""
+                val isIg = curUrl.contains("instagram.com")
+                if (isIg) installIgHook(v)
+                val isReel = curUrl.contains("/reel/", ignoreCase = true) || curUrl.contains("/reels/", ignoreCase = true)
+                val js = if (isIg) {
+                    "document.documentElement.outerHTML + '<<<IG_PAGES>>>' + JSON.stringify(window.__ig_pages || [])"
+                } else {
+                    "document.documentElement.outerHTML"
+                }
+                v.evaluateJavascript(js) { raw ->
                     val page = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
                     if (page != null) {
-                        val hasMedia = page.contains("video_versions") || page.contains("video_url") ||
-                            page.contains("image_versions2") || page.contains("xig_polaris_media") ||
-                            page.contains("playable_url") || page.contains("og:video") || page.contains("<video")
+                        val hasMedia = if (isReel) {
+                            page.contains("video_versions") || page.contains("video_url") ||
+                                page.contains("playable_url") || page.contains("browser_native") ||
+                                page.contains("og:video") || page.contains("<video") ||
+                                (page.contains("<<<IG_PAGES>>>") && !page.endsWith("<<<IG_PAGES>>>[]"))
+                        } else {
+                            page.contains("video_versions") || page.contains("video_url") ||
+                                page.contains("image_versions2") || page.contains("xig_polaris_media") ||
+                                page.contains("playable_url") || page.contains("og:video") || page.contains("<video")
+                        }
                         val title = Regex("""<title[^>]*>([^<]{0,80})""").find(page)?.groupValues?.getOrNull(1)
                         stable = if (page.length == lastLen) stable + 1 else 0
                         lastLen = page.length
@@ -218,6 +236,55 @@ object WebViewHtmlFetcher {
             }
         }
         h.postDelayed(task, 2000)
+    }
+
+    /** 注入 Instagram 网络请求钩子：把 GraphQL 与 API 响应暂存到 `window.__ig_pages`（幂等） */
+    private fun installIgHook(v: WebView) {
+        v.evaluateJavascript(
+            "(function(){" +
+                "if(window.__ig_pages){return;}" +
+                "window.__ig_pages=[];" +
+                "var checkAndPush=function(url,text){" +
+                "try{" +
+                "if(!text||typeof text!=='string'||text.length<30)return;" +
+                "var u=String(url);" +
+                "if(u.indexOf('graphql')>-1||u.indexOf('/api/v1/')>-1||u.indexOf('/media/')>-1||text.indexOf('video_versions')>-1||text.indexOf('browser_native')>-1||text.indexOf('.mp4')>-1){" +
+                "window.__ig_pages.push(text);" +
+                "}" +
+                "}catch(e){}" +
+                "};" +
+                "var origOpen=XMLHttpRequest.prototype.open;" +
+                "XMLHttpRequest.prototype.open=function(method,url){" +
+                "try{" +
+                "var xhr=this;" +
+                "xhr.addEventListener('load',function(){" +
+                "try{" +
+                "if(xhr.status===200){" +
+                "checkAndPush(url,xhr.responseText);" +
+                "}" +
+                "}catch(e){}" +
+                "});" +
+                "}catch(err){}" +
+                "return origOpen.apply(this,arguments);" +
+                "};" +
+                "if(window.fetch){" +
+                "var origFetch=window.fetch;" +
+                "window.fetch=function(){" +
+                "var args=arguments;" +
+                "var fetchUrl=(args[0]&&typeof args[0]==='string')?args[0]:(args[0]&&args[0].url?args[0].url:'');" +
+                "return origFetch.apply(this,args).then(function(res){" +
+                "try{" +
+                "var clone=res.clone();" +
+                "clone.text().then(function(t){" +
+                "checkAndPush(fetchUrl,t);" +
+                "}).catch(function(){});" +
+                "}catch(e){}" +
+                "return res;" +
+                "});" +
+                "};" +
+                "}" +
+                "})()"
+        ) {}
     }
 
     /** 注入 XHR 钩子：把 `user_posted` 分页响应原文暂存到 `window.__pages`（幂等） */
