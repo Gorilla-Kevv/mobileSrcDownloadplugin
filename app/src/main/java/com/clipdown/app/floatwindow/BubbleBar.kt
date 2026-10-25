@@ -278,7 +278,9 @@ private fun MiniBarBody(
                 state.hint!!,
                 color = Color(0xFFFFB020),
                 style = MaterialTheme.typography.labelSmall,
-                maxLines = 4,
+                fontSize = 10.sp,
+                lineHeight = 13.sp,
+                maxLines = 5,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center
             )
         }
@@ -291,7 +293,7 @@ private fun MiniBarBody(
         ) {
             Icon(
                 if (confirm != null) Icons.Default.Refresh else Icons.Default.Search,
-                contentDescription = if (confirm != null) "再次解析" else "识别",
+                contentDescription = if (confirm != null) "再次下载" else "识别",
                 tint = Color.White,
                 modifier = Modifier.size(16.dp)
             )

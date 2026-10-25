@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.ui.layout.ContentScale
 import coil.request.ImageRequest
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import com.clipdown.app.ClipDownApp
 import com.clipdown.app.clip.ClipboardMonitor
 import com.clipdown.app.clip.LinkCenter
 import com.clipdown.app.floatwindow.FloatingWindowService
@@ -71,6 +73,8 @@ import com.clipdown.app.ui.theme.OnBrandContainer
 import com.clipdown.app.ui.theme.SuccessFg
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.DownloadService
+import com.clipdown.downloader.model.DownloadStatus
+import kotlinx.coroutines.flow.first
 import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
 import com.clipdown.parser.core.ProfileUrls
@@ -104,8 +108,10 @@ fun HomeScreen(
     var result by remember { mutableStateOf<ParseResult?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf(setOf(0)) }
+    var isDuplicateParse by remember { mutableStateOf(false) }
 
     val lastLink by LinkCenter.last.collectAsStateWithLifecycle()
+    val tasks by DownloadController.repository().tasks.collectAsStateWithLifecycle()
 
     LaunchedEffect(autoFocusParse, lastLink?.url) {
         if (autoFocusParse) {
@@ -117,6 +123,14 @@ fun HomeScreen(
                 onOpenProfile()
                 return@LaunchedEffect
             }
+            val app = context.applicationContext as? ClipDownApp
+            val seenBefore = app?.settings?.seenLinks?.first() ?: emptySet()
+            val hasCompleted = DownloadController.repository().tasks.value.any {
+                (it.sourceUrl == link.url || it.url == link.url) && it.status == DownloadStatus.COMPLETED
+            }
+            isDuplicateParse = link.url in seenBefore || hasCompleted
+            app?.settings?.markLinkSeen(link.url)
+
             parsing = true
             error = null
             result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url).getOrNull() }
@@ -145,6 +159,14 @@ fun HomeScreen(
                 onOpenProfile()
                 return@launch
             }
+            val app = context.applicationContext as? ClipDownApp
+            val seenBefore = app?.settings?.seenLinks?.first() ?: emptySet()
+            val hasCompleted = DownloadController.repository().tasks.value.any {
+                (it.sourceUrl == url || it.url == url) && it.status == DownloadStatus.COMPLETED
+            }
+            isDuplicateParse = url in seenBefore || hasCompleted
+            app?.settings?.markLinkSeen(url)
+
             parsing = true
             error = null
             result = null
@@ -256,8 +278,17 @@ fun HomeScreen(
 
         result?.let { r ->
             item {
+                val hasCompletedTask = remember(r.sourceUrl, tasks) {
+                    val src = r.sourceUrl
+                    !src.isNullOrBlank() && tasks.any {
+                        (it.sourceUrl == src || it.url == src) && it.status == DownloadStatus.COMPLETED
+                    }
+                }
+                val isDuplicate = isDuplicateParse || hasCompletedTask
+
                 ResultCard(
                     result = r,
+                    isDuplicate = isDuplicate,
                     selectedIndices = selected,
                     onToggle = { index ->
                         selected = if (r.isAlbumMultiSelect) {
@@ -293,6 +324,7 @@ fun HomeScreen(
 @Composable
 private fun ResultCard(
     result: ParseResult,
+    isDuplicate: Boolean = false,
     selectedIndices: Set<Int>,
     onToggle: (Int) -> Unit,
     onSetSelection: (Set<Int>) -> Unit,
@@ -309,6 +341,54 @@ private fun ResultCard(
     var downloadFeedback by remember(result) { mutableStateOf<String?>(null) }
     val isCurrentSelectionEnqueued = remember(selectedIndices, enqueuedIndices) {
         selectedIndices.isNotEmpty() && selectedIndices.all { it in enqueuedIndices }
+    }
+
+    // 重复下载确认弹窗状态
+    var showDuplicateConfirmDialog by remember { mutableStateOf(false) }
+    var pendingDownloadIndices by remember { mutableStateOf<Set<Int>?>(null) }
+
+    if (showDuplicateConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = {
+                showDuplicateConfirmDialog = false
+                pendingDownloadIndices = null
+            },
+            title = {
+                Text("重复下载提醒", style = MaterialTheme.typography.titleMedium)
+            },
+            text = {
+                Text(
+                    "检测到该作品此前已识别或下载过。确定要再次下载并保存新的副本吗？",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val toDownload = pendingDownloadIndices ?: selectedIndices
+                        showDuplicateConfirmDialog = false
+                        pendingDownloadIndices = null
+                        if (toDownload.isNotEmpty()) {
+                            onDownload(toDownload)
+                            enqueuedIndices = enqueuedIndices + toDownload
+                            downloadFeedback = "已成功加入下载队列（${toDownload.size} 项），后台下载中"
+                        }
+                    }
+                ) {
+                    Text("确定再次下载", color = MaterialTheme.colorScheme.primary)
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDuplicateConfirmDialog = false
+                        pendingDownloadIndices = null
+                    }
+                ) {
+                    Text("取消")
+                }
+            }
+        )
     }
 
     AppCard {
@@ -364,6 +444,11 @@ private fun ResultCard(
         if (!result.warning.isNullOrBlank()) {
             VSpace(AppTheme.spacing.md)
             NoticeBar(result.warning!!, Tone.Warning)
+        }
+
+        if (isDuplicate) {
+            VSpace(AppTheme.spacing.md)
+            NoticeBar("提示：该作品此前已识别或下载过，再次下载将保存新的副本", Tone.Warning)
         }
 
         VSpace(AppTheme.spacing.lg)
@@ -426,9 +511,14 @@ private fun ResultCard(
                     text = "重新下载",
                     modifier = Modifier.weight(1f),
                     onClick = {
-                        val count = selectedIndices.size
-                        onDownload(selectedIndices)
-                        downloadFeedback = "已重新加入下载队列（$count 项）"
+                        if (isDuplicate) {
+                            pendingDownloadIndices = selectedIndices
+                            showDuplicateConfirmDialog = true
+                        } else {
+                            val count = selectedIndices.size
+                            onDownload(selectedIndices)
+                            downloadFeedback = "已重新加入下载队列（$count 项）"
+                        }
                     }
                 )
                 PrimaryButton(
@@ -445,10 +535,15 @@ private fun ResultCard(
                 enabled = selectedIndices.isNotEmpty(),
                 modifier = Modifier.fillMaxWidth(),
                 onClick = {
-                    val count = selectedIndices.size
-                    onDownload(selectedIndices)
-                    enqueuedIndices = enqueuedIndices + selectedIndices
-                    downloadFeedback = "已成功加入下载队列（$count 项），后台下载中"
+                    if (isDuplicate) {
+                        pendingDownloadIndices = selectedIndices
+                        showDuplicateConfirmDialog = true
+                    } else {
+                        val count = selectedIndices.size
+                        onDownload(selectedIndices)
+                        enqueuedIndices = enqueuedIndices + selectedIndices
+                        downloadFeedback = "已成功加入下载队列（$count 项），后台下载中"
+                    }
                 }
             )
         }

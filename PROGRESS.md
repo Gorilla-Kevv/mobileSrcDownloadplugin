@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 53 已完成并发布 v1.1.10（versionCode 15）**：预览缩略图全链路修复（引入 coil-video 截取视频首秒帧 + 全局 ImageLoaderFactory 注册 + DownloadController 与所有调用点入库 coverUrl 贯通 + 占位兜底）+ 内置视频播放器现代化重构（告别老旧 MediaController，构建 Compose 原生居中胶囊操作钮 + 磨砂渐变控制条 + 精确时间戳与拖动进度条 + 单曲循环）
-- 下一阶段任务：真机走查阶段 53（缩略图显示与内置播放器视觉/交互体验）+ 阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）
+- 当前正在开发任务：**阶段 54 已完成**：识别/下载过链接的重复下载提醒全链路恢复（悬浮窗解耦 5s 短抑制 + manual/auto 双通道统一 Mini 弹条确认再次下载 + 主应用 HomeScreen 查重预警 NoticeBar + 点击下载弹出 AlertDialog 确认拦截）
+- 下一阶段任务：真机走查阶段 54（重复链接剪贴板与主应用内下载确认交互）+ 阶段 53（缩略图显示与内置播放器视觉/交互体验）+ 阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿（共 133 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 15:00
+- 本次文档更新时间：10.25 15:38
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -904,6 +904,37 @@
   - 全量单元测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
   - `:app:assembleDebug` 与 `:app:assembleRelease` 构建成功，APK 1.86MB 产出正常；
 - 本次文档更新时间：10.25 15:00
+
+## 阶段 54 识别/下载过链接的重复下载提醒全链路恢复 [计划时间：10.25 15:15 BY Antigravity][完成时间：10.25 15:38 BY Antigravity]
+- 用户反馈："重复下载的提示不见了，请恢复。遇到识别过的连接进行再次下载就需要提醒"
+- 根因分析：
+  1. **悬浮窗自动流跳过排查**：在 `FloatingWindowService.kt` 的 `observeLinks` 中，`manualRecognize`（点击气泡触发）分支原先被放置在 `seenBefore` 查重逻辑之前，导致用户主动点击气泡识别时直接走强制流水线 `autoRecognize(link, force = true)` 并静默自动下载，完全绕过了已识别记忆检查；
+  2. **10分钟长抑制锁死**：下载完成或入队后调用的 `markSuppressed(url)` 默认抑制时间为 10 分钟（`SUPPRESS_MS = 10 * 60_000L`）。原本在 `link.url in seenBefore` 分支下通过 `!isSuppressed(link.url)` 进行拦截，导致该链接在下载后的 10 分钟内无论用户如何复制剪贴板，均被判定为已抑制而直接静默 `return@onEach`，Mini 提示条根本无法触发；
+  3. **已下载历史遗漏**：原悬浮窗查重仅依赖 DataStore 中的 `seenLinks` 缓存，若用户曾清除记录或任务来自主应用内下载，悬浮窗未能结合 `TaskDatabase` 已完成任务（COMPLETED）进行综合判断；
+  4. **主应用内首页缺失重复提醒**：在 `HomeScreen.kt` 中，`parse` 链路此前未调用 `settings.markLinkSeen`，且结果卡展示及点击下载按钮时完全未对历史任务或识别记录进行排重与确认拦截。
+- 落地重构与增强：
+  1. **悬浮窗全链路查重与提示恢复**：
+     - 将重复提示短时防抖抑制与流水线抑制解耦，新增 `promptSuppressedUrls`（5 秒超时 `PROMPT_SUPPRESS_MS = 5_000L`），杜绝 10 分钟死锁；
+     - 在 `observeLinks` 中综合判定 `isSeen = (link.url in seenBefore) || (已完成下载任务中存在该链接)`；
+     - 无论是点击气泡手动触发（`wasManual`）还是剪贴板自动触发，只要命中 `isSeen`，均统一弹出琥珀色提示条 `PopupUiState.Mini(hint = "已识别过该链接，是否再次下载？", confirmLink = link)`；
+     - 用户点击 Mini 提示条的刷新/再次下载按钮（`contentDescription = "再次下载"`）后，再进入 `autoRecognize(link, force = true)` 完成强制下载；
+     - 优化 `BubbleBar.kt` 中 Mini 提示文案的排版（`fontSize = 10.sp`, `lineHeight = 13.sp`, `maxLines = 5`），确保竖条内文案舒适清晰。
+  2. **主应用首页重复下载拦截与提示**：
+     - 在 `HomeScreen.kt` 的手动解析与分享直达路径中均同步调用 `settings.markLinkSeen(url)`，确保全应用识别记忆统一同步；
+     - 在结果卡片（`ResultCard`）渲染时，实时结合 `tasks` 与 `seenLinks` 计算 `isDuplicate`；
+     - 命中重复时，在卡片上方展示警示提示条 `NoticeBar("提示：该作品此前已识别或下载过，再次下载将保存新的副本", Tone.Warning)`；
+     - 点击「下载所选资源」或「重新下载」按钮时，弹出 Material 3 确认对话框（`AlertDialog`）：明确提示「检测到该作品此前已识别或下载过。确定要再次下载并保存新的副本吗？」，只有用户明确点击「确定再次下载」后才加入下载队列。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/floatwindow/FloatingWindowService.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/BubbleBar.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
+  - `:app:assembleDebug` 与 `:app:assembleRelease` 全绿通过，产物 1.86MB（1,953,212 字节）在 2MB 预算内；
+- 本次文档更新时间：10.25 15:38
+
 
 
 

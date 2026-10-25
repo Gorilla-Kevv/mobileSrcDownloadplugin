@@ -170,6 +170,9 @@ class FloatingWindowService : Service() {
     /** 下载完成后按 URL 短时抑制自动重弹（地址栏停留页面会持续触发扫描） */
     private val suppressedUrls = HashMap<String, Long>()
 
+    /** 重复下载提示的短时抑制（5s），避免剪贴板扫描循环内高频连弹 */
+    private val promptSuppressedUrls = HashMap<String, Long>()
+
     /** 自动下载失败退避（IG 风控保险丝）：连续失败达阈值后暂停自动下载一段时间 */
     private var consecutiveFailures = 0
     private var autoDownloadSuspendedUntil = 0L
@@ -262,7 +265,8 @@ class FloatingWindowService : Service() {
                         barOnTop = barOnTop.value,
                         onRecognize = { startManualRecognize() },
                         onConfirmParse = { link ->
-                            // 已解析过链接的"再次解析"：直接走强制流水线，不再读剪贴板
+                            // 用户确认再次下载：隐藏弹层并强制启动下载流水线
+                            markPromptSuppressed(link.url)
                             uiState.value = PopupUiState.Hidden
                             autoRecognize(link, force = true)
                         },
@@ -563,28 +567,35 @@ class FloatingWindowService : Service() {
                 // 服务重启时 replay=1 会把上一条旧链接重播进来（例如长按关闭气泡前识别过的
                 // 那条），重新打开气泡就会立刻弹"已解析过，是否要再次解析"——旧链接直接忽略
                 if (link.detectedAtMillis < startedAtMs) return@onEach
-                // 识别记忆：检测过的链接持久化，自动流程只给"新面孔"
-                val seenBefore = settings.seenLinks.first()
-                scope.launch { settings.markLinkSeen(link.url) }
 
-                if (manualRecognize) {
-                    manualRecognize = false
-                    recognizeTimeoutJob?.cancel()
-                    autoRecognize(link, force = true)
-                    return@onEach
+                val wasManual = manualRecognize
+                manualRecognize = false
+                recognizeTimeoutJob?.cancel()
+
+                // 识别记忆与已下载历史查重：遇到识别过或已下载过的链接，再次下载需明确提醒用户
+                val seenBefore = settings.seenLinks.first()
+                val hasCompleted = DownloadController.repository().tasks.value.any {
+                    (it.sourceUrl == link.url || it.url == link.url) && it.status == DownloadStatus.COMPLETED
                 }
-                if (link.url in seenBefore) {
-                    // 已解析过：不自动解析，弹竖条提醒，由用户决定是否再次解析下载。
-                    // 同时记入抑制窗口：地址栏/剪贴板停留场景不会反复弹提醒；
-                    // 用户选"再次解析"走 force=true，不受抑制影响
-                    if (autoPopupEnabled && popupFreeForAuto() && !isSuppressed(link.url)) {
-                        markSuppressed(link.url)
+                val isSeen = link.url in seenBefore || hasCompleted
+
+                if (isSeen) {
+                    // 已识别/已下载过：无论手动点击气泡还是自动触发，均提示用户确认是否再次下载
+                    if (wasManual || (autoPopupEnabled && popupFreeForAuto() && !isPromptSuppressed(link.url))) {
+                        markPromptSuppressed(link.url)
                         uiState.value = PopupUiState.Mini(
-                            hint = "已解析过，是否要再次解析？",
+                            hint = "已识别过该链接，是否再次下载？",
                             confirmLink = link
                         )
                         startDismissTimer()
                     }
+                    return@onEach
+                }
+
+                scope.launch { settings.markLinkSeen(link.url) }
+
+                if (wasManual) {
+                    autoRecognize(link, force = true)
                     return@onEach
                 }
                 if (autoPopupEnabled) autoRecognize(link) else pendingCount.intValue++
@@ -863,6 +874,16 @@ class FloatingWindowService : Service() {
         val now = System.currentTimeMillis()
         suppressedUrls.entries.removeAll { now - it.value > SUPPRESS_MS }
         return url in suppressedUrls
+    }
+
+    private fun markPromptSuppressed(url: String) {
+        promptSuppressedUrls[url] = System.currentTimeMillis()
+    }
+
+    private fun isPromptSuppressed(url: String): Boolean {
+        val now = System.currentTimeMillis()
+        promptSuppressedUrls.entries.removeAll { now - it.value > PROMPT_SUPPRESS_MS }
+        return url in promptSuppressedUrls
     }
 
     /** 自动路径只在弹窗空闲（隐藏/迷你面板）时占用弹窗；用户正在看的弹窗不抢 */
@@ -1227,6 +1248,7 @@ class FloatingWindowService : Service() {
         private const val CHANNEL_MONITOR = "clipdown_monitor"
         private const val NOTIFICATION_ID = 9002
         private const val SUPPRESS_MS = 10 * 60_000L
+        private const val PROMPT_SUPPRESS_MS = 5_000L
 
         /** 双击判定窗口（ms）；单击行为延迟到窗口过期后执行 */
         private const val DOUBLE_TAP_MS = 250L
