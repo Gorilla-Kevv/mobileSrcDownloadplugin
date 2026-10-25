@@ -5,12 +5,15 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.net.http.SslError
+import android.os.Message
 import android.webkit.CookieManager
+import android.webkit.JsResult
 import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
@@ -40,6 +43,7 @@ import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DesktopWindows
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material.icons.filled.Refresh
@@ -110,12 +114,21 @@ fun WebLoginDialog(
     val scope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
 
-    val mobileUa = "Mozilla/5.0 (Linux; Android 13; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Mobile Safari/537.36"
-    val desktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+    val defaultUa = remember {
+        runCatching { WebSettings.getDefaultUserAgent(context) }.getOrNull()
+            ?: "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36"
+    }
 
-    // Instagram 移动端根路由（/）在手机 UA 下被 Meta 设为 404 错误页 (PolarisErrorRoot)，
-    // 会导致登录验证后无限跳回登录页死循环。默认启用 Desktop 电脑版 UA，直接加载完整 Feed 与安全验证。
-    var isDesktopMode by remember { mutableStateOf(platform == Platform.INSTAGRAM) }
+    // 剥离 Android 嵌入式 WebView 标记（; wv 与 Version/4.0），
+    // 呈现手机原生独立运行的 Google Chrome 浏览器，与底层真实硬件（屏幕分辨率、触摸点、GPU）100% 吻合，
+    // 绝不触发 Meta 针对 Windows 桌面 UA 伪装的欺诈拦截
+    val cleanMobileUa = remember(defaultUa) {
+        defaultUa.replace("; wv", "").replace(Regex("""Version/\d+\.\d+\s*"""), "")
+    }
+
+    val cleanDesktopUa = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+
+    var isDesktopMode by remember { mutableStateOf(false) }
 
     val loginUrl = when (platform) {
         Platform.INSTAGRAM -> "https://www.instagram.com/accounts/login/"
@@ -140,6 +153,20 @@ fun WebLoginDialog(
     var loginCaptured by remember { mutableStateOf(false) }
     var showManualPasteDialog by remember { mutableStateOf(false) }
 
+    fun resetWebViewCache() {
+        val cm = CookieManager.getInstance()
+        cm.removeAllCookies(null)
+        cm.flush()
+        runCatching { WebStorage.getInstance().deleteAllData() }
+        webViewInstance?.apply {
+            clearCache(true)
+            clearHistory()
+            clearFormData()
+            loadUrl(loginUrl)
+        }
+        Toast.makeText(context, "已彻底清理登录缓存与历史会话，正在重新加载…", Toast.LENGTH_SHORT).show()
+    }
+
     fun getAggregatedCookies(fromUrl: String?): String {
         val cm = CookieManager.getInstance()
         runCatching { cm.flush() }
@@ -149,7 +176,8 @@ fun WebLoginDialog(
                 "https://instagram.com/",
                 "https://i.instagram.com/",
                 "https://accountscenter.instagram.com/",
-                "https://www.instagram.com/accounts/login/"
+                "https://www.instagram.com/accounts/login/",
+                "https://www.instagram.com/challenge/"
             )
             Platform.XIAOHONGSHU -> listOf(
                 "https://www.xiaohongshu.com/",
@@ -207,10 +235,10 @@ fun WebLoginDialog(
         return false
     }
 
-    // 后台轻量轮询嗅探
+    // 后台轻量轮询嗅探（提高为 600ms 高频嗅探，两步验证通过瞬间即刻捕获）
     LaunchedEffect(platform) {
         while (!loginCaptured) {
-            delay(1000)
+            delay(600)
             checkAndSaveCookies(currentUrl)
         }
     }
@@ -309,7 +337,7 @@ fun WebLoginDialog(
                     IconButton(
                         onClick = {
                             isDesktopMode = !isDesktopMode
-                            webViewInstance?.settings?.userAgentString = if (isDesktopMode) desktopUa else mobileUa
+                            webViewInstance?.settings?.userAgentString = if (isDesktopMode) cleanDesktopUa else cleanMobileUa
                             hasMainFrameError = false
                             webViewInstance?.reload()
                         }
@@ -450,22 +478,43 @@ fun WebLoginDialog(
                             )
                             Spacer(Modifier.width(AppTheme.spacing.xs))
                             Text(
-                                "页面加载受阻：请确保已打开加速器/VPN；亦可点击右上角切换为「电脑版」重试",
+                                "页面加载受阻：请确保已打开加速器/VPN；亦可点击「重置缓存」或切换「电脑版」重试",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onErrorContainer,
                                 modifier = Modifier.weight(1f)
                             )
+                            Spacer(Modifier.width(AppTheme.spacing.xs))
+                            OutlinedButton(
+                                onClick = { resetWebViewCache() },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(26.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Text("重置缓存", style = MaterialTheme.typography.labelSmall)
+                            }
                         } else {
                             Text(
-                                if (platform == Platform.INSTAGRAM)
-                                    "提示：默认开启「电脑版」避免验证后死循环回跳；若遇阻可点右侧手动粘贴。"
-                                else
-                                    "提示：在下方安全登录后会自动捕获凭据；遇阻可点右侧手动粘贴。",
+                                "提示：若遇验证死循环，点「重置缓存」清空被标记的会话；亦可点「粘贴Cookie」",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.weight(1f)
                             )
                             Spacer(Modifier.width(AppTheme.spacing.xs))
+                            OutlinedButton(
+                                onClick = { resetWebViewCache() },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(26.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Delete,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text("重置缓存", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Spacer(Modifier.width(4.dp))
                             OutlinedButton(
                                 onClick = { showManualPasteDialog = true },
                                 shape = RectangleShape,
@@ -477,7 +526,7 @@ fun WebLoginDialog(
                                     contentDescription = null,
                                     modifier = Modifier.size(12.dp)
                                 )
-                                Spacer(Modifier.width(4.dp))
+                                Spacer(Modifier.width(2.dp))
                                 Text("粘贴Cookie", style = MaterialTheme.typography.labelSmall)
                             }
                         }
@@ -502,11 +551,11 @@ fun WebLoginDialog(
                                     loadWithOverviewMode = true
                                     mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
                                     javaScriptCanOpenWindowsAutomatically = true
-                                    setSupportMultipleWindows(false)
+                                    setSupportMultipleWindows(true)
                                     cacheMode = WebSettings.LOAD_DEFAULT
                                     allowFileAccess = false
                                     allowContentAccess = true
-                                    userAgentString = if (isDesktopMode) desktopUa else mobileUa
+                                    userAgentString = if (isDesktopMode) cleanDesktopUa else cleanMobileUa
                                 }
 
                                 // 官方标准解除 X-Requested-With 请求头注入（剥离包名标记，解除 Meta 反爬白屏拦截）
@@ -516,10 +565,48 @@ fun WebLoginDialog(
                                     }
                                 }
 
+                                val stealthJs = """
+                                    try {
+                                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
+                                        if (!window.chrome) { window.chrome = { runtime: {} }; }
+                                    } catch(e) {}
+                                """.trimIndent()
+
                                 webChromeClient = object : WebChromeClient() {
                                     override fun onProgressChanged(view: WebView?, newProgress: Int) {
                                         loadProgress = newProgress / 100f
                                         isLoading = newProgress < 100
+                                    }
+
+                                    override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                        Toast.makeText(context, message ?: "", Toast.LENGTH_SHORT).show()
+                                        result?.confirm()
+                                        return true
+                                    }
+
+                                    override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult?): Boolean {
+                                        result?.confirm()
+                                        return true
+                                    }
+
+                                    override fun onCreateWindow(
+                                        view: WebView?,
+                                        isDialog: Boolean,
+                                        isUserGesture: Boolean,
+                                        resultMsg: Message?
+                                    ): Boolean {
+                                        // 拦截 window.open 并在主 WebView 内原窗加载（解决 2FA/Facebook 弹窗流程中断）
+                                        val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
+                                        val tempWebView = WebView(view!!.context)
+                                        tempWebView.webViewClient = object : WebViewClient() {
+                                            override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                                                req?.url?.let { view.loadUrl(it.toString()) }
+                                                return true
+                                            }
+                                        }
+                                        transport.webView = tempWebView
+                                        resultMsg.sendToTarget()
+                                        return true
                                     }
                                 }
 
@@ -528,7 +615,17 @@ fun WebLoginDialog(
                                         val uri = request?.url ?: return false
                                         val scheme = uri.scheme?.lowercase() ?: return false
                                         if (scheme != "http" && scheme != "https") {
-                                            // 拦截第三方客户端协议跳转（如 instagram://、intent:// 等），防止 WebView 内部抛出 ERR_UNKNOWN_URL_SCHEME 导致白屏
+                                            if (scheme == "intent") {
+                                                runCatching {
+                                                    val intent = Intent.parseUri(uri.toString(), Intent.URI_INTENT_SCHEME)
+                                                    val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+                                                    if (!fallbackUrl.isNullOrBlank()) {
+                                                        view?.loadUrl(fallbackUrl)
+                                                        return true
+                                                    }
+                                                }
+                                            }
+                                            // 拦截第三方客户端协议跳转（如 instagram:// 等），防止 WebView 内部抛出 ERR_UNKNOWN_URL_SCHEME 导致白屏
                                             return true
                                         }
                                         return false
@@ -550,6 +647,7 @@ fun WebLoginDialog(
                                         url?.let {
                                             currentUrl = it
                                             hasMainFrameError = false
+                                            view?.evaluateJavascript(stealthJs, null)
                                             checkAndSaveCookies(it)
                                         }
                                     }
@@ -557,6 +655,7 @@ fun WebLoginDialog(
                                     override fun onPageFinished(view: WebView?, url: String?) {
                                         url?.let {
                                             currentUrl = it
+                                            view?.evaluateJavascript(stealthJs, null)
                                             checkAndSaveCookies(it)
                                         }
                                     }
@@ -564,6 +663,7 @@ fun WebLoginDialog(
                                     override fun doUpdateVisitedHistory(view: WebView?, url: String?, isReload: Boolean) {
                                         url?.let {
                                             currentUrl = it
+                                            view?.evaluateJavascript(stealthJs, null)
                                             checkAndSaveCookies(it)
                                         }
                                     }
@@ -613,7 +713,7 @@ fun WebLoginDialog(
                                     OutlinedButton(
                                         onClick = {
                                             isDesktopMode = !isDesktopMode
-                                            webViewInstance?.settings?.userAgentString = if (isDesktopMode) desktopUa else mobileUa
+                                            webViewInstance?.settings?.userAgentString = if (isDesktopMode) cleanDesktopUa else cleanMobileUa
                                             hasMainFrameError = false
                                             webViewInstance?.reload()
                                         },
@@ -654,7 +754,9 @@ fun WebLoginDialog(
             text = {
                 Column {
                     Text(
-                        "若在内置浏览器中遇到二次验证回跳、风控卡顿，可直接将其他浏览器已登录的 Cookie 粘贴至此。",
+                        "若内置浏览器遭遇风控验证死循环，可从其他浏览器导入已登录的 Cookie：\n" +
+                        "• 手机免电脑方案（推荐）：使用极简「Via 浏览器」（2MB），登录 Instagram 后点「工具 → 网页资源 → Cookie」即可一键复制并粘贴在此；\n" +
+                        "• 电脑端方案：浏览器登录后按 F12 → Application/存储 → Cookies，复制 sessionid。",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
