@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 52 已完成（待真机复验与发版）**：Instagram 解析失败多通道全面修复（移动端 REST info 接口原生支持 + 网页端 GraphQL 2026 xig_polaris 架构适配 + 自动补齐 CSRF 令牌 + WebView DOM 视频标签兜底提取 + Cookie 更新自动解除风控冻结）
-- 下一阶段任务：真机走查阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）+ 阶段 50-46 各项；按需发版 v1.1.9
+- 当前正在开发任务：**阶段 52 已完成并发布 v1.1.9（versionCode 14）**：Instagram 解析失败多通道全面修复（移动端 REST info 接口原生支持 + 网页端 GraphQL 2026 xig_polaris 架构适配 + 自动补齐 CSRF 令牌 + WebView DOM 视频标签兜底提取 + Cookie 更新自动解除风控冻结）
+- 下一阶段任务：真机走查阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）+ 阶段 50-46 各项
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 14:15
+- 本次文档更新时间：10.25 14:34
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -859,6 +859,8 @@
   - `app/src/main/java/com/clipdown/app/clip/WebViewHtmlFetcher.kt`
 - 测试：
   - 全量测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
-  - `:app:assembleDebug` 构建成功，APK 正常打包产出。
-- 本次文档更新时间：10.25 14:15
+  - `:app:assembleDebug` 与 `:app:assembleRelease` 构建成功，APK 正常打包产出；
+  - **已一键发布正式版 v1.1.9（versionCode 14）至 GitHub Releases**，匿名校验 `releases/latest/download/update.json` 200 验证通过。
+- 本次文档更新时间：10.25 14:34
+
 
