@@ -27,7 +27,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
 # ── 参数 ─────────────────────────────────────────────────────────────────────
-BUMP="patch"
+BUMP=""
 NOTES=""
 DRY_RUN=0
 CREATE_REPO=0
@@ -53,6 +53,13 @@ while [[ $# -gt 0 ]]; do
     *) echo "未知参数：$1（用 --help 查看用法）" >&2; exit 2 ;;
   esac
 done
+
+# 如果指定了 --skip-build 但未显式传 --bump，强制设为 none 防版本与 APK 错位
+if [[ "$SKIP_BUILD" == "1" && -z "$BUMP" ]]; then
+  BUMP="none"
+elif [[ -z "$BUMP" ]]; then
+  BUMP="patch"
+fi
 
 # 默认发布仓库取自 gradle.properties，保证与 App 内更新通道一致
 if [[ -z "$REPO" ]]; then
@@ -112,6 +119,17 @@ else
 fi
 
 [[ -f "$APK_SRC" ]] || { echo "找不到 APK：$APK_SRC" >&2; exit 1; }
+
+# 校验 APK 二进制内实际的 versionCode 是否与发布目标一致，防止错位
+AAPT2="$(ls -1 /f/AndroidDev/sdk/build-tools/*/aapt2.exe 2>/dev/null | tail -n1 || true)"
+if [[ -n "$AAPT2" && -x "$AAPT2" ]]; then
+  APK_ACTUAL_CODE="$("$AAPT2" dump badging "$APK_SRC" 2>/dev/null | grep -o "versionCode='[0-9]*'" | cut -d"'" -f2)"
+  if [[ -n "$APK_ACTUAL_CODE" && "$APK_ACTUAL_CODE" != "$NEW_CODE" ]]; then
+    echo "❌ 严重错误：APK 内实际 versionCode ($APK_ACTUAL_CODE) 与目标发布版本 ($NEW_CODE) 不一致！" >&2
+    echo "请执行完整构建，切勿在版本变更时使用 --skip-build。" >&2
+    exit 1
+  fi
+fi
 
 # ── 3. 生成 update.json ─────────────────────────────────────────────────────
 DIST="build/dist"

@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 54 已完成并发布正式版 v1.1.12（versionCode 17）**：识别/下载过链接的重复下载提醒全链路恢复（悬浮窗解耦 5s 短抑制 + manual/auto 双通道统一 Mini 弹条确认再次下载 + 主应用 HomeScreen 查重预警 NoticeBar + 点击下载弹出 AlertDialog 确认拦截）
+- 当前正在开发任务：**阶段 54 已完成并发布正式版 v1.1.13（versionCode 18）**：识别/下载过链接的重复下载提醒全链路恢复 + 发布脚本 aapt2 强制自检防版本错位（解决手机端 1.1.12 更新循环提示）
 - 下一阶段任务：真机走查阶段 54（重复链接剪贴板与主应用内下载确认交互）+ 阶段 53（缩略图显示与内置播放器视觉/交互体验）+ 阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
@@ -933,8 +933,8 @@
 - 测试：
   - 全量单元测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
   - `:app:assembleDebug` 与 `:app:assembleRelease` 全绿通过，产物 1.86MB（1,953,212 字节）在 2MB 预算内；
-  - **已一键发布正式版 v1.1.12（versionCode 17）至 GitHub Releases**，匿名校验 `releases/latest/download/update.json` 302/200 验证通过。
-- 本次文档更新时间：10.25 15:42
+  - **已一键发布正式版 v1.1.13（versionCode 18）至 GitHub Releases**，匿名校验 `releases/latest/download/update.json` 200 验证通过（解决 1.1.12 更新死循环问题）。
+- 本次文档更新时间：10.25 16:10
 
 
 
