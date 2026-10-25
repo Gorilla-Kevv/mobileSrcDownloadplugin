@@ -99,7 +99,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 58 已完成**——彻底修复 Instagram Reel 视频解析被识别为图片及图片仅有一半的问题：①确立视频类型不变性 (Reel Type Invariance)，Reel 链接严禁降级为 25KB 封面缩略图，提取失败诚实抛出包含 Cookie/远端解析指引的异常；②`ownCodeSegment` 修复防语言/国家代码误截断正帖 JSON；③WebView UA 切换为真实移动端 UA 防 Meta 桌面风控登录墙；④WebView 挂载 `installIgHook` 拦截异步 GraphQL/REST 请求；⑤轮询探针禁止因 `image_versions2` 早退；⑥单测增至 145 例全绿。
+- 当前：**阶段 59 已完成**——落地内置浏览器快速一键登录与凭据自动捕获 (WebLoginDialog)：①全屏直角 WebView 官方登录沙箱，自动轮询嗅探各平台登录令牌（Instagram: `sessionid=`/`ds_user_id=`；小红书: `web_session=`/`a1=`；Facebook: `c_user=`/`xs=`）；②检测到登录成功即刻写入本地 `CookieStore` 并触发 `IgRiskGuard.reset()`，自动关闭弹窗无需手动复制；③设置页「登录态增强」卡片重构为直观状态药丸 + 直角一键登录按钮 + 高级折叠文本框；④首页解析受阻时直接弹出「打开内置浏览器一键登录」按钮，登录后自动重试解析。
+- 上轮：**阶段 58 已完成**——彻底修复 Instagram Reel 视频解析被识别为图片及图片仅有一半的问题：①确立视频类型不变性 (Reel Type Invariance)，Reel 链接严禁降级为 25KB 封面缩略图，提取失败诚实抛出包含 Cookie/远端解析指引的异常；②`ownCodeSegment` 修复防语言/国家代码误截断正帖 JSON；③WebView UA 切换为真实移动端 UA 防 Meta 桌面风控登录墙；④WebView 挂载 `installIgHook` 拦截异步 GraphQL/REST 请求；⑤轮询探针禁止因 `image_versions2` 早退；⑥单测增至 145 例全绿。
 - 上轮：**阶段 57 已完成**——彻底修复清理应用缓存/数据后悬浮球消失问题（启动与生命周期自愈拉起服务 + 智能授权引导弹窗 + 首页直角警告卡片 + 设置页联动跳转）。
 - 上轮：**阶段 56 已完成**——彻底修复 Instagram 媒体下载传输中断与半截截断黑图硬伤：①落地 `MediaIntegrityValidator` 校验文件大小及 JPEG (SOI/EOI)、PNG (IEND) 物理签名，杜绝半截黑图静默落库；②`HttpFileDownloader` 强化 Content-Length 断言及 `ProtocolException` 统一转译，补齐移动端拟真 UA；③`DownloadEngine` 联动 Range 续传重试与坏块清理；④`InstagramParser` 优化原图清晰度选举与 UA 注入。
 - 上轮：**阶段 55 已完成并发布 v1.1.14（versionCode 19）**——下载记录页视觉美化与四方形组件重构（完全摒弃圆角，统一采用 RectangleShape，含卡片/缩略图/状态标签/进度条/操作钮/确认弹窗）+ 真实本地物理路径展示（等宽字体/防溢出/一键复制入剪贴板）+ 图集存储目录汇总与子项明细路径。
@@ -128,4 +129,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.25 18:00 [BY Antigravity]
+- 本次文档更新时间：10.25 19:42 [BY Antigravity]

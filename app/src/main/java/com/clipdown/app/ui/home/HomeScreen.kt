@@ -75,6 +75,7 @@ import com.clipdown.app.ui.components.SecondaryButton
 import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
+import com.clipdown.app.ui.components.WebLoginDialog
 import com.clipdown.app.ui.profile.ProfileCenter
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.ui.theme.BrandContainer
@@ -118,6 +119,7 @@ fun HomeScreen(
     var error by remember { mutableStateOf<String?>(null) }
     var selected by remember { mutableStateOf(setOf(0)) }
     var isDuplicateParse by remember { mutableStateOf(false) }
+    var loginPlatformPrompt by remember { mutableStateOf<Platform?>(null) }
 
     var overlayGranted by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
     var accessibilityGranted by remember { mutableStateOf(AccessibilityState.isEnabled(context)) }
@@ -350,7 +352,25 @@ fun HomeScreen(
         }
 
         error?.let { msg ->
-            item { NoticeBar(msg, Tone.Danger) }
+            item {
+                Column {
+                    NoticeBar(msg, Tone.Danger)
+                    if (msg.contains("Instagram") && (msg.contains("Cookie") || msg.contains("登录") || msg.contains("Reel") || msg.contains("限制"))) {
+                        VSpace(AppTheme.spacing.xs)
+                        Button(
+                            onClick = { loginPlatformPrompt = Platform.INSTAGRAM },
+                            shape = RectangleShape,
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
+                            ),
+                            modifier = Modifier.fillMaxWidth().height(38.dp)
+                        ) {
+                            Text("打开内置浏览器一键登录 Instagram", style = MaterialTheme.typography.labelMedium)
+                        }
+                    }
+                }
+            }
         }
 
         result?.let { r ->
@@ -395,6 +415,20 @@ fun HomeScreen(
         item { PermissionSection(overlayGranted = overlayGranted, accessibilityGranted = accessibilityGranted) }
 
         item { PlatformSection() }
+    }
+
+    loginPlatformPrompt?.let { platform ->
+        WebLoginDialog(
+            platform = platform,
+            onDismiss = { loginPlatformPrompt = null },
+            onCookieSaved = {
+                loginPlatformPrompt = null
+                error = null
+                if (input.isNotBlank()) {
+                    parse(input)
+                }
+            }
+        )
     }
 }
 

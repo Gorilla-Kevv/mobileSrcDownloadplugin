@@ -11,13 +11,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
@@ -32,7 +36,9 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -51,6 +57,7 @@ import com.clipdown.app.ui.components.SettingSwitchRow
 import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
+import com.clipdown.app.ui.components.WebLoginDialog
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.update.UpdateSection
 import com.clipdown.parser.core.ParserEngine
@@ -81,6 +88,8 @@ fun SettingsScreen() {
     val enabledPlatforms by settings.enabledPlatforms.collectAsStateWithLifecycle(initialValue = emptySet())
 
     var hasOverlayPermission by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
+    var activeLoginPlatform by remember { mutableStateOf<Platform?>(null) }
+    var cookieRefreshToken by remember { mutableStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -244,36 +253,127 @@ fun SettingsScreen() {
         }
 
         item {
-            AppCard {
+            AppCard(shape = RectangleShape) {
                 CardHeader(
                     title = "登录态增强",
-                    subtitle = "免登录只能拿到低清或封面"
+                    subtitle = "免登录常被限制，一键登录获取原画质"
                 )
                 VSpace(AppTheme.spacing.xs)
                 Text(
-                    "从浏览器复制对应站点的 Cookie 粘贴到下面，即可获取原画质。Cookie 只保存在本机。",
-                    style = MaterialTheme.typography.labelMedium,
+                    "内置浏览器支持一键登录，成功后自动捕获并保存凭据，解决手动提取 Cookie 的难题。凭据仅保存在本机私有存储中。",
+                    style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 VSpace(AppTheme.spacing.md)
-                CookieStore.platformsNeedingCookie().forEach { p ->
-                    var text by remember(p) { mutableStateOf(CookieStore.get(context, p) ?: "") }
-                    OutlinedTextField(
-                        value = text,
-                        onValueChange = {
-                            text = it
-                            CookieStore.put(context, p, it)
-                        },
-                        label = { Text("${p.displayName} Cookie") },
-                        modifier = Modifier.fillMaxWidth().padding(bottom = AppTheme.spacing.sm),
-                        singleLine = true,
-                        visualTransformation = PasswordVisualTransformation(),
-                        shape = RoundedCornerShape(AppTheme.radius.control),
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedBorderColor = MaterialTheme.colorScheme.primary,
-                            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+
+                CookieStore.platformsNeedingCookie().forEachIndexed { index, p ->
+                    if (index > 0) {
+                        VSpace(AppTheme.spacing.sm)
+                        Hairline()
+                        VSpace(AppTheme.spacing.sm)
+                    }
+
+                    var cookieText by remember(p, cookieRefreshToken) {
+                        mutableStateOf(CookieStore.get(context, p) ?: "")
+                    }
+                    var showManualEdit by remember(p) { mutableStateOf(false) }
+                    val hasCookie = cookieText.isNotBlank()
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    p.displayName,
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Spacer(Modifier.width(AppTheme.spacing.xs))
+                                StatusPill(
+                                    text = if (hasCookie) "已登录" else "未登录",
+                                    tone = if (hasCookie) Tone.Success else Tone.Neutral,
+                                    shape = RectangleShape
+                                )
+                            }
+                            if (p == Platform.INSTAGRAM) {
+                                Text(
+                                    "解决 Reel 视频解析失败与风控登录墙",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Button(
+                                onClick = { activeLoginPlatform = p },
+                                shape = RectangleShape,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (hasCookie) MaterialTheme.colorScheme.surfaceVariant else MaterialTheme.colorScheme.primary,
+                                    contentColor = if (hasCookie) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onPrimary
+                                ),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Text(
+                                    if (hasCookie) "重新登录" else "一键登录",
+                                    style = MaterialTheme.typography.labelMedium
+                                )
+                            }
+
+                            if (hasCookie) {
+                                Spacer(Modifier.width(AppTheme.spacing.xs))
+                                OutlinedButton(
+                                    onClick = {
+                                        CookieStore.remove(context, p)
+                                        cookieText = ""
+                                        cookieRefreshToken++
+                                        Toast.makeText(context, "已清除 ${p.displayName} 登录态", Toast.LENGTH_SHORT).show()
+                                    },
+                                    shape = RectangleShape,
+                                    modifier = Modifier.height(34.dp)
+                                ) {
+                                    Text("清除", style = MaterialTheme.typography.labelMedium)
+                                }
+                            }
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { showManualEdit = !showManualEdit }
+                            .padding(vertical = AppTheme.spacing.xs),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (showManualEdit) "▼ 收起手动输入 Cookie" else "▶ 高级选项：手动查看/输入 Cookie",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
                         )
-                    )
+                    }
+
+                    if (showManualEdit) {
+                        OutlinedTextField(
+                            value = cookieText,
+                            onValueChange = {
+                                cookieText = it
+                                CookieStore.put(context, p, it)
+                            },
+                            label = { Text("${p.displayName} Cookie 文本") },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = AppTheme.spacing.xs),
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            shape = RectangleShape,
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                            )
+                        )
+                    }
                 }
             }
         }
@@ -343,5 +443,16 @@ fun SettingsScreen() {
         }
 
         item { UpdateSection() }
+    }
+
+    activeLoginPlatform?.let { platform ->
+        WebLoginDialog(
+            platform = platform,
+            onDismiss = { activeLoginPlatform = null },
+            onCookieSaved = {
+                cookieRefreshToken++
+                activeLoginPlatform = null
+            }
+        )
     }
 }

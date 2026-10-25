@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 58 已完成**：Instagram Reel 视频解析彻底强化与视频类型不变性（Reel Type Invariance，严禁降级为 25KB 封面图，移动端 UA + 网络请求钩子拦截 + code 切段修复 + 多 doc_id 兜底）
-- 下一阶段任务：发版 v1.1.17（versionCode 22）+ 真机走查阶段 58（Instagram Reel 视频解析与下载）+ 阶段 57（清理缓存后悬浮球自愈与授权引导）+ 阶段 56（下载文件完整性强校验与防截断）
+- 当前正在开发任务：**阶段 59 已完成**：实现内置浏览器快速一键登录与凭据自动捕获（WebLoginDialog 移动端拟真登录 + Cookie 实时嗅探入库 + 设置页状态感知与直角按钮 + 首页解析失败无缝联动登录与自动重试）
+- 下一阶段任务：发版 v1.1.18（versionCode 23）+ 真机走查阶段 59（内置浏览器快速一键登录 Instagram）+ 阶段 58（Instagram Reel 视频解析与下载）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **103 例** + downloader **38 例** + app **4 例**全绿（共 145 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 18:00
+- 本次文档更新时间：10.25 19:40
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1071,6 +1071,39 @@
   - 新增 `InstagramParserTest` 4 例（覆盖 Reel 严禁降级为图片、`browser_native_hd_url` 提取、语言代码防切断、`IG_PAGES` 拦截响应解析）；
   - `node scripts/check-inject-js.js` 验证注入 JS 语法 100% 通过。
 - 本次文档更新时间：10.25 18:00
+
+## 阶段 59 内置浏览器快速一键登录与凭据自动捕获 (WebLoginDialog) [计划时间：10.25 19:35 BY Antigravity][完成时间：10.25 19:42 BY Antigravity]
+- 用户反馈："开始推进内置浏览器快速一键登录"
+- 痛点分析：
+  1. **手机端提取 Cookie 极度繁琐**：Instagram/小红书等平台在移动端浏览器（如 Chrome/Edge）中不具备桌面端 F12 开发者工具，普通用户根本无法复制 `sessionid` 等 Cookie 字符串；
+  2. **免登录受限导致死锁**：Meta 全面封杀匿名视频流提取，用户因不会提取 Cookie 无法激活登录态通道，形成体验死锁；
+  3. **缺少上下文直达**：当用户在首页解析 Instagram Reel 失败收到"需配置 Cookie"提示时，必须退出当前页面到处翻找设置项。
+- 落地重构与增强：
+  1. **`WebLoginDialog` 全功能登录弹窗**：
+     - 新建 `app/src/main/java/com/clipdown/app/ui/components/WebLoginDialog.kt`；
+     - 采用全屏安全视口与直角设计风格 (`RectangleShape`)；
+     - 包含安全操作栏：返回/后退导航、当前域名显示、进度指示条、刷新按钮、手动"保存凭据"按钮与关闭按钮；
+     - 官方页面加载：配置移动端标准 UA（Pixel 6 Android Chrome），开启 JS 与 DOM Storage，引导加载各平台移动登录页（Instagram: `/accounts/login/`、小红书: `/login`、Facebook: `/login/`）；
+     - **实时 Cookie 自动嗅探**：挂载 `onPageStarted`、`onPageFinished`、`doUpdateVisitedHistory` 及后台 1.2s 周期轮询，实时检测 `CookieManager` 中的鉴权令牌（Instagram: `sessionid=`/`ds_user_id=`；小红书: `web_session=`/`a1=`；Facebook: `c_user=`/`xs=`）；
+     - **无感保存与自动收口**：一旦检测到登录成功，自动调用 `CookieStore.put` 本地持久化，触发 `IgRiskGuard.reset()` 清除风控冷却，弹出成功 Toast 并自动延时关闭弹窗；
+  2. **设置页「登录态增强」视觉与交互大升级**：
+     - 在 `SettingsScreen.kt` 中重构登录卡片，支持直观的状态标签（`StatusPill("已登录", Tone.Success)` / `StatusPill("未登录", Tone.Neutral)`）；
+     - 每项提供直角「一键登录」按钮（已登录状态显示「重新登录」与「清除」按钮）；
+     - 折叠式保留高级「手动查看/输入 Cookie」入口，兼顾极简交互与极客自定义；
+  3. **首页解析失败无缝联动与自动重试**：
+     - 在 `HomeScreen.kt` 中，当解析 Instagram 触发登录态/风控警告时，在错误提示条下方直接展示「打开内置浏览器一键登录 Instagram」快捷按钮；
+     - 用户在弹出的内置浏览器中完成登录后，弹窗关闭并**自动触发再次解析原链接**，无需用户重新粘贴或手动重试。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/components/WebLoginDialog.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/ui/settings/SettingsScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **145 例全绿**（parser 103 例、downloader 38 例、app 4 例）；
+  - `:app:compileDebugKotlin` 编译 0 错误 0 警告通过。
+- 本次文档更新时间：10.25 19:42
+
 
 
 
