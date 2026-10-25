@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- FileProvider 暴露给系统安装器的路径：仅应用缓存目录下的 update/（下载的升级 APK） -->
+<!-- FileProvider 暴露给系统安装器与外部分享的路径 -->
 <paths>
     <cache-path name="update" path="update/" />
+    <external-files-path name="downloads" path="downloads/" />
+    <external-path name="external" path="." />
 </paths>

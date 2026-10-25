@@ -2,6 +2,7 @@ package com.clipdown.app.ui.home
 
 import android.content.Intent
 import android.provider.Settings
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -86,7 +87,11 @@ import kotlinx.coroutines.withContext
  * 卡片间距、内边距、标题字号全部取自 [AppTheme]，不再各写各的。
  */
 @Composable
-fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) {
+fun HomeScreen(
+    autoFocusParse: Boolean = false,
+    onOpenProfile: () -> Unit = {},
+    onOpenDownloads: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -260,9 +265,17 @@ fun HomeScreen(autoFocusParse: Boolean = false, onOpenProfile: () -> Unit = {}) 
                     onSetSelection = { selected = it },
                     onDownload = { indices ->
                         val items = indices.mapNotNull { r.media.getOrNull(it) }
-                        DownloadController.enqueueAll(items, r.platform, r.title, r.sourceUrl)
-                        context.startService(DownloadService.intent(context, DownloadService.ACTION_RESUME))
-                    }
+                        if (items.isNotEmpty()) {
+                            DownloadController.enqueueAll(items, r.platform, r.title, r.sourceUrl)
+                            context.startService(DownloadService.intent(context, DownloadService.ACTION_RESUME))
+                            Toast.makeText(
+                                context,
+                                "已加入下载队列（${items.size} 项），可在「下载」页面查看",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                    },
+                    onOpenDownloads = onOpenDownloads
                 )
             }
         }
@@ -279,11 +292,19 @@ private fun ResultCard(
     selectedIndices: Set<Int>,
     onToggle: (Int) -> Unit,
     onSetSelection: (Set<Int>) -> Unit,
-    onDownload: (Set<Int>) -> Unit
+    onDownload: (Set<Int>) -> Unit,
+    onOpenDownloads: () -> Unit
 ) {
     val multiSelect = result.isAlbumMultiSelect
     val imageIndices = remember(result) {
         result.media.indices.filter { result.media[it].kind == MediaKind.IMAGE }.toSet()
+    }
+
+    // 记录已加入下载队列的索引与交互反馈，防止重复点击
+    var enqueuedIndices by remember(result) { mutableStateOf<Set<Int>>(emptySet()) }
+    var downloadFeedback by remember(result) { mutableStateOf<String?>(null) }
+    val isCurrentSelectionEnqueued = remember(selectedIndices, enqueuedIndices) {
+        selectedIndices.isNotEmpty() && selectedIndices.all { it in enqueuedIndices }
     }
 
     AppCard {
@@ -361,14 +382,49 @@ private fun ResultCard(
             }
         }
 
+        // 下载交互反馈提示
+        if (!downloadFeedback.isNullOrBlank()) {
+            VSpace(AppTheme.spacing.md)
+            NoticeBar(downloadFeedback!!, Tone.Success)
+        }
+
         VSpace(AppTheme.spacing.md)
-        PrimaryButton(
-            text = if (multiSelect) "下载所选 ${selectedIndices.size} 项" else "下载所选资源",
-            icon = Icons.Default.Download,
-            enabled = selectedIndices.isNotEmpty(),
-            modifier = Modifier.fillMaxWidth(),
-            onClick = { onDownload(selectedIndices) }
-        )
+        if (isCurrentSelectionEnqueued) {
+            // 已加入队列：展示"重新下载"与"查看下载任务"，避免误重复点击
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)
+            ) {
+                SecondaryButton(
+                    text = "重新下载",
+                    modifier = Modifier.weight(1f),
+                    onClick = {
+                        val count = selectedIndices.size
+                        onDownload(selectedIndices)
+                        downloadFeedback = "已重新加入下载队列（$count 项）"
+                    }
+                )
+                PrimaryButton(
+                    text = "查看下载任务",
+                    icon = Icons.Default.Download,
+                    modifier = Modifier.weight(1f),
+                    onClick = onOpenDownloads
+                )
+            }
+        } else {
+            PrimaryButton(
+                text = if (multiSelect) "下载所选 ${selectedIndices.size} 项" else "下载所选资源",
+                icon = Icons.Default.Download,
+                enabled = selectedIndices.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth(),
+                onClick = {
+                    val count = selectedIndices.size
+                    onDownload(selectedIndices)
+                    enqueuedIndices = enqueuedIndices + selectedIndices
+                    downloadFeedback = "已成功加入下载队列（$count 项），后台下载中"
+                }
+            )
+        }
     }
 }
 

@@ -12,9 +12,9 @@ import java.io.File
 /**
  * 任务仓储。
  *
- * 数据库是唯一数据源，内存中的 StateFlow 只是它的只读快照：
- * 任何写操作后调用 [refresh] 重新读取，保证进程内所有页面看到一致的状态。
- * 这样即便服务被系统杀掉后重启，UI 也能立刻恢复出完整列表。
+ * 内存持有任务列表只读流，以 SQLite 为准。
+ * UI 观察 [tasks]，变更时通过仓储写库并拉取最新快照发射到流中，
+ * 避免状态流与数据库产生竞态漂移。
  */
 class TaskRepository internal constructor(private val db: TaskDatabase) {
 
@@ -44,12 +44,22 @@ class TaskRepository internal constructor(private val db: TaskDatabase) {
 
     private fun deleteTaskFile(task: TaskEntity) {
         val ctx = appContext ?: return
-        task.localUri?.let { uri ->
-            runCatching { ctx.contentResolver.delete(Uri.parse(uri), null, null) }
-                .onFailure { ctx.logDelete(uri, it) }
+        task.localUri?.let { uriStr ->
+            runCatching {
+                val uri = Uri.parse(uriStr)
+                when {
+                    uri.scheme == "content" -> ctx.contentResolver.delete(uri, null, null)
+                    uri.scheme == "file" -> uri.path?.let { File(it).delete() }
+                    uriStr.startsWith("/") -> File(uriStr).delete()
+                    else -> ctx.contentResolver.delete(uri, null, null)
+                }
+            }.onFailure { ctx.logDelete(uriStr, it) }
         }
         task.localPath?.let { p ->
-            runCatching { File(p).delete() }
+            runCatching {
+                val f = File(p)
+                if (f.exists()) f.delete()
+            }
         }
     }
 
@@ -74,6 +84,6 @@ class TaskRepository internal constructor(private val db: TaskDatabase) {
         }
 
         fun get(): TaskRepository = instance
-            ?: error("TaskRepository 未安装，请先调用 DownloadController.install(context)")
+            ?: error("TaskRepository 未初始化，请先调用 install(db, context)")
     }
 }

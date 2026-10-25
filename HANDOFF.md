@@ -95,7 +95,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 50 已完成并发布 v1.1.8（待真机复验）**——开合动画治卡顿：expandVertically 布局动画（逐帧测量+窗口 resize+LazyColumn 重测）改为**渲染层裁剪揭示**：内容一次性按最终尺寸布局（窗口开/关各 resize 一次），`Animatable`+`foundation GenericShape((Path,Size,LayoutDirection)->Unit)` 逐帧改 clip 矩形 + graphicsLayer alpha 淡入；Compose 1.7.5 三坑（GraphicsLayerScope 无自由裁剪属性 / Shape object 实现报 overrides nothing 必须走 GenericShape / 构造 lambda 重载歧义需显式函数类型）见 PROGRESS 阶段 50
+- 当前：**阶段 51 已完成（待真机复验与发版）**——①首页下载交互反馈与防重复点击：Toast + Success 状态条 + 按钮动态切换为「重新下载」与「查看下载任务」（直跳下载管理页）②下载记录真实删除确认弹窗：单任务与批量均弹窗确认，明确提示彻底删除本地文件与记录；升级 TaskRepository.deleteTaskFile 全格式兼容 ③下载列表缩略图直观预览：单条与图集组卡横排画廊展示 ④内置全屏图片与视频媒体浏览器（MediaViewerDialog）：全屏黑底沉浸视图，多图滑动与双击/捏合手势缩放，视频原生 VideoView 硬件加速播放与控制条，带应用内删除/外部分享/系统应用打开
+- 上轮：**阶段 50 已完成并发布 v1.1.8（待真机复验）**——开合动画治卡顿：expandVertically 布局动画（逐帧测量+窗口 resize+LazyColumn 重测）改为**渲染层裁剪揭示**：内容一次性按最终尺寸布局（窗口开/关各 resize 一次），`Animatable`+`foundation GenericShape((Path,Size,LayoutDirection)->Unit)` 逐帧改 clip 矩形 + graphicsLayer alpha 淡入；Compose 1.7.5 三坑（GraphicsLayerScope 无自由裁剪属性 / Shape object 实现报 overrides nothing 必须走 GenericShape / 构造 lambda 重载歧义需显式函数类型）见 PROGRESS 阶段 50
 - 上轮：**阶段 49 已完成并发布 v1.1.7（待真机复验）**——①胶囊宽度 64→**52dp**（=气泡头像圆直径 `BAR_WIDTH_DP`，两侧与圆相切；窗口仍 64dp 宽保触摸区）②竖条开合加 `AnimatedVisibility`（fadeIn+expandVertically 240ms / fadeOut+shrinkVertically 200ms，以气泡贴合端为生长基准、barOnTop 镜像；退出期用 `lastBarState` 续渲染防空白；`syncBubbleWindow` 收起态保持延伸方向到动画播完防跳边）
 - 上轮：**阶段 48 已完成并发布 v1.1.6（待真机复验）**——竖条按用户参考图重设计：气泡与胶囊**叠合**（BubbleWindowContent 改 Box：胶囊先画垫底、气泡后画压顶，圆心落胶囊平边、重叠 32dp=BAR_OVERLAP_DP）；胶囊靠气泡端直角、另一端半圆（barOnTop 镜像）；气泡侧内边距 40dp 保护 64dp 触摸区；面板头部下载图标、底部改**深色圆形 ×**（=关闭气泡，收起面板仍点气泡 toggle）；syncBubbleWindow 去 gap、barFull 360→400。另：真机"检查更新 connection closed"定性为设备 VPN 未覆盖 github.com 的环境问题（用户指示不处理）
 - 上上轮：**阶段 47 已完成并发布 v1.1.5（待真机复验）**——①竖条/面板统一纯色胶囊底板（64dp、16dp 圆角、GlassBase 深底+描边，Mini/图集/面板共用；解决真机浅色页面上部件浮空看不清）②IG 混合图集（图+视频）解析修复：GraphQL 通道补 `carousel_media`/`edge_media_to_sidecar_to_children` 提取 + 正帖节点内递归兜底（取证：游客态 embed/帖子页均已是 JS 空壳，匿名通道全线失效，带 Cookie 的 GraphQL 是单帖唯一通道；详见 PROGRESS 阶段 47）
@@ -116,4 +117,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.09 23:33 [BY Qoder]
+- 本次文档更新时间：10.25 13:45 [BY Antigravity]

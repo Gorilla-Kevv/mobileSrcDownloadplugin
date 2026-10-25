@@ -1,7 +1,9 @@
 package com.clipdown.app.ui.downloads
 
 import android.content.Intent
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +18,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
@@ -25,6 +29,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircle
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -34,17 +41,24 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import coil.compose.AsyncImage
 import com.clipdown.app.ui.components.AppCard
 import com.clipdown.app.ui.components.EmptyState
+import com.clipdown.app.ui.components.MediaViewerDialog
 import com.clipdown.app.ui.components.PageHeader
 import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
@@ -56,6 +70,7 @@ import com.clipdown.downloader.model.ProgressEvent
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.parser.model.MediaItem
 import kotlinx.coroutines.delay
+import java.io.File
 
 /**
  * 下载管理页。
@@ -64,7 +79,10 @@ import kotlinx.coroutines.delay
  * 前者保证刷新/重启后状态一致，后者保证进度条流畅，两者叠加显示。
  *
  * 图集分组：同一来源帖子（sourceUrl 相同）聚合为一张"整包"组卡，避免按下载顺序平铺产生大量冗余条目。
- * 版式与首页共用同一套卡片/胶囊/间距令牌。
+ * 现已支持：
+ * 1. 列表直观媒体缩略图预览（图片/视频带播放徽标）。
+ * 2. 点击条目即呼出内置全屏图片/视频浏览器（多图可滑动、手势双击捏合缩放、视频带控制条循环播放）。
+ * 3. 删除文件联动：点击删除带确认弹窗，明确提示同时删除本地文件与记录。
  */
 @Composable
 fun DownloadsScreen() {
@@ -72,6 +90,14 @@ fun DownloadsScreen() {
     val tasks by DownloadController.repository().tasks.collectAsStateWithLifecycle()
     val progressMap = remember { mutableStateMapOf<String, ProgressEvent>() }
     val expandedGroups = remember { mutableStateMapOf<String, Boolean>() }
+
+    // 内置全屏媒体浏览器状态
+    var previewTasks by remember { mutableStateOf<List<TaskEntity>?>(null) }
+    var previewInitialIndex by remember { mutableIntStateOf(0) }
+
+    // 删除确认弹窗状态（单条与整组）
+    var taskPendingDelete by remember { mutableStateOf<TaskEntity?>(null) }
+    var albumPendingDelete by remember { mutableStateOf<List<TaskEntity>?>(null) }
 
     LaunchedEffect(Unit) {
         DownloadController.engine().progress.collect { progressMap[it.taskId] = it }
@@ -124,8 +150,11 @@ fun DownloadsScreen() {
                     progress = progressMap[row.task.id],
                     onPause = { DownloadController.pause(row.task.id) },
                     onResume = { DownloadController.resume(row.task.id) },
-                    onDelete = { DownloadController.repository().delete(row.task.id) },
-                    onOpen = { openTask(context, row.task) },
+                    onDeleteRequest = { taskPendingDelete = row.task },
+                    onPreview = {
+                        previewTasks = listOf(row.task)
+                        previewInitialIndex = 0
+                    },
                     onOpenSource = { openSource(context, row.task) }
                 )
                 is DownloadRow.Album -> AlbumGroupCard(
@@ -133,21 +162,103 @@ fun DownloadsScreen() {
                     expanded = expandedGroups[row.key] == true,
                     progressMap = progressMap,
                     onToggleExpand = { expandedGroups[row.key] = !(expandedGroups[row.key] ?: false) },
-                    onOpen = {
-                        openTask(
-                            context,
-                            row.tasks.firstOrNull { it.status == DownloadStatus.COMPLETED } ?: row.tasks.first()
-                        )
+                    onPreviewAlbum = { initialTask ->
+                        val completed = row.tasks.filter { it.status == DownloadStatus.COMPLETED }
+                        if (completed.isNotEmpty()) {
+                            previewTasks = completed
+                            previewInitialIndex = if (initialTask != null) {
+                                completed.indexOf(initialTask).coerceAtLeast(0)
+                            } else 0
+                        }
                     },
                     onOpenSource = { openSource(context, row.tasks.first()) },
-                    onOpenTask = { openTask(context, it) },
                     onPause = { DownloadController.pause(it) },
                     onResume = { DownloadController.resume(it) },
-                    onDelete = { DownloadController.repository().delete(it) },
-                    onDeleteAll = { row.tasks.forEach { DownloadController.repository().delete(it.id) } }
+                    onDeleteTaskRequest = { task -> taskPendingDelete = task },
+                    onDeleteAllRequest = { albumPendingDelete = row.tasks }
                 )
             }
         }
+    }
+
+    // 单个任务删除确认弹窗
+    taskPendingDelete?.let { task ->
+        AlertDialog(
+            onDismissRequest = { taskPendingDelete = null },
+            title = { Text("删除文件确认", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(
+                    "确定要删除「${task.title}」对应的本地媒体文件以及下载记录吗？删除后本地文件将无法恢复。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        DownloadController.repository().delete(task.id)
+                        Toast.makeText(context, "已删除本地文件与记录", Toast.LENGTH_SHORT).show()
+                        taskPendingDelete = null
+                    }
+                ) {
+                    Text("删除文件", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { taskPendingDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // 整组任务删除确认弹窗
+    albumPendingDelete?.let { tasksToDelete ->
+        AlertDialog(
+            onDismissRequest = { albumPendingDelete = null },
+            title = { Text("批量删除文件确认", style = MaterialTheme.typography.titleMedium) },
+            text = {
+                Text(
+                    "确定要删除该图组共 ${tasksToDelete.size} 个本地媒体文件及下载记录吗？删除后本地文件将无法恢复。",
+                    style = MaterialTheme.typography.bodyMedium
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        tasksToDelete.forEach { DownloadController.repository().delete(it.id) }
+                        Toast.makeText(context, "已删除全部 ${tasksToDelete.size} 个本地文件与记录", Toast.LENGTH_SHORT).show()
+                        albumPendingDelete = null
+                    }
+                ) {
+                    Text("全部删除", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { albumPendingDelete = null }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
+
+    // 内置媒体浏览器
+    previewTasks?.let { pTasks ->
+        MediaViewerDialog(
+            tasks = pTasks,
+            initialIndex = previewInitialIndex,
+            onDismiss = { previewTasks = null },
+            onDeleteTask = { taskToDelete ->
+                DownloadController.repository().delete(taskToDelete.id)
+                val remaining = pTasks.filter { it.id != taskToDelete.id }
+                if (remaining.isEmpty()) {
+                    previewTasks = null
+                } else {
+                    previewTasks = remaining
+                    previewInitialIndex = previewInitialIndex.coerceIn(0, remaining.size - 1)
+                }
+                Toast.makeText(context, "已删除文件及记录", Toast.LENGTH_SHORT).show()
+            }
+        )
     }
 }
 
@@ -190,16 +301,6 @@ private fun categoryLabel(task: TaskEntity): String =
     else if (task.mimeType.startsWith("audio/")) "音频"
     else "图片"
 
-private fun openTask(context: android.content.Context, task: TaskEntity) {
-    val uri = task.localUri ?: return
-    runCatching {
-        context.startActivity(Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(android.net.Uri.parse(uri), task.mimeType)
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        })
-    }
-}
-
 private fun openSource(context: android.content.Context, task: TaskEntity) {
     val url = task.sourceUrl ?: return
     runCatching {
@@ -215,14 +316,53 @@ private fun TaskRow(
     progress: ProgressEvent?,
     onPause: () -> Unit,
     onResume: () -> Unit,
-    onDelete: () -> Unit,
-    onOpen: () -> Unit,
+    onDeleteRequest: () -> Unit,
+    onPreview: () -> Unit,
     onOpenSource: () -> Unit = {},
     compact: Boolean = false
 ) {
-    val clickable = task.status == DownloadStatus.COMPLETED && task.localUri != null
+    val clickable = task.status == DownloadStatus.COMPLETED && (task.localUri != null || task.localPath != null)
     AppCard(padding = if (compact) AppTheme.spacing.md else AppTheme.spacing.lg) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = if (clickable) Modifier.clickable { onPreview() } else Modifier
+        ) {
+            // 左侧媒体预览缩略图
+            Box(
+                modifier = Modifier
+                    .size(if (compact) 46.dp else 56.dp)
+                    .clip(RoundedCornerShape(AppTheme.radius.thumb))
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                val thumbModel = resolveThumbModel(task)
+                if (thumbModel != null) {
+                    AsyncImage(
+                        model = thumbModel,
+                        contentDescription = task.title,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                if (task.mimeType.startsWith("video/")) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.3f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.PlayCircle,
+                            contentDescription = "视频",
+                            tint = Color.White,
+                            modifier = Modifier.size(if (compact) 20.dp else 26.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.width(AppTheme.spacing.md))
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     task.title,
@@ -250,8 +390,14 @@ private fun TaskRow(
 
         VSpace(AppTheme.spacing.xs)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onOpen, enabled = clickable) {
-                Text("打开", style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = onPreview, enabled = clickable) {
+                Icon(
+                    Icons.Default.Visibility,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text("预览", style = MaterialTheme.typography.labelLarge)
             }
             if (task.sourceUrl != null) {
                 TextButton(onClick = onOpenSource) {
@@ -272,8 +418,13 @@ private fun TaskRow(
 
                 else -> Unit
             }
-            IconButton(onClick = onDelete) {
-                Icon(Icons.Default.Delete, contentDescription = "删除", modifier = Modifier.size(20.dp))
+            IconButton(onClick = onDeleteRequest) {
+                Icon(
+                    Icons.Default.Delete,
+                    contentDescription = "删除文件",
+                    tint = MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp)
+                )
             }
         }
     }
@@ -287,13 +438,12 @@ private fun AlbumGroupCard(
     expanded: Boolean,
     progressMap: Map<String, ProgressEvent>,
     onToggleExpand: () -> Unit,
-    onOpen: () -> Unit,
+    onPreviewAlbum: (TaskEntity?) -> Unit,
     onOpenSource: () -> Unit,
-    onOpenTask: (TaskEntity) -> Unit,
     onPause: (String) -> Unit,
     onResume: (String) -> Unit,
-    onDelete: (String) -> Unit,
-    onDeleteAll: () -> Unit
+    onDeleteTaskRequest: (TaskEntity) -> Unit,
+    onDeleteAllRequest: () -> Unit
 ) {
     val done = tasks.count { it.status == DownloadStatus.COMPLETED }
     val failed = tasks.count { it.status == DownloadStatus.FAILED }
@@ -310,7 +460,10 @@ private fun AlbumGroupCard(
 
     AppCard {
         // 整包头：标题 + 状态胶囊 + 明细开关
-        Row(verticalAlignment = Alignment.CenterVertically) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = if (done > 0) Modifier.clickable { onPreviewAlbum(null) } else Modifier
+        ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     tasks.first().title,
@@ -343,22 +496,72 @@ private fun AlbumGroupCard(
             }
         }
 
+        // 下载中展示整体进度条
         if (active > 0) {
             VSpace(AppTheme.spacing.md)
             ProgressBar(done.toFloat() / tasks.size)
         }
 
+        // 已完成的图片缩略图横排画廊展示，点任意一张直接唤起该图内置预览
+        if (done > 0) {
+            val completedTasks = remember(tasks) { tasks.filter { it.status == DownloadStatus.COMPLETED } }
+            VSpace(AppTheme.spacing.sm)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.xs)) {
+                items(completedTasks, key = { it.id }) { t ->
+                    Box(
+                        modifier = Modifier
+                            .size(52.dp)
+                            .clip(RoundedCornerShape(AppTheme.radius.thumb))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                            .clickable { onPreviewAlbum(t) },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        val model = resolveThumbModel(t)
+                        if (model != null) {
+                            AsyncImage(
+                                model = model,
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                        if (t.mimeType.startsWith("video/")) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(Color.Black.copy(alpha = 0.3f)),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    Icons.Default.PlayArrow,
+                                    contentDescription = null,
+                                    tint = Color.White,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         VSpace(AppTheme.spacing.xs)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onOpen, enabled = done > 0) {
-                Text(if (tasks.size > 1) "打开（第 1 张）" else "打开", style = MaterialTheme.typography.labelLarge)
+            TextButton(onClick = { onPreviewAlbum(null) }, enabled = done > 0) {
+                Icon(
+                    Icons.Default.Visibility,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
+                Spacer(Modifier.width(4.dp))
+                Text(if (tasks.size > 1) "浏览全部 ($done)" else "预览", style = MaterialTheme.typography.labelLarge)
             }
             if (tasks.first().sourceUrl != null) {
                 TextButton(onClick = onOpenSource) {
                     Text("来源", style = MaterialTheme.typography.labelLarge)
                 }
             }
-            TextButton(onClick = onDeleteAll, enabled = active == 0) {
+            TextButton(onClick = onDeleteAllRequest, enabled = active == 0) {
                 Text("删除全部", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
             }
             Spacer(Modifier.weight(1f))
@@ -381,8 +584,8 @@ private fun AlbumGroupCard(
                         progress = progressMap[task.id],
                         onPause = { onPause(task.id) },
                         onResume = { onResume(task.id) },
-                        onDelete = { onDelete(task.id) },
-                        onOpen = { onOpenTask(task) },
+                        onDeleteRequest = { onDeleteTaskRequest(task) },
+                        onPreview = { onPreviewAlbum(task) },
                         onOpenSource = {},
                         compact = true
                     )
@@ -446,6 +649,15 @@ private fun statusText(task: TaskEntity, progress: ProgressEvent?): String {
 private fun formatSpeed(bytesPerSec: Long): String {
     val kb = bytesPerSec / 1024.0
     return if (kb >= 1024) String.format("%.1f MB/s", kb / 1024) else String.format("%.0f KB/s", kb)
+}
+
+private fun resolveThumbModel(task: TaskEntity): Any? {
+    task.localUri?.let { if (it.isNotBlank()) return android.net.Uri.parse(it) }
+    task.localPath?.let {
+        val f = File(it)
+        if (f.exists()) return f
+    }
+    return task.coverUrl
 }
 
 /** 下载记录时间显示：任务完成/更新时间 */

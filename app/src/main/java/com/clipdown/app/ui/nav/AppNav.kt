@@ -59,6 +59,14 @@ fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
         }
     }
 
+    val goToDownloads: () -> Unit = {
+        navController.navigate(Route.Downloads.path) {
+            popUpTo(navController.graph.findStartDestination().id) { saveState = true }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
     // 从首页/气泡入口打开主页标签页
     LaunchedEffect(openProfile) {
         if (openProfile) goToProfile()
@@ -115,7 +123,8 @@ fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
             composable(Route.Home.path) {
                 HomeScreen(
                     autoFocusParse = openParse,
-                    onOpenProfile = goToProfile
+                    onOpenProfile = goToProfile,
+                    onOpenDownloads = goToDownloads
                 )
             }
             composable(Route.Downloads.path) { DownloadsScreen() }
