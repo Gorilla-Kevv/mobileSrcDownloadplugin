@@ -122,6 +122,39 @@ class TaskDatabase(context: Context) :
             }
         }
 
+    /** 获取当前处于非终态（等待中、下载中、合并处理中）的任务总数 */
+    fun activeCount(): Int =
+        readableDatabase.rawQuery(
+            "SELECT COUNT(*) FROM tasks WHERE status IN (?,?,?)",
+            arrayOf(DownloadStatus.PENDING.name, DownloadStatus.DOWNLOADING.name, DownloadStatus.MERGING.name)
+        ).use { c ->
+            if (c.moveToFirst()) c.getInt(0) else 0
+        }
+
+    data class TaskCounts(val active: Int, val completed: Int, val failed: Int)
+
+    fun counts(): TaskCounts {
+        var active = 0
+        var completed = 0
+        var failed = 0
+        readableDatabase.rawQuery(
+            "SELECT status, COUNT(*) FROM tasks GROUP BY status",
+            null
+        ).use { c ->
+            while (c.moveToNext()) {
+                val statusStr = c.getString(0)
+                val count = c.getInt(1)
+                val status = runCatching { DownloadStatus.valueOf(statusStr) }.getOrNull()
+                when {
+                    status?.isActive == true -> active += count
+                    status == DownloadStatus.COMPLETED -> completed += count
+                    status == DownloadStatus.FAILED -> failed += count
+                }
+            }
+        }
+        return TaskCounts(active, completed, failed)
+    }
+
     /** 启动时调用：把上次进程被杀时残留的进行中任务置为失败，避免 UI 显示"永远在进行" */
     fun resetOrphans() {
         val cv = ContentValues().apply {

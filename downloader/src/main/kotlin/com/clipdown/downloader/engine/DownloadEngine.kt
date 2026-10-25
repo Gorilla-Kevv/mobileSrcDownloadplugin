@@ -24,6 +24,7 @@ import okhttp3.OkHttpClient
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * 下载引擎（自研）。
@@ -62,6 +63,9 @@ class DownloadEngine(
     private val jobs = ConcurrentHashMap<String, Job>()
     private val speedTrackers = ConcurrentHashMap<String, SpeedTracker>()
 
+    private val sessionCompleted = AtomicInteger(0)
+    private val sessionFailed = AtomicInteger(0)
+
     private val _progress = MutableSharedFlow<ProgressEvent>(extraBufferCapacity = 64)
     val progress: SharedFlow<ProgressEvent> = _progress.asSharedFlow()
 
@@ -95,11 +99,30 @@ class DownloadEngine(
         config = newConfig
     }
 
-    fun foregroundNotification() = notifier.foregroundNotification(jobs.size)
+    fun activeCount(): Int = runCatching { db.activeCount() }.getOrDefault(jobs.size)
+
+    fun foregroundNotification() = notifier.foregroundNotification(
+        activeCount = activeCount(),
+        completedCount = sessionCompleted.get(),
+        failedCount = sessionFailed.get()
+    )
+
+    fun refreshForegroundNotification() {
+        val active = activeCount()
+        val completed = sessionCompleted.get()
+        val failed = sessionFailed.get()
+        notifier.updateForeground(active, completed, failed)
+        listener?.onForegroundStateChanged(active)
+    }
 
     fun enqueue(task: TaskEntity) {
+        if (activeCount() == 0) {
+            sessionCompleted.set(0)
+            sessionFailed.set(0)
+        }
         db.insert(task)
         repository.refresh()
+        refreshForegroundNotification()
         queue.trySend(task.id)
     }
 
@@ -109,13 +132,19 @@ class DownloadEngine(
         db.updateStatus(taskId, DownloadStatus.PAUSED)
         notifier.cancel(taskId)
         repository.refresh()
+        refreshForegroundNotification()
     }
 
     fun resume(taskId: String) {
         val t = db.get(taskId) ?: return
         if (t.status.isActive) return
+        if (activeCount() == 0) {
+            sessionCompleted.set(0)
+            sessionFailed.set(0)
+        }
         db.updateStatus(taskId, DownloadStatus.PENDING)
         repository.refresh()
+        refreshForegroundNotification()
         queue.trySend(taskId)
     }
 
@@ -127,10 +156,12 @@ class DownloadEngine(
         db.updateStatus(taskId, DownloadStatus.CANCELED)
         notifier.cancel(taskId)
         repository.refresh()
+        refreshForegroundNotification()
     }
 
     fun cancelAll() {
         jobs.keys.toList().forEach { cancel(it) }
+        refreshForegroundNotification()
     }
 
     private suspend fun runTask(taskId: String) {
@@ -141,6 +172,7 @@ class DownloadEngine(
 
             db.updateStatus(taskId, DownloadStatus.DOWNLOADING)
             repository.refresh()
+            refreshForegroundNotification()
 
             val state = HttpFileDownloader.State(
                 downloaded = task.downloadedBytes,
@@ -158,8 +190,10 @@ class DownloadEngine(
             val failure = result.exceptionOrNull()
             when {
                 result.isSuccess -> {
+                    sessionCompleted.incrementAndGet()
                     db.get(taskId)?.let { notifier.notifyFinished(it) }
                     repository.refresh()
+                    refreshForegroundNotification()
                     listener?.onTaskUpdated(db.get(taskId) ?: return)
                     return
                 }
@@ -169,6 +203,7 @@ class DownloadEngine(
                         db.updateStatus(taskId, DownloadStatus.PAUSED)
                     }
                     repository.refresh()
+                    refreshForegroundNotification()
                     return
                 }
                 else -> {
@@ -189,9 +224,11 @@ class DownloadEngine(
                         _progress.tryEmit(
                             ProgressEvent(taskId, task.downloadedBytes, task.totalBytes, 0, DownloadStatus.FAILED)
                         )
+                        sessionFailed.incrementAndGet()
                         db.get(taskId)?.let { notifier.notifyFinished(it) }
                         notifier.cancel(taskId)
                         repository.refresh()
+                        refreshForegroundNotification()
                         return
                     }
                     delay(config.retryBackoffMs * attempt)

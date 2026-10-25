@@ -4,6 +4,8 @@ import android.app.Service
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import com.clipdown.downloader.engine.DownloadEngine
+import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.downloader.notify.DownloadNotifier
 
 /**
@@ -13,9 +15,25 @@ import com.clipdown.downloader.notify.DownloadNotifier
  * 1. 以前台服务身份常驻，避免下载在后台被系统限制；
  * 2. 承接通知栏上的暂停 / 取消等动作。
  */
-class DownloadService : Service() {
+class DownloadService : Service(), DownloadEngine.EngineListener {
 
     override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onCreate() {
+        super.onCreate()
+        runCatching {
+            DownloadController.engine().listener = this
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        runCatching {
+            if (DownloadController.engine().listener === this) {
+                DownloadController.engine().listener = null
+            }
+        }
+    }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val taskId = intent?.getStringExtra(EXTRA_TASK_ID)
@@ -33,6 +51,10 @@ class DownloadService : Service() {
         }
 
         startForegroundCompat()
+        val active = runCatching { DownloadController.engine().activeCount() }.getOrDefault(0)
+        if (active == 0) {
+            detachForegroundCompat()
+        }
         return START_STICKY
     }
 
@@ -49,12 +71,33 @@ class DownloadService : Service() {
         }
     }
 
+    private fun detachForegroundCompat() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_DETACH)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(false)
+        }
+    }
+
     private fun stopForegroundCompat() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             stopForeground(STOP_FOREGROUND_REMOVE)
         } else {
             @Suppress("DEPRECATION")
             stopForeground(true)
+        }
+    }
+
+    override fun onTaskUpdated(task: TaskEntity) {
+        // no-op
+    }
+
+    override fun onForegroundStateChanged(activeCount: Int) {
+        if (activeCount == 0) {
+            detachForegroundCompat()
+        } else {
+            startForegroundCompat()
         }
     }
 

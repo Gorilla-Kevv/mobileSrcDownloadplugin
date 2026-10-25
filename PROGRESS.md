@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 59 已完成**：实现内置浏览器快速一键登录与凭据自动捕获（WebLoginDialog 移动端拟真登录 + Cookie 实时嗅探入库 + 设置页状态感知与直角按钮 + 首页解析失败无缝联动登录与自动重试）
-- 下一阶段任务：发版 v1.1.18（versionCode 23）+ 真机走查阶段 59（内置浏览器快速一键登录 Instagram）+ 阶段 58（Instagram Reel 视频解析与下载）
+- 当前正在开发任务：**阶段 60 已完成**：前台下载服务常驻通知三段式状态展示与实时感知刷新（同时显示正在下载数、已完成数与失败数三段 · 下载完成时自动切为完成终态可滑除通知 · 下载管理页同步三段统计对齐）
+- 下一阶段任务：发版 v1.1.19（versionCode 24）+ 真机走查阶段 60（通知栏三段式展示与完成状态感知）+ 阶段 59（内置浏览器快速一键登录 Instagram）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **103 例** + downloader **38 例** + app **4 例**全绿（共 145 例）
+- 测试基线：parser **103 例** + downloader **40 例** + app **4 例**全绿（共 147 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 19:40
+- 本次文档更新时间：10.25 20:35
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1103,6 +1103,44 @@
   - 全量单元测试 **145 例全绿**（parser 103 例、downloader 38 例、app 4 例）；
   - `:app:compileDebugKotlin` 编译 0 错误 0 警告通过。
 - 本次文档更新时间：10.25 19:42
+
+## 阶段 60 前台服务常驻通知三段式统计与实时动态感知刷新 [计划时间：10.25 20:20 BY Antigravity][完成时间：10.25 20:35 BY Antigravity]
+- 用户反馈："通知页面，完善一下， 现在只会显示“正在经行n个下载任务”，就算下载完了也还在显示“正在经行n个下载任务”，改为能同时显示正在下载的数量、已下载完成的数量、下载失败的数量三段"
+- 痛点分析：
+  1. **常驻通知从未随任务状态变更刷新**：`DownloadService` 启动时调用 `startForeground` 发送初始通知后，系统常驻通知 ID（`FOREGROUND_ID = 9001`）再未被更新；任务下载完成、失败或全部结束时，通知栏一直卡死在初次启动时的"正在进行 1 个下载任务"；
+  2. **缺少多维度任务状态展示**：原先通知文本仅硬编码单一的 `activeCount`，用户无法得知批次任务中有多少个已下载成功、有多少个下载失败；
+  3. **全部下载完成后未解除 ongoing 锁定**：下载全部完成后仍被当作前台服务常驻通知（ongoing=true），用户既无法滑除清理，也得不到"下载已完成"的正反馈。
+- 落地重构与增强：
+  1. **常驻通知升级为三段式状态展示 (`DownloadNotifier.kt`)**：
+     - 函数重构：`foregroundNotification(activeCount: Int, completedCount: Int, failedCount: Int): Notification`，并提供 `updateForeground(active, completed, failed)` 方法；
+     - 内容文本：严格实现三段式统一展示——`"正在下载 $activeCount · 已完成 $completedCount · 失败 $failedCount"`；
+     - 标题动态感知：进行中显示`"剪存下载服务运行中"`；全部成功完成显示`"全部下载完成"`；存在失败项完成显示`"下载任务已结束"`；
+     - 智能终态与可滑除性：`activeCount > 0` 时保持 `ongoing = true`；全部任务完成 (`activeCount == 0`) 时自动置为 `ongoing = false` 与 `autoCancel = true`，并挂载应用跳转 `PendingIntent`，支持用户一键点进应用或直接滑除；
+  2. **下载引擎与数据库全生命周期联动 (`DownloadEngine.kt` + `TaskDatabase.kt`)**：
+     - 在 `TaskDatabase` 中增加高效索引聚合查询 `activeCount()` 与 `counts()`；
+     - `DownloadEngine` 引入批次会话计数器 `sessionCompleted` 与 `sessionFailed`，在每个关键节点（入队、开始下载、下载成功、终态失败、取消、暂停、重试）均触发 `refreshForegroundNotification()` 实时更新通知栏；
+     - 当新批次任务进入（原 `activeCount == 0` 时），自动重置会话统计计数器，保证批次数据干净明确；
+  3. **前台服务解绑与平滑过渡 (`DownloadService.kt`)**：
+     - `DownloadService` 挂载 `EngineListener` 监听前台状态变更；
+     - 当 `activeCount == 0` 时，调用 `stopForeground(STOP_FOREGROUND_DETACH)` 解除前台常驻锁定，通知保留在系统抽屉内供用户查阅与滑除；当新任务到来时自动重新 `startForeground`；
+     - `DownloadController.enqueue` 增加安全拉起服务兜底 `ensureServiceStarted()`，杜绝孤儿下载任务；
+  4. **下载管理页 (`DownloadsScreen.kt`) 三段式副标题对齐**：
+     - 下载页面的 `PageHeader` 副标题同步引入 `失败 $failedCount` 统计维度，与系统通知栏保持一致。
+- 改动文件：
+  - `downloader/src/main/kotlin/com/clipdown/downloader/notify/Notifier.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/db/TaskDatabase.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/DownloadEngine.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadService.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadController.kt`
+  - `app/src/main/java/com/clipdown/app/ui/downloads/DownloadsScreen.kt`
+  - `downloader/src/test/kotlin/com/clipdown/downloader/notify/DownloadNotifierTest.kt` (新建)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **147 例全绿**（parser 103 例、downloader 40 例、app 4 例）；
+  - 新增 `DownloadNotifierTest` 2 例覆盖三段式文本格式化与标题状态迁移。
+- 本次文档更新时间：10.25 20:35
+
 
 
 

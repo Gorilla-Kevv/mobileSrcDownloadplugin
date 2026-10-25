@@ -123,6 +123,7 @@ fun DownloadsScreen() {
     val rows = remember(tasks) { buildRows(tasks) }
     val activeCount = remember(tasks) { tasks.count { it.status.isActive } }
     val doneCount = remember(tasks) { tasks.count { it.status == DownloadStatus.COMPLETED } }
+    val failedCount = remember(tasks) { tasks.count { it.status == DownloadStatus.FAILED } }
     val totalBytes = remember(tasks) {
         tasks.filter { it.status == DownloadStatus.COMPLETED }.sumOf { it.totalBytes }
     }
@@ -137,7 +138,8 @@ fun DownloadsScreen() {
                 title = "下载",
                 subtitle = when {
                     rows.isEmpty() -> "还没有任务"
-                    activeCount > 0 -> "${tasks.size} 个任务 · 进行中 $activeCount · 已完成 $doneCount"
+                    activeCount > 0 -> "${tasks.size} 个任务 · 进行中 $activeCount · 已完成 $doneCount · 失败 $failedCount"
+                    failedCount > 0 -> "${tasks.size} 个任务 · 已完成 $doneCount · 失败 $failedCount · 占用 ${MediaItem.formatSize(totalBytes)}"
                     else -> "${tasks.size} 个任务 · 全部完成 · 占用 ${MediaItem.formatSize(totalBytes)}"
                 }
             )

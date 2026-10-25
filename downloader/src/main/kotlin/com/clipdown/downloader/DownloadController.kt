@@ -1,6 +1,7 @@
 package com.clipdown.downloader
 
 import android.content.Context
+import android.os.Build
 import com.clipdown.downloader.db.TaskDatabase
 import com.clipdown.downloader.engine.DownloadEngine
 import com.clipdown.downloader.model.DownloadConfig
@@ -117,7 +118,20 @@ object DownloadController {
             sourceUrl = sourceUrl
         )
         engine().enqueue(task)
+        ensureServiceStarted()
         return task.id
+    }
+
+    private fun ensureServiceStarted() {
+        val ctx = appContext ?: return
+        runCatching {
+            val intent = DownloadService.intent(ctx, DownloadService.ACTION_RESUME)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ctx.startForegroundService(intent)
+            } else {
+                ctx.startService(intent)
+            }
+        }
     }
 
     fun enqueueAll(items: List<MediaItem>, platform: Platform, title: String?, sourceUrl: String? = null, coverUrl: String? = null): List<String> =
