@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 54 已完成并发布正式版 v1.1.13（versionCode 18）**：识别/下载过链接的重复下载提醒全链路恢复 + 发布脚本 aapt2 强制自检防版本错位（解决手机端 1.1.12 更新循环提示）
-- 下一阶段任务：真机走查阶段 54（重复链接剪贴板与主应用内下载确认交互）+ 阶段 53（缩略图显示与内置播放器视觉/交互体验）+ 阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）
+- 当前正在开发任务：**阶段 55 已完成**：下载记录页视觉美化与四方形组件重构（完全摒弃圆角，采用 RectangleShape）+ 真实文件路径展示与一键快捷复制
+- 下一阶段任务：发版 v1.1.14（versionCode 19）+ 真机走查阶段 55（下载记录方形卡片/路径复制/平直进度条/直角弹窗）+ 阶段 54（重复链接剪贴板与主应用内下载确认交互）+ 阶段 53（缩略图显示与内置播放器视觉/交互体验）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿（共 133 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 15:38
+- 本次文档更新时间：10.25 16:30
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -935,6 +935,39 @@
   - `:app:assembleDebug` 与 `:app:assembleRelease` 全绿通过，产物 1.86MB（1,953,212 字节）在 2MB 预算内；
   - **已一键发布正式版 v1.1.13（versionCode 18）至 GitHub Releases**，匿名校验 `releases/latest/download/update.json` 200 验证通过（解决 1.1.12 更新死循环问题）。
 - 本次文档更新时间：10.25 16:10
+
+## 阶段 55 下载记录页视觉美化与四方形组件重构 + 文件本地物理路径展示与快捷复制 [计划时间：10.25 16:15 BY Antigravity][完成时间：10.25 16:30 BY Antigravity]
+- 用户需求："下载记录要显示下载文件的路径、下载的记录页面做点美观调整，不要使用圆角组件，使用四方形组件"
+- 核心改动：
+  1. **彻底四方形组件重构（杜绝圆角，统一采用纯直角 RectangleShape）**：
+     - 在 `AppUi.kt` 中对基础卡片 `AppCard`、状态徽章 `StatusPill`、空态视图 `EmptyState` 开放 `shape: Shape` 可选形参，默认兼容全局样式同时允许下载页强行注入纯四边形；
+     - `DownloadsScreen.kt` 页面全线直角化：
+       - 所有下载任务外框卡片 `AppCard` 统一使用 `shape = RectangleShape`；
+       - 媒体缩略图（单项与图集横排画廊）全部采用 `.clip(RectangleShape).border(1.dp, outlineVariant, RectangleShape)` 纯直角加 1dp 精致线框；
+       - 状态胶囊 `StatusPill` 切换为直角方形标签；
+       - 进度条由圆角胶囊收紧为 4dp 高平直四边形；
+       - 全新打造统一平直微描边动作按钮 `SquareActionButton`，为「预览」「来源」「暂停」「继续」「删除」提供统一且利落的触控与视觉反馈；
+       - 单任务删除与批量删除的确认弹窗（`AlertDialog`）及其操作按钮全部指定 `shape = RectangleShape`；并在 `MediaViewerDialog.kt` 删除弹窗中同步直角化。
+  2. **下载文件真实本地物理路径展示与一键快捷复制**：
+     - 封装 `FilePathBlock` 组件：采用文件夹图标 + 等宽代码字体（`FontFamily.Monospace`, 11sp）+ 文本单行防溢出省略 + 右侧直角「复制」微标；
+     - 单任务卡片读取 `task.localPath ?: task.localUri`，已完成任务直观显示文件路径；点击整条路径栏或「复制」微标即刻写入剪贴板并弹出 Toast 反馈；
+     - 图集组卡片自动提取首个已完成作品的父级存储目录（`File(it.localPath).parent`）展示为「存储目录」并支持一键复制；
+     - 图集展开后，每一条子任务细项（`TaskRow(compact = true)`）均呈现其专属的文件完整绝对路径与复制入口；
+     - 删除确认对话框中同步附带待删除文件的物理路径信息。
+  3. **下载页整体视觉与排版美化**：
+     - 顶部增加存储统计看板（已完成任务占用总空间实时聚合 `MediaItem.formatSize(totalBytes)`）；
+     - 现代技术极简平面网格质感，信息密度更合理、层级更清晰。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/components/AppUi.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/MediaViewerDialog.kt`
+  - `app/src/main/java/com/clipdown/app/ui/downloads/DownloadsScreen.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试：
+  - 全量单元测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
+  - `:app:compileDebugKotlin` 编译全绿无报错。
+- 本次文档更新时间：10.25 16:30
+
 
 
 

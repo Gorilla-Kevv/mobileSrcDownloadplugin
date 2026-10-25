@@ -63,6 +63,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -278,6 +279,7 @@ fun MediaViewerDialog(
 
     if (showDeleteConfirm) {
         AlertDialog(
+            shape = RectangleShape,
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("删除本地文件确认") },
             text = { Text("确定要删除「${currentTask.title}」对应的本地媒体文件和下载记录吗？此操作无法撤销。") },

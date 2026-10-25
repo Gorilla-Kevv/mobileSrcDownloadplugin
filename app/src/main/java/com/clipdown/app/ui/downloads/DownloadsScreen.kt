@@ -3,7 +3,9 @@ package com.clipdown.app.ui.downloads
 import android.content.Intent
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -20,24 +22,25 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
+import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -52,10 +55,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -77,16 +86,13 @@ import kotlinx.coroutines.delay
 import java.io.File
 
 /**
- * 下载管理页。
+ * 下载管理页（现代直角平面网格风格，全面采用四方形组件，严格杜绝圆角）。
  *
- * 列表数据来自任务仓储（数据库快照），实时进度来自引擎的进度流：
- * 前者保证刷新/重启后状态一致，后者保证进度条流畅，两者叠加显示。
- *
- * 图集分组：同一来源帖子（sourceUrl 相同）聚合为一张"整包"组卡，避免按下载顺序平铺产生大量冗余条目。
- * 现已支持：
- * 1. 列表直观媒体缩略图预览（图片/视频带播放徽标）。
- * 2. 点击条目即呼出内置全屏图片/视频浏览器（多图可滑动、手势双击捏合缩放、视频带控制条循环播放）。
- * 3. 删除文件联动：点击删除带确认弹窗，明确提示同时删除本地文件与记录。
+ * 核心特性：
+ * 1. 严格四方形态：所有卡片、缩略图、状态标签、进度条、操作按钮及确认对话框均统一采用 [RectangleShape]。
+ * 2. 真实路径可见与复制：直观展示已下载媒体文件的本地物理路径 / MediaStore 路径，并支持一键快捷复制。
+ * 3. 聚合图集展示：相同来源帖子聚合为图集组，支持整体与细分项的路径审查、批量与独立删除、一键预览。
+ * 4. 内置沉浸式媒体浏览器：无缝调用全屏图片/视频播放器，带循环播放与手势缩放。
  */
 @Composable
 fun DownloadsScreen() {
@@ -106,7 +112,7 @@ fun DownloadsScreen() {
     LaunchedEffect(Unit) {
         DownloadController.engine().progress.collect { progressMap[it.taskId] = it }
     }
-    // 进度每 500ms 落库，这里按 1s 刷新一次列表快照，成本可忽略
+    // 进度每 500ms 落库，这里按 1s 刷新一次列表快照
     LaunchedEffect(Unit) {
         while (true) {
             delay(1_000)
@@ -117,6 +123,9 @@ fun DownloadsScreen() {
     val rows = remember(tasks) { buildRows(tasks) }
     val activeCount = remember(tasks) { tasks.count { it.status.isActive } }
     val doneCount = remember(tasks) { tasks.count { it.status == DownloadStatus.COMPLETED } }
+    val totalBytes = remember(tasks) {
+        tasks.filter { it.status == DownloadStatus.COMPLETED }.sumOf { it.totalBytes }
+    }
 
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
@@ -128,19 +137,20 @@ fun DownloadsScreen() {
                 title = "下载",
                 subtitle = when {
                     rows.isEmpty() -> "还没有任务"
-                    activeCount > 0 -> "${tasks.size} 个任务 · 进行中 $activeCount"
-                    else -> "${tasks.size} 个任务 · 已完成 $doneCount"
+                    activeCount > 0 -> "${tasks.size} 个任务 · 进行中 $activeCount · 已完成 $doneCount"
+                    else -> "${tasks.size} 个任务 · 全部完成 · 占用 ${MediaItem.formatSize(totalBytes)}"
                 }
             )
         }
 
         if (rows.isEmpty()) {
             item {
-                AppCard {
+                AppCard(shape = RectangleShape) {
                     EmptyState(
                         title = "还没有下载任务",
                         desc = "复制一条链接，点悬浮气泡即可识别下载",
-                        icon = Icons.Default.Download
+                        icon = Icons.Default.Download,
+                        shape = RectangleShape
                     )
                 }
             }
@@ -185,19 +195,36 @@ fun DownloadsScreen() {
         }
     }
 
-    // 单个任务删除确认弹窗
+    // 单个任务删除确认弹窗（四方形设计）
     taskPendingDelete?.let { task ->
+        val path = task.localPath ?: task.localUri
         AlertDialog(
+            shape = RectangleShape,
             onDismissRequest = { taskPendingDelete = null },
             title = { Text("删除文件确认", style = MaterialTheme.typography.titleMedium) },
             text = {
-                Text(
-                    "确定要删除「${task.title}」对应的本地媒体文件以及下载记录吗？删除后本地文件将无法恢复。",
-                    style = MaterialTheme.typography.bodyMedium
-                )
+                Column {
+                    Text(
+                        "确定要删除「${task.title}」对应的本地媒体文件以及下载记录吗？删除后本地文件将无法恢复。",
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                    if (!path.isNullOrBlank()) {
+                        VSpace(AppTheme.spacing.sm)
+                        Text(
+                            "文件路径: $path",
+                            style = MaterialTheme.typography.bodySmall.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = 14.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             },
             confirmButton = {
                 TextButton(
+                    shape = RectangleShape,
                     onClick = {
                         DownloadController.repository().delete(task.id)
                         Toast.makeText(context, "已删除本地文件与记录", Toast.LENGTH_SHORT).show()
@@ -208,16 +235,17 @@ fun DownloadsScreen() {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { taskPendingDelete = null }) {
+                TextButton(shape = RectangleShape, onClick = { taskPendingDelete = null }) {
                     Text("取消")
                 }
             }
         )
     }
 
-    // 整组任务删除确认弹窗
+    // 整组任务删除确认弹窗（四方形设计）
     albumPendingDelete?.let { tasksToDelete ->
         AlertDialog(
+            shape = RectangleShape,
             onDismissRequest = { albumPendingDelete = null },
             title = { Text("批量删除文件确认", style = MaterialTheme.typography.titleMedium) },
             text = {
@@ -228,6 +256,7 @@ fun DownloadsScreen() {
             },
             confirmButton = {
                 TextButton(
+                    shape = RectangleShape,
                     onClick = {
                         tasksToDelete.forEach { DownloadController.repository().delete(it.id) }
                         Toast.makeText(context, "已删除全部 ${tasksToDelete.size} 个本地文件与记录", Toast.LENGTH_SHORT).show()
@@ -238,7 +267,7 @@ fun DownloadsScreen() {
                 }
             },
             dismissButton = {
-                TextButton(onClick = { albumPendingDelete = null }) {
+                TextButton(shape = RectangleShape, onClick = { albumPendingDelete = null }) {
                     Text("取消")
                 }
             }
@@ -266,9 +295,8 @@ fun DownloadsScreen() {
     }
 }
 
-// ---------- 分组 ----------
+// ---------- 分组数据结构 ----------
 
-/** 下载页列表行：单资源任务独立成行；同来源帖子的多条记录聚合为图集组 */
 private sealed class DownloadRow {
     abstract val key: String
 
@@ -276,7 +304,6 @@ private sealed class DownloadRow {
         override val key: String get() = task.id
     }
 
-    /** tasks 按创建时间升序（图 1 → 图 N） */
     data class Album(val tasks: List<TaskEntity>) : DownloadRow() {
         override val key: String get() = tasks.first().sourceUrl ?: tasks.first().id
     }
@@ -288,8 +315,6 @@ private fun buildRows(tasks: List<TaskEntity>): List<DownloadRow> {
         entries += it.updatedAt to DownloadRow.Single(it)
     }
     tasks.filter { it.sourceUrl != null }.groupBy { it.sourceUrl!! }.forEach { (_, list) ->
-        // 单条记录不成组：单视频/单图有来源链接时按独立任务展示，
-        // 否则会把单视频误标成"图集 1 张"（用户实测反馈）
         if (list.size == 1) {
             entries += list[0].updatedAt to DownloadRow.Single(list[0])
         } else {
@@ -299,7 +324,6 @@ private fun buildRows(tasks: List<TaskEntity>): List<DownloadRow> {
     return entries.sortedByDescending { it.first }.map { it.second }
 }
 
-/** 媒体类别文案：按 mimeType 判定（视频/图片），供下载页准确标注类别 */
 private fun categoryLabel(task: TaskEntity): String =
     if (task.mimeType.startsWith("video/")) "视频"
     else if (task.mimeType.startsWith("audio/")) "音频"
@@ -312,7 +336,7 @@ private fun openSource(context: android.content.Context, task: TaskEntity) {
     }
 }
 
-// ---------- 单任务卡片 ----------
+// ---------- 单任务卡片（纯四方形、展示路径、支持复制） ----------
 
 @Composable
 private fun TaskRow(
@@ -325,21 +349,29 @@ private fun TaskRow(
     onOpenSource: () -> Unit = {},
     compact: Boolean = false
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val clickable = task.status == DownloadStatus.COMPLETED && (task.localUri != null || task.localPath != null)
-    AppCard(padding = if (compact) AppTheme.spacing.md else AppTheme.spacing.lg) {
+    val thumbSize = if (compact) 48.dp else 60.dp
+    val filePath = task.localPath ?: task.localUri
+
+    AppCard(
+        shape = RectangleShape,
+        padding = if (compact) AppTheme.spacing.md else AppTheme.spacing.lg
+    ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = if (clickable) Modifier.clickable { onPreview() } else Modifier
         ) {
-            // 左侧媒体预览缩略图
+            // 左侧媒体预览缩略图（纯直角四边形 + 1dp 细线描边）
             Box(
                 modifier = Modifier
-                    .size(if (compact) 46.dp else 56.dp)
-                    .clip(RoundedCornerShape(AppTheme.radius.thumb))
+                    .size(thumbSize)
+                    .clip(RectangleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
-                // 兜底图标：当缩略图未就绪或加载失败时展示
                 Icon(
                     imageVector = if (task.mimeType.startsWith("video/")) Icons.Default.Movie else Icons.Default.Image,
                     contentDescription = null,
@@ -348,7 +380,6 @@ private fun TaskRow(
                 )
                 val thumbModel = resolveThumbModel(task)
                 if (thumbModel != null) {
-                    val context = LocalContext.current
                     AsyncImage(
                         model = ImageRequest.Builder(context)
                             .data(thumbModel)
@@ -364,7 +395,7 @@ private fun TaskRow(
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
-                            .background(Color.Black.copy(alpha = 0.3f)),
+                            .background(Color.Black.copy(alpha = 0.35f)),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -396,57 +427,80 @@ private fun TaskRow(
                 )
             }
             Spacer(Modifier.width(AppTheme.spacing.sm))
-            StatusPill(statusLabel(task.status), statusTone(task.status))
+            StatusPill(
+                text = statusLabel(task.status),
+                tone = statusTone(task.status),
+                shape = RectangleShape
+            )
         }
 
-        if (task.status == DownloadStatus.DOWNLOADING || task.status == DownloadStatus.PENDING) {
-            VSpace(AppTheme.spacing.md)
+        // 下载中展示平直四方形进度条
+        if (task.status == DownloadStatus.DOWNLOADING || task.status == DownloadStatus.PENDING || task.status == DownloadStatus.MERGING) {
+            VSpace(AppTheme.spacing.sm)
             ProgressBar(task.progress)
         }
 
-        VSpace(AppTheme.spacing.xs)
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onPreview, enabled = clickable) {
-                Icon(
-                    Icons.Default.Visibility,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text("预览", style = MaterialTheme.typography.labelLarge)
-            }
-            if (task.sourceUrl != null) {
-                TextButton(onClick = onOpenSource) {
-                    Text("来源", style = MaterialTheme.typography.labelLarge)
+        // 真实下载文件路径展示块（带文件夹图标及快捷复制）
+        if (!filePath.isNullOrBlank()) {
+            VSpace(AppTheme.spacing.sm)
+            FilePathBlock(
+                path = filePath,
+                compact = compact,
+                onCopy = {
+                    clipboard.setText(AnnotatedString(filePath))
+                    Toast.makeText(context, "已复制路径: $filePath", Toast.LENGTH_SHORT).show()
                 }
+            )
+        }
+
+        // 底部平直操作工具栏
+        VSpace(AppTheme.spacing.sm)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            SquareActionButton(
+                text = "预览",
+                icon = Icons.Default.Visibility,
+                enabled = clickable,
+                onClick = onPreview
+            )
+            if (task.sourceUrl != null) {
+                Spacer(Modifier.width(AppTheme.spacing.xs))
+                SquareActionButton(
+                    text = "来源",
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                    onClick = onOpenSource
+                )
             }
             Spacer(Modifier.weight(1f))
             when (task.status) {
-                DownloadStatus.DOWNLOADING, DownloadStatus.PENDING, DownloadStatus.MERGING ->
-                    IconButton(onClick = onPause) {
-                        Icon(Icons.Default.Pause, contentDescription = "暂停", modifier = Modifier.size(20.dp))
-                    }
-
-                DownloadStatus.PAUSED, DownloadStatus.FAILED ->
-                    IconButton(onClick = onResume) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "继续", modifier = Modifier.size(20.dp))
-                    }
-
+                DownloadStatus.DOWNLOADING, DownloadStatus.PENDING, DownloadStatus.MERGING -> {
+                    SquareActionButton(
+                        text = "暂停",
+                        icon = Icons.Default.Pause,
+                        onClick = onPause
+                    )
+                    Spacer(Modifier.width(AppTheme.spacing.xs))
+                }
+                DownloadStatus.PAUSED, DownloadStatus.FAILED -> {
+                    SquareActionButton(
+                        text = "继续",
+                        icon = Icons.Default.PlayArrow,
+                        onClick = onResume
+                    )
+                    Spacer(Modifier.width(AppTheme.spacing.xs))
+                }
                 else -> Unit
             }
-            IconButton(onClick = onDeleteRequest) {
-                Icon(
-                    Icons.Default.Delete,
-                    contentDescription = "删除文件",
-                    tint = MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            SquareActionButton(
+                text = "删除",
+                icon = Icons.Default.Delete,
+                isDanger = true,
+                onClick = onDeleteRequest
+            )
         }
     }
 }
 
-// ---------- 图集组卡片 ----------
+// ---------- 图集组卡片（纯四方形、展示目录、支持复制与展开明细） ----------
 
 @Composable
 private fun AlbumGroupCard(
@@ -461,12 +515,13 @@ private fun AlbumGroupCard(
     onDeleteTaskRequest: (TaskEntity) -> Unit,
     onDeleteAllRequest: () -> Unit
 ) {
+    val context = LocalContext.current
+    val clipboard = LocalClipboardManager.current
     val done = tasks.count { it.status == DownloadStatus.COMPLETED }
     val failed = tasks.count { it.status == DownloadStatus.FAILED }
     val active = tasks.count { it.status.isActive }
     val totalBytes = tasks.sumOf { if (it.status == DownloadStatus.COMPLETED) it.totalBytes else 0L }
     val allDone = done == tasks.size
-    // 组类别按实际 mimeType 统计，不再一律叫"图集"
     val videoCount = tasks.count { it.mimeType.startsWith("video/") }
     val groupLabel = when {
         videoCount == 0 -> "图集 ${tasks.size} 张"
@@ -474,12 +529,66 @@ private fun AlbumGroupCard(
         else -> "视频 $videoCount + 图片 ${tasks.size - videoCount}"
     }
 
-    AppCard {
-        // 整包头：标题 + 状态胶囊 + 明细开关
+    // 提取公共存储目录（供图集头展示与一键复制）
+    val commonDir = remember(tasks) {
+        tasks.firstOrNull { it.localPath != null }?.localPath?.let {
+            File(it).parent
+        } ?: tasks.firstOrNull { it.localUri != null }?.localUri
+    }
+
+    AppCard(shape = RectangleShape) {
+        // 整包头：标题 + 状态胶囊 + 统计
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = if (done > 0) Modifier.clickable { onPreviewAlbum(null) } else Modifier
         ) {
+            // 图集封面（优先使用首个已完成作品，四方形 + 角标）
+            val firstCoverModel = resolveThumbModel(
+                tasks.firstOrNull { it.status == DownloadStatus.COMPLETED } ?: tasks.first()
+            )
+            Box(
+                modifier = Modifier
+                    .size(60.dp)
+                    .clip(RectangleShape)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (videoCount > 0) Icons.Default.Movie else Icons.Default.Image,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.size(26.dp)
+                )
+                if (firstCoverModel != null) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(firstCoverModel)
+                            .videoFrameMillis(1000)
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        modifier = Modifier.fillMaxSize(),
+                        contentScale = ContentScale.Crop
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .clip(RectangleShape)
+                        .background(Color.Black.copy(alpha = 0.7f))
+                        .padding(horizontal = 4.dp, vertical = 1.dp)
+                ) {
+                    Text(
+                        "${tasks.size}P",
+                        color = Color.White,
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.sp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.width(AppTheme.spacing.md))
+
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     tasks.first().title,
@@ -506,19 +615,32 @@ private fun AlbumGroupCard(
             }
             Spacer(Modifier.width(AppTheme.spacing.sm))
             when {
-                allDone -> StatusPill("已完成", Tone.Success)
-                failed > 0 -> StatusPill("$failed 失败", Tone.Danger)
-                else -> StatusPill("下载中", Tone.Brand)
+                allDone -> StatusPill("已完成", Tone.Success, shape = RectangleShape)
+                failed > 0 -> StatusPill("$failed 失败", Tone.Danger, shape = RectangleShape)
+                else -> StatusPill("下载中", Tone.Brand, shape = RectangleShape)
             }
         }
 
-        // 下载中展示整体进度条
+        // 下载中展示整体平直进度条
         if (active > 0) {
             VSpace(AppTheme.spacing.md)
             ProgressBar(done.toFloat() / tasks.size)
         }
 
-        // 已完成的图片缩略图横排画廊展示，点任意一张直接唤起该图内置预览
+        // 显示图集所在公共目录路径
+        if (!commonDir.isNullOrBlank()) {
+            VSpace(AppTheme.spacing.sm)
+            FilePathBlock(
+                path = commonDir,
+                label = "存储目录",
+                onCopy = {
+                    clipboard.setText(AnnotatedString(commonDir))
+                    Toast.makeText(context, "已复制图集目录: $commonDir", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        // 已完成的图片缩略图横排画廊展示（纯直角四边形，带播放指示与边框）
         if (done > 0) {
             val completedTasks = remember(tasks) { tasks.filter { it.status == DownloadStatus.COMPLETED } }
             VSpace(AppTheme.spacing.sm)
@@ -526,8 +648,9 @@ private fun AlbumGroupCard(
                 items(completedTasks, key = { it.id }) { t ->
                     Box(
                         modifier = Modifier
-                            .size(52.dp)
-                            .clip(RoundedCornerShape(AppTheme.radius.thumb))
+                            .size(54.dp)
+                            .clip(RectangleShape)
+                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable { onPreviewAlbum(t) },
                         contentAlignment = Alignment.Center
@@ -540,7 +663,6 @@ private fun AlbumGroupCard(
                         )
                         val model = resolveThumbModel(t)
                         if (model != null) {
-                            val context = LocalContext.current
                             AsyncImage(
                                 model = ImageRequest.Builder(context)
                                     .data(model)
@@ -556,7 +678,7 @@ private fun AlbumGroupCard(
                             Box(
                                 modifier = Modifier
                                     .fillMaxSize()
-                                    .background(Color.Black.copy(alpha = 0.3f)),
+                                    .background(Color.Black.copy(alpha = 0.35f)),
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
@@ -572,34 +694,36 @@ private fun AlbumGroupCard(
             }
         }
 
-        VSpace(AppTheme.spacing.xs)
+        VSpace(AppTheme.spacing.sm)
         Row(verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = { onPreviewAlbum(null) }, enabled = done > 0) {
-                Icon(
-                    Icons.Default.Visibility,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(4.dp))
-                Text(if (tasks.size > 1) "浏览全部 ($done)" else "预览", style = MaterialTheme.typography.labelLarge)
-            }
+            SquareActionButton(
+                text = if (tasks.size > 1) "浏览全部 ($done)" else "预览",
+                icon = Icons.Default.Visibility,
+                enabled = done > 0,
+                onClick = { onPreviewAlbum(null) }
+            )
             if (tasks.first().sourceUrl != null) {
-                TextButton(onClick = onOpenSource) {
-                    Text("来源", style = MaterialTheme.typography.labelLarge)
-                }
-            }
-            TextButton(onClick = onDeleteAllRequest, enabled = active == 0) {
-                Text("删除全部", color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelLarge)
-            }
-            Spacer(Modifier.weight(1f))
-            TextButton(onClick = onToggleExpand) {
-                Text(if (expanded) "收起" else "明细", style = MaterialTheme.typography.labelLarge)
-                Icon(
-                    if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
+                Spacer(Modifier.width(AppTheme.spacing.xs))
+                SquareActionButton(
+                    text = "来源",
+                    icon = Icons.AutoMirrored.Filled.OpenInNew,
+                    onClick = onOpenSource
                 )
             }
+            Spacer(Modifier.width(AppTheme.spacing.xs))
+            SquareActionButton(
+                text = "全部删除",
+                icon = Icons.Default.Delete,
+                isDanger = true,
+                enabled = active == 0,
+                onClick = onDeleteAllRequest
+            )
+            Spacer(Modifier.weight(1f))
+            SquareActionButton(
+                text = if (expanded) "收起" else "明细 (${tasks.size})",
+                icon = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                onClick = onToggleExpand
+            )
         }
 
         AnimatedVisibility(visible = expanded) {
@@ -622,18 +746,161 @@ private fun AlbumGroupCard(
     }
 }
 
-/** 统一进度条：6dp 高、全圆角、品牌色 */
+// ---------- 四方形基础组件（路径展示条、直角动作按钮、平直进度条） ----------
+
+/**
+ * 四方形文件路径展示块：等宽字体、单行防溢出、一键复制到剪贴板
+ */
+@Composable
+private fun FilePathBlock(
+    path: String,
+    modifier: Modifier = Modifier,
+    label: String? = null,
+    compact: Boolean = false,
+    onCopy: () -> Unit
+) {
+    Surface(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(RectangleShape)
+            .clickable { onCopy() },
+        shape = RectangleShape,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = if (compact) 4.dp else 6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.Folder,
+                contentDescription = null,
+                modifier = Modifier.size(if (compact) 13.dp else 15.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.width(6.dp))
+            if (label != null) {
+                Text(
+                    text = "[$label]",
+                    style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                    color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            }
+            Text(
+                text = path,
+                style = MaterialTheme.typography.bodySmall.copy(
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = if (compact) 10.sp else 11.sp,
+                    lineHeight = if (compact) 13.sp else 14.sp
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(6.dp))
+            Box(
+                modifier = Modifier
+                    .clip(RectangleShape)
+                    .background(MaterialTheme.colorScheme.surface)
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
+                    .padding(horizontal = 6.dp, vertical = 2.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Default.ContentCopy,
+                        contentDescription = "复制路径",
+                        modifier = Modifier.size(11.dp),
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(3.dp))
+                    Text(
+                        "复制",
+                        style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * 统一直角操作按钮（四边形微带描边，悬停/按下触感利落）
+ */
+@Composable
+private fun SquareActionButton(
+    text: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+    icon: ImageVector? = null,
+    enabled: Boolean = true,
+    isDanger: Boolean = false,
+    isPrimary: Boolean = false
+) {
+    val borderColor = when {
+        !enabled -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)
+        isDanger -> MaterialTheme.colorScheme.error.copy(alpha = 0.5f)
+        isPrimary -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.outlineVariant
+    }
+    val contentColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+        isDanger -> MaterialTheme.colorScheme.error
+        isPrimary -> MaterialTheme.colorScheme.primary
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val bgColor = when {
+        isPrimary && enabled -> MaterialTheme.colorScheme.primary.copy(alpha = 0.08f)
+        isDanger && enabled -> MaterialTheme.colorScheme.error.copy(alpha = 0.06f)
+        else -> MaterialTheme.colorScheme.surface
+    }
+
+    Surface(
+        modifier = modifier
+            .clip(RectangleShape)
+            .clickable(enabled = enabled, onClick = onClick),
+        shape = RectangleShape,
+        color = bgColor,
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.Center
+        ) {
+            if (icon != null) {
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    modifier = Modifier.size(14.dp),
+                    tint = contentColor
+                )
+                Spacer(Modifier.width(4.dp))
+            }
+            Text(
+                text,
+                style = MaterialTheme.typography.labelMedium.copy(fontSize = 12.sp),
+                color = contentColor
+            )
+        }
+    }
+}
+
+/** 统一进度条：四边平直四方形、4dp 高、品牌色 */
 @Composable
 private fun ProgressBar(fraction: Float) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(6.dp)
-            .clip(RoundedCornerShape(AppTheme.radius.pill))
+            .height(4.dp)
+            .clip(RectangleShape)
+            .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         LinearProgressIndicator(
             progress = { fraction.coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().height(6.dp),
+            modifier = Modifier.fillMaxWidth().height(4.dp),
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )

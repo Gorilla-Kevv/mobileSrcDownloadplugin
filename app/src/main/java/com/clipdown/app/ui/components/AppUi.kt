@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -86,18 +87,20 @@ fun PageHeader(title: String, subtitle: String? = null) {
     }
 }
 
-/** 统一卡片：白底 + 1dp 描边 + 18dp 圆角 + 16dp 内边距（不用阴影，避免脏边） */
+/** 统一卡片：白底 + 1dp 描边 + 可配置圆角/方形 + 16dp 内边距（不用阴影，避免脏边） */
 @Composable
 fun AppCard(
     modifier: Modifier = Modifier,
     padding: androidx.compose.ui.unit.Dp = AppTheme.spacing.lg,
+    shape: Shape = RoundedCornerShape(AppTheme.radius.card),
+    border: BorderStroke? = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(AppTheme.radius.card),
+        shape = shape,
         color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        border = border
     ) {
         Column(modifier = Modifier.padding(padding), content = content)
     }
@@ -141,13 +144,18 @@ fun Hairline(modifier: Modifier = Modifier) {
 // 标签 / 状态
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** 状态胶囊：下载状态、权限状态、平台登录态统一用它 */
+/** 状态胶囊 / 方形标签：下载状态、权限状态、平台登录态统一用它 */
 @Composable
-fun StatusPill(text: String, tone: Tone = Tone.Neutral, modifier: Modifier = Modifier) {
+fun StatusPill(
+    text: String,
+    tone: Tone = Tone.Neutral,
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(AppTheme.radius.pill)
+) {
     val c = toneOf(tone)
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(AppTheme.radius.pill))
+            .clip(shape)
             .background(c.bg)
             .padding(horizontal = 10.dp, vertical = 4.dp),
         contentAlignment = Alignment.Center
@@ -325,7 +333,8 @@ fun EmptyState(
     title: String,
     desc: String? = null,
     icon: ImageVector? = null,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    shape: Shape = RoundedCornerShape(AppTheme.radius.card)
 ) {
     Column(
         modifier = modifier.fillMaxWidth().padding(vertical = 48.dp),
@@ -335,7 +344,7 @@ fun EmptyState(
             Box(
                 modifier = Modifier
                     .size(56.dp)
-                    .clip(RoundedCornerShape(AppTheme.radius.card))
+                    .clip(shape)
                     .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
