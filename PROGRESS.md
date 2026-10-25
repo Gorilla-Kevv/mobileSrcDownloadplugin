@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 51 已完成（待真机复验与发版）**：首页下载按钮反馈与防重 + 下载历史删除确认与内置全屏媒体浏览器（图片手势缩放滑动/原生视频播放）
-- 下一阶段任务：真机走查阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）+ 阶段 50-46 各项；按需发版 v1.1.9
+- 当前正在开发任务：**阶段 52 已完成（待真机复验与发版）**：Instagram 解析失败多通道全面修复（移动端 REST info 接口原生支持 + 网页端 GraphQL 2026 xig_polaris 架构适配 + 自动补齐 CSRF 令牌 + WebView DOM 视频标签兜底提取 + Cookie 更新自动解除风控冻结）
+- 下一阶段任务：真机走查阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）+ 阶段 50-46 各项；按需发版 v1.1.9
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **95 例** + downloader 30 例 + app **4 例**全绿
+- 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 13:45
+- 本次文档更新时间：10.25 14:15
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -828,3 +828,37 @@
   - 全量单元测试全绿（`:parser:test` 95 例 + `:downloader:testDebugUnitTest` 30 例 + `:app:testDebugUnitTest` 4 例）；
   - `android describe` 结构元数据解析通过。
 - 本次文档更新时间：10.25 13:45
+
+## 阶段 52 Instagram 解析失败多通道全面修复与风控误锁根治 [计划时间：10.25 13:50 BY Antigravity][完成时间：10.25 14:15 BY Antigravity]
+- 用户反馈：尝试修复 instagram 的解析失败问题，风控应该已经过了。
+- 根因排查与抓包取证：
+  1. **登录态接口单点失效**：旧版仅依赖网页端 GraphQL `doc_id=8845758582119845`（PolarisPostActionLoadPostQuery），缺少关键请求头（`X-FB-Friendly-Name`、`X-Requested-With: XMLHttpRequest`），未登录或非合法会话时 Instagram 自动 302 重定向至登录页并返回 HTML，导致 JSON 反序列化崩溃；且用户若仅复制了 `sessionid` 未带 `csrftoken` 时会被直接拦截拒绝。
+  2. **Relay 2026 结构演进**：Instagram 内部由旧版 `xdt_shortcode_media` 逐步切向 `xig_polaris_media`（包裹在 `if_not_gated_logged_out` 内），旧版硬编码提取 `xdt_shortcode_media` 造成有数据却抛出「无媒体数据」异常。
+  3. **风控过度惩罚与误冻结**：`IgRiskGuard` 只要判定 `countsFailure = hasCookie`，两次失败即触发 10 分钟连续冻结，期间禁止发起任何请求；当用户 Cookie 失效或过期时被反复锁入 10 分钟，误以为自身 IP 或账号进入 Meta 平台级风控；且在设置页更新/清理 Cookie 后未复位保险丝状态。
+  4. **WebView 提取局限**：原 `ownPostScope` 截取后破坏了 `<head>` 中的 `og:video` / `og:image` 标签；且 DOM 中若已由播放器组件渲染出 `<video src="...">` / `<source>`，旧逻辑未作 DOM 标签兜底。
+- 落地重构与增强：
+  1. **shortcode 换算 numeric media ID (pk)**：实现 64 进制数学逆运算（`shortcodeToMediaId`），精准将短链 code（如 `DeNtxEMCYXJ`）换算为 Instagram 官方底层 BigInteger media_id。
+  2. **引入官方原生移动端 REST info 接口**：登录态优先请求 `https://i.instagram.com/api/v1/media/{media_id}/info/` 与 `https://www.instagram.com/api/v1/media/{media_id}/info/`，直接提取官方原生 `items[0]`（无 LSD、无需 doc_id、零 GraphQL 模式漂移风险）。
+  3. **GraphQL 通道全兼容与 CSRF 自愈**：
+     - 若 Cookie 中缺失 `csrftoken`，自动从帖子落地页 HTML（`"csrf_token"` / `"csrftoken"`）或响应头 `Set-Cookie` 中动态捕获并自动补齐；
+     - 补全 `X-Requested-With: XMLHttpRequest`、`X-FB-Friendly-Name: PolarisPostActionLoadPostQueryQuery`、`fb_api_caller_class: RelayModern` 等标准 Relay 头；
+     - 双端点容灾轮询（`/api/graphql` 与 `/graphql/query`）；
+     - 兼容 `xdt_shortcode_media`、`shortcode_media`、`xig_polaris_media`（含 `if_not_gated_logged_out`）及正帖节点内递归深度兜底。
+  4. **WebView 渲染与轮询增强**：
+     - 轮询触发条件扩展为包含 `image_versions2` 与 `xig_polaris_media`，图集帖无需再空等超时；
+     - `extractFromPageHtml` 在整页范围抓取 `og:video` 与 `og:image`，并深度提取 DOM 中的 `<video src="...">` 与 `<source src="...">` 直链；
+     - 探测路径改进：当 `/reel/` 渲染无媒体时，自动回退探测 `/p/` 路径，双路径全覆盖。
+  5. **Cookie 更新联动解除风控锁定**：
+     - `CookieStore.put` / `remove` 统一联动 `IgRiskGuard.reset()`，用户在设置页贴入新 Cookie 即刻清除冷却，无需苦等 10 分钟；
+     - 优化异常指引，明确区分 Cookie 失效需更新与通道降级提示。
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/InstagramParser.kt`
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/IgRiskGuard.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/InstagramParserTest.kt`
+  - `app/src/main/java/com/clipdown/app/data/CookieStore.kt`
+  - `app/src/main/java/com/clipdown/app/clip/WebViewHtmlFetcher.kt`
+- 测试：
+  - 全量测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
+  - `:app:assembleDebug` 构建成功，APK 正常打包产出。
+- 本次文档更新时间：10.25 14:15
+

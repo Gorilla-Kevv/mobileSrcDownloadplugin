@@ -2,6 +2,7 @@ package com.clipdown.app.data
 
 import android.content.Context
 import com.clipdown.parser.model.Platform
+import com.clipdown.parser.parsers.IgRiskGuard
 
 /**
  * 平台登录态仓库。
@@ -25,6 +26,9 @@ object CookieStore {
             .edit()
             .putString(platform.id, cookie.trim())
             .apply()
+        if (platform == Platform.INSTAGRAM) {
+            IgRiskGuard.reset()
+        }
     }
 
     fun remove(context: Context, platform: Platform) {
@@ -32,6 +36,9 @@ object CookieStore {
             .edit()
             .remove(platform.id)
             .apply()
+        if (platform == Platform.INSTAGRAM) {
+            IgRiskGuard.reset()
+        }
     }
 
     fun has(context: Context, platform: Platform): Boolean = !get(context, platform).isNullOrBlank()

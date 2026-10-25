@@ -35,7 +35,7 @@ object IgRiskGuard {
     /**
      * @param countsFailure 本次失败是否计入风控计数。**缺登录态的调用方应传 false**：
      *   未配 Cookie 时单篇解析（embed/WebView 通道）与主页解析本来就会失败，
-     *   真实用户"试两次没配上 Cookie"就会把自己锁进冷却（2026-10 真机实测反馈）。
+     *   避免用户"试两次没配上 Cookie"就锁进 10 分钟冷却。
      *   失败异常照常抛出，只是不累加计数、不触发冷却。
      */
     fun <T> guard(ctx: ParseContext, caller: String, countsFailure: Boolean = true, block: () -> T): T {
@@ -67,9 +67,12 @@ object IgRiskGuard {
         throw result.exceptionOrNull() ?: ParseException("解析失败", Platform.INSTAGRAM)
     }
 
-    /** 仅供测试复位 */
-    fun resetForTest() {
+    /** 状态复位（供设置页 Cookie 更新与测试调用） */
+    fun reset() {
         failStreak = 0
         cooldownUntil = 0L
     }
+
+    /** 仅供测试复位（保留方法名兼容现有测试用例） */
+    fun resetForTest() = reset()
 }

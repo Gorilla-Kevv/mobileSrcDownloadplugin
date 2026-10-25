@@ -62,11 +62,15 @@
 29. **X 主页免登录可用、IG 主页必须登录（阶段 41 定性，修正旧结论）**：X 的公开嵌入时间线 `https://syndication.twitter.com/srv/timeline-profile/screen-name/<handle>` 返回 Next.js 页面，推文在 `__NEXT_DATA__` 的 `props.pageProps.timeline.entries[].content.tweet`（含完整 `user` 与 `entities.media[]`），**无需 Cookie、无需签名**，但只有最近约 100 条、无游标 → `hasMore` 必须为 false。IG 相反：`web_profile_info` 免登录直接 429，主页 HTML 免登录返回 637KB 登录墙（**无 `og:*`、无帖子链接**），所以 IG 主页没有免登录路径
 30. **`adb shell input text` 在 Compose 输入框上会随机丢字（阶段 41 测试环境坑）**：长 URL 反复被截成 `user/p`、`xsec_token=YB` 等形态，表现为"解析失败"的假回归。可靠做法：**逐字符 `input text`**（一次一个字符），并在判定前先核对 `ParserEngine: linkKind … url=` 日志里的 URL 是否完整
 
-31. **IG 匿名通道全线失效（阶段 47 真实浏览器+curl 双路取证）**：游客态 `/p/{code}/embed/captioned/` 与帖子页都只返回 JS 空壳（633KB/207KB 无任何媒体键，DOM 里只有头像），oEmbed 早已停服——**单帖解析唯一可用通道是带 Cookie 的 GraphQL**；且 2026 起图集子项改在 **`carousel_media` 数组**（老 `edge_sidecar_to_children` 可能不再下发），混合相册（图+视频）按老键提取为 0 会伪装成"链接不支持"。排查顺序：先看 logcat `ig-local-v1` 的"通道选择 cookie=?/登录态解析失败"，Cookie 缺失时任何 IG 链接都解析不了，不是解析器回归
+31. **IG 匿名通道全线失效与阶段 52 全面修复**：游客态 `/p/{code}/embed/captioned/` 与帖子页已是 JS 空壳（633KB/207KB 无媒体键），oEmbed 停服。阶段 52 全面增强：
+    - **移动端 REST info 接口原生支持**：`shortcodeToMediaId` 数学逆运算 shortcode 为 numeric pk，登录态优先直连 `https://i.instagram.com/api/v1/media/{media_id}/info/`，原生获取 `items[0]`，彻底摆脱 LSD 与 doc_id 变动风险；
+    - **GraphQL 2026 演进**：兼容 `xig_polaris_media`（包裹在 `if_not_gated_logged_out` 内）与 `xdt_shortcode_media`；自动从落地页 HTML / Set-Cookie 捕获缺失的 `csrftoken` 补齐；补全 `X-Requested-With`、`X-FB-Friendly-Name` 防止被 302 弹回登录页；
+    - **WebView DOM 视频与多路径兜底**：直接抓取 DOM 渲染出的 `<video src="...">` 与 `<source src="...">` 直链；`/reel/` 与 `/p/` 双路径渲染探测；
+    - **风控误锁根治**：`CookieStore.put` / `remove` 联动 `IgRiskGuard.reset()`，更新 Cookie 后立即重置冷却；区分认证失效与平台限流。
 
 ## 命令
 - 构建（Git Bash）：`export JAVA_HOME="F:\\AndroidDev\\jdk\\jdk-17.0.20.1+1" GRADLE_USER_HOME="F:\\AndroidDev\\.gradle" ANDROID_HOME="F:\\AndroidDev\\sdk" ANDROID_SDK_ROOT="F:\\AndroidDev\\sdk"` 后 `/f/AndroidDev/gradle-8.9/bin/gradle.bat -p . --no-daemon -Dorg.gradle.java.home=... :app:assembleDebug :parser:test --console=plain`
-- 测试：`:parser:test` **95 例**；`:downloader:testDebugUnitTest` **30 例**（HttpFileDownloader/M3u8Downloader/MediaRemuxer/TaskModels/DownloadController；自建 JDK `TestHttpServer`，无新增依赖）；`:app:testDebugUnitTest` 4 例（更新清单契约）
+- 测试：`:parser:test` **99 例**；`:downloader:testDebugUnitTest` **30 例**（HttpFileDownloader/M3u8Downloader/MediaRemuxer/TaskModels/DownloadController；自建 JDK `TestHttpServer`，无新增依赖）；`:app:testDebugUnitTest` 4 例（更新清单契约）
 - **模拟器要访问被墙站点（X/IG）**：本机代理常只监听 `127.0.0.1:7890`，模拟器够不到 → 起一个 TCP 转发到 `0.0.0.0:<port>`（node 十几行），再 `adb shell settings put global http_proxy 10.0.2.2:<port>`；**测完删 `http_proxy` + `global_http_proxy_host` + `global_http_proxy_port` 三个键并重启模拟器**（坑 18/23），并关掉转发进程
 - **注入 JS 语法自检**：`node scripts/check-inject-js.js`（从 `WebViewHtmlFetcher` 的 Kotlin 拼串里抽出 XHR 钩子并校验括号自平衡——改过钩子必须跑，语法错在设备上只表现为"钩子静默不生效"）
 - **release**：`:app:assembleRelease`（minify+shrinkResources+正式签名；**体积 18.6MB→1.77MB**）；签名由根目录 `signing.properties` 驱动，keystore `app/signing/clipdown.jks` **不入 git——务必备份（密码 clipdown2026，丢失无法升级签名）**；R8 反射 keep 见 proguard-rules.pro（ViewTree* 宿主绑定）
@@ -95,7 +99,8 @@
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态
-- 当前：**阶段 51 已完成（待真机复验与发版）**——①首页下载交互反馈与防重复点击：Toast + Success 状态条 + 按钮动态切换为「重新下载」与「查看下载任务」（直跳下载管理页）②下载记录真实删除确认弹窗：单任务与批量均弹窗确认，明确提示彻底删除本地文件与记录；升级 TaskRepository.deleteTaskFile 全格式兼容 ③下载列表缩略图直观预览：单条与图集组卡横排画廊展示 ④内置全屏图片与视频媒体浏览器（MediaViewerDialog）：全屏黑底沉浸视图，多图滑动与双击/捏合手势缩放，视频原生 VideoView 硬件加速播放与控制条，带应用内删除/外部分享/系统应用打开
+- 当前：**阶段 52 已完成（待真机复验与发版）**——Instagram 解析失败多通道全面修复与风控误锁根治：①shortcode 换算 numeric media ID (pk) 支持官方原生移动端 REST `/api/v1/media/{id}/info/` 端点，无 LSD / doc_id 风险；②GraphQL 2026 结构适配：支持 `xig_polaris_media` 与 `if_not_gated_logged_out`，自动补齐缺失的 `csrftoken`，补全 `X-Requested-With`、`X-FB-Friendly-Name` 防止被 302 重定向到登录页；③WebView 增强：轮询探测增加 `image_versions2` / `xig_polaris_media` 避免图集帖白等超时，DOM `<video src>` / `<source>` 直链兜底，/reel/ 与 /p/ 双路径探测；④`CookieStore` 联动 `IgRiskGuard.reset()`，设置页更新 Cookie 即刻清除冷却，无需等待 10 分钟
+- 上轮：**阶段 51 已完成（待真机复验与发版）**——①首页下载交互反馈与防重复点击：Toast + Success 状态条 + 按钮动态切换为「重新下载」与「查看下载任务」（直跳下载管理页）②下载记录真实删除确认弹窗：单任务与批量均弹窗确认，明确提示彻底删除本地文件与记录；升级 TaskRepository.deleteTaskFile 全格式兼容 ③下载列表缩略图直观预览：单条与图集组卡横排画廊展示 ④内置全屏图片与视频媒体浏览器（MediaViewerDialog）：全屏黑底沉浸视图，多图滑动与双击/捏合手势缩放，视频原生 VideoView 硬件加速播放与控制条，带应用内删除/外部分享/系统应用打开
 - 上轮：**阶段 50 已完成并发布 v1.1.8（待真机复验）**——开合动画治卡顿：expandVertically 布局动画（逐帧测量+窗口 resize+LazyColumn 重测）改为**渲染层裁剪揭示**：内容一次性按最终尺寸布局（窗口开/关各 resize 一次），`Animatable`+`foundation GenericShape((Path,Size,LayoutDirection)->Unit)` 逐帧改 clip 矩形 + graphicsLayer alpha 淡入；Compose 1.7.5 三坑（GraphicsLayerScope 无自由裁剪属性 / Shape object 实现报 overrides nothing 必须走 GenericShape / 构造 lambda 重载歧义需显式函数类型）见 PROGRESS 阶段 50
 - 上轮：**阶段 49 已完成并发布 v1.1.7（待真机复验）**——①胶囊宽度 64→**52dp**（=气泡头像圆直径 `BAR_WIDTH_DP`，两侧与圆相切；窗口仍 64dp 宽保触摸区）②竖条开合加 `AnimatedVisibility`（fadeIn+expandVertically 240ms / fadeOut+shrinkVertically 200ms，以气泡贴合端为生长基准、barOnTop 镜像；退出期用 `lastBarState` 续渲染防空白；`syncBubbleWindow` 收起态保持延伸方向到动画播完防跳边）
 - 上轮：**阶段 48 已完成并发布 v1.1.6（待真机复验）**——竖条按用户参考图重设计：气泡与胶囊**叠合**（BubbleWindowContent 改 Box：胶囊先画垫底、气泡后画压顶，圆心落胶囊平边、重叠 32dp=BAR_OVERLAP_DP）；胶囊靠气泡端直角、另一端半圆（barOnTop 镜像）；气泡侧内边距 40dp 保护 64dp 触摸区；面板头部下载图标、底部改**深色圆形 ×**（=关闭气泡，收起面板仍点气泡 toggle）；syncBubbleWindow 去 gap、barFull 360→400。另：真机"检查更新 connection closed"定性为设备 VPN 未覆盖 github.com 的环境问题（用户指示不处理）
@@ -117,4 +122,4 @@
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（88）+ `:downloader:testDebugUnitTest`（30）+ `:app:testDebugUnitTest`（4）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 42 的 9 项修复**（竖条宽度/默认全选/首页解析/再次解析提醒/收回/下载类别/弹窗精简），复验通过后 `bash scripts/publish-release.sh` 发版供真机覆盖安装 ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
 - 文档：PROGRESS.md 全阶段记录（阶段 1-46，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.25 13:45 [BY Antigravity]
+- 本次文档更新时间：10.25 14:15 [BY Antigravity]

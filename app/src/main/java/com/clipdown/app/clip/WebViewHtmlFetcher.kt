@@ -190,6 +190,7 @@ object WebViewHtmlFetcher {
                     val page = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
                     if (page != null) {
                         val hasMedia = page.contains("video_versions") || page.contains("video_url") ||
+                            page.contains("image_versions2") || page.contains("xig_polaris_media") ||
                             page.contains("playable_url") || page.contains("og:video") || page.contains("<video")
                         val title = Regex("""<title[^>]*>([^<]{0,80})""").find(page)?.groupValues?.getOrNull(1)
                         stable = if (page.length == lastLen) stable + 1 else 0

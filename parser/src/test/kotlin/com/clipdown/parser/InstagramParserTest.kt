@@ -1,14 +1,28 @@
 package com.clipdown.parser
 
 import com.clipdown.parser.parsers.HtmlUtil
+import com.clipdown.parser.parsers.IgRiskGuard
 import com.clipdown.parser.parsers.InstagramParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 class InstagramParserTest {
 
     private val parser = InstagramParser()
+
+    @Before
+    fun resetGuard() {
+        IgRiskGuard.reset()
+    }
+
+    @Test
+    fun `shortcodeToMediaId 算法换算正确`() {
+        assertEquals("4003056927646516681", parser.shortcodeToMediaId("DeNtxEMCYXJ"))
+        assertEquals("3977719445419992900", parser.shortcodeToMediaId("DczssLAbCdE"))
+        assertEquals("17522103", parser.shortcodeToMediaId("ABC123"))
+    }
 
     @Test
     fun `双重转义 URL 完整还原（修复 9 reels 403 根因）`() {
@@ -94,8 +108,30 @@ class InstagramParserTest {
     }
 
     @Test
-    fun `带 Cookie 且 embed 失败时降级路径完整`() {
-        // Cookie 存在但 GraphQL 不可用（fake 全 404）→ 走 embed → embed 也 404 → oEmbed 404 → 抛业务异常
+    fun `webFetcher 支持 DOM video 与 source 标签兜底提取`() {
+        val rendered = """
+            <html><head><title>DOM Video Post</title></head><body>
+            <div class="video-container">
+                <video src="https://cdn.example.com/dom_direct.mp4"></video>
+            </div>
+            </body></html>
+        """.trimIndent()
+        val http = FakeHttp { url ->
+            if (url.contains("/embed/captioned/")) ok("<html><body>no media</body></html>") else notFound()
+        }
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DDom111/",
+            testContext(
+                http,
+                webFetcher = { url -> if (url.contains("DDom111")) rendered else null }
+            )
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertTrue("DOM 中的 video 标签应成功提取", videos.any { it.url.contains("dom_direct.mp4") })
+    }
+
+    @Test
+    fun `带 Cookie 且全部失败时给出友好提示`() {
         val http = FakeHttp { notFound() }
         val err = runCatching {
             parser.parse(
@@ -107,7 +143,8 @@ class InstagramParserTest {
     }
 
     @Test
-    fun `items0 内嵌推荐块时只提取正帖媒体（修复 10）`() {        // 2026-09 结构：items[0] 对象内嵌含陌生 code 的数组块（video_versions=null 的空壳），
+    fun `items0 内嵌推荐块时只提取正帖媒体（修复 10）`() {
+        // 2026-09 结构：items[0] 对象内嵌含陌生 code 的数组块（video_versions=null 的空壳），
         // 正帖 code 与媒体数据在对象顶层——旧逻辑全段扫描会把陌生媒体/封面混进来
         val rendered = """
             <html><head><meta property="og:title" content="Polluted Page" /></head><body>
@@ -143,7 +180,9 @@ class InstagramParserTest {
 
     private fun graphqlHttp(json: String) = FakeHttp { url ->
         when {
+            url.contains("/api/v1/media/") -> notFound()
             url.contains("/api/graphql") -> ok(json)
+            url.contains("/graphql/query") -> ok(json)
             url.contains("/p/") -> ok(lsdHtml)
             else -> notFound()
         }
@@ -152,15 +191,61 @@ class InstagramParserTest {
     private val igCookie = mapOf(com.clipdown.parser.model.Platform.INSTAGRAM to "sessionid=x; csrftoken=y")
 
     @Test
+    fun `移动端 REST info 接口原生 items 优先提取`() {
+        val restJson = """
+            {"items": [{
+                "video_versions": [{"width": 720, "height": 1280, "url": "https:\\/\\/cdn.example.com\\/v_rest.mp4"}],
+                "caption": {"text": "Rest API Reel"},
+                "user": {"username": "nasa"}
+            }]}
+        """.trimIndent()
+        val http = FakeHttp { url ->
+            if (url.contains("/api/v1/media/")) ok(restJson)
+            else notFound()
+        }
+        val result = parser.parse(
+            "https://www.instagram.com/reel/DczssLAbCdE/",
+            testContext(http, cookies = igCookie, logs = mutableListOf())
+        )
+        assertEquals("ig-local-v1-v1-info", result.resolverId)
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals(1, videos.size)
+        assertTrue(videos[0].url.contains("v_rest.mp4"))
+        assertEquals("Rest API Reel", result.title)
+        assertEquals("nasa", result.author)
+    }
+
+    @Test
+    fun `GraphQL 2026 xig_polaris_media 结构提取`() {
+        val polarisJson = """
+            {"data":{"xig_polaris_media":{"if_not_gated_logged_out":{
+                "code":"DeNtxEMCYXJ",
+                "video_versions":[{"width":1080,"height":1920,"url":"https:\\/\\/cdn.example.com\\/polaris_reel.mp4"}],
+                "caption":{"text":"Polaris video"},
+                "owner":{"username":"nasa"}
+            }}}}
+        """.trimIndent()
+        val result = parser.parse(
+            "https://www.instagram.com/p/DeNtxEMCYXJ/",
+            testContext(graphqlHttp(polarisJson), cookies = igCookie, logs = mutableListOf())
+        )
+        assertEquals("ig-local-v1-private", result.resolverId)
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals(1, videos.size)
+        assertTrue(videos[0].url.contains("polaris_reel.mp4"))
+        assertEquals("Polaris video", result.title)
+    }
+
+    @Test
     fun `GraphQL carousel_media 混合相册（图+视频）全部提取`() {
         // 2026 web_info 结构：图集子项在 carousel_media 数组；视频子项的封面不作为独立媒体
         val json = """
             {"data":{"xdt_shortcode_media":{"code":"DeNtxEMCYXJ",
              "carousel_media":[
-               {"video_versions":null,"image_versions2":{"candidates":[{"width":1080,"height":1080,"url":"https:\\/\\/cdn.example.com\\/a1.jpg"}]}},
-               {"video_versions":[{"width":640,"height":640,"url":"https:\\/\\/cdn.example.com\\/v1.mp4"}],
-                "image_versions2":{"candidates":[{"width":640,"height":640,"url":"https:\\/\\/cdn.example.com\\/vcover.jpg"}]}},
-               {"video_versions":null,"image_versions2":{"candidates":[{"width":1080,"height":1350,"url":"https:\\/\\/cdn.example.com\\/a3.jpg"}]}}
+                {"video_versions":null,"image_versions2":{"candidates":[{"width":1080,"height":1080,"url":"https:\\/\\/cdn.example.com\\/a1.jpg"}]}},
+                {"video_versions":[{"width":640,"height":640,"url":"https:\\/\\/cdn.example.com\\/v1.mp4"}],
+                 "image_versions2":{"candidates":[{"width":640,"height":640,"url":"https:\\/\\/cdn.example.com\\/vcover.jpg"}]}},
+                {"video_versions":null,"image_versions2":{"candidates":[{"width":1080,"height":1350,"url":"https:\\/\\/cdn.example.com\\/a3.jpg"}]}}
              ],"caption":{"text":"mixed"}}}}
         """.trimIndent()
         val result = parser.parse(
@@ -180,8 +265,8 @@ class InstagramParserTest {
         val json = """
             {"data":{"xdt_shortcode_media":{"code":"ABC123",
              "media":{"nodes":[
-               {"video_versions":[{"width":720,"height":720,"url":"https:\\/\\/cdn.example.com\\/x1.mp4"}]},
-               {"image_versions2":{"candidates":[{"width":1080,"height":1080,"url":"https:\\/\\/cdn.example.com\\/x2.jpg"}]}}
+                {"video_versions":[{"width":720,"height":720,"url":"https:\\/\\/cdn.example.com\\/x1.mp4"}]},
+                {"image_versions2":{"candidates":[{"width":1080,"height":1080,"url":"https:\\/\\/cdn.example.com\\/x2.jpg"}]}}
              ]}}}}
         """.trimIndent()
         val result = parser.parse(
