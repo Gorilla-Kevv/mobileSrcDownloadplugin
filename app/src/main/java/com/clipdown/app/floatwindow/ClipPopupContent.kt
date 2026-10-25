@@ -217,7 +217,7 @@ private fun ReadyBody(
 
         Row(verticalAlignment = Alignment.CenterVertically) {
             AsyncImage(
-                model = result.coverUrl,
+                model = result.coverUrl ?: result.media.firstOrNull { it.kind == com.clipdown.parser.model.MediaKind.IMAGE }?.url ?: result.media.firstOrNull()?.url,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

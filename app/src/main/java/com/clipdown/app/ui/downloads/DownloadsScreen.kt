@@ -25,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Pause
@@ -56,6 +58,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import coil.request.videoFrameMillis
 import com.clipdown.app.ui.components.AppCard
 import com.clipdown.app.ui.components.EmptyState
 import com.clipdown.app.ui.components.MediaViewerDialog
@@ -335,10 +339,22 @@ private fun TaskRow(
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
+                // 兜底图标：当缩略图未就绪或加载失败时展示
+                Icon(
+                    imageVector = if (task.mimeType.startsWith("video/")) Icons.Default.Movie else Icons.Default.Image,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.size(if (compact) 22.dp else 26.dp)
+                )
                 val thumbModel = resolveThumbModel(task)
                 if (thumbModel != null) {
+                    val context = LocalContext.current
                     AsyncImage(
-                        model = thumbModel,
+                        model = ImageRequest.Builder(context)
+                            .data(thumbModel)
+                            .videoFrameMillis(1000)
+                            .crossfade(true)
+                            .build(),
                         contentDescription = task.title,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop
@@ -516,10 +532,21 @@ private fun AlbumGroupCard(
                             .clickable { onPreviewAlbum(t) },
                         contentAlignment = Alignment.Center
                     ) {
+                        Icon(
+                            imageVector = if (t.mimeType.startsWith("video/")) Icons.Default.Movie else Icons.Default.Image,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                            modifier = Modifier.size(20.dp)
+                        )
                         val model = resolveThumbModel(t)
                         if (model != null) {
+                            val context = LocalContext.current
                             AsyncImage(
-                                model = model,
+                                model = ImageRequest.Builder(context)
+                                    .data(model)
+                                    .videoFrameMillis(1000)
+                                    .crossfade(true)
+                                    .build(),
                                 contentDescription = null,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
@@ -652,11 +679,11 @@ private fun formatSpeed(bytesPerSec: Long): String {
 }
 
 private fun resolveThumbModel(task: TaskEntity): Any? {
-    task.localUri?.let { if (it.isNotBlank()) return android.net.Uri.parse(it) }
     task.localPath?.let {
         val f = File(it)
-        if (f.exists()) return f
+        if (f.exists() && f.length() > 0) return f
     }
+    task.localUri?.let { if (it.isNotBlank()) return android.net.Uri.parse(it) }
     return task.coverUrl
 }
 

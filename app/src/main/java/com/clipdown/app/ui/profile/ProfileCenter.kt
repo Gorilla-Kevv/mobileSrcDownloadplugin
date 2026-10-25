@@ -299,7 +299,7 @@ object ProfileCenter {
                 val r = withContext(Dispatchers.IO) { ParserEngine.parseSafe(post.url) }
                 val parsed = r.getOrNull()
                 if (parsed != null && !parsed.isEmpty) {
-                    DownloadController.enqueueAll(parsed.media, parsed.platform, parsed.title, post.url)
+                    DownloadController.enqueueAll(parsed.media, parsed.platform, parsed.title, post.url, parsed.coverUrl ?: post.cover)
                     ok++
                 } else {
                     failed++
@@ -323,7 +323,7 @@ object ProfileCenter {
         val r = withContext(Dispatchers.IO) { ParserEngine.parseSafe(post.url) }
         val parsed = r.getOrNull()
         if (parsed != null && !parsed.isEmpty) {
-            DownloadController.enqueueAll(parsed.media, parsed.platform, parsed.title, post.url)
+            DownloadController.enqueueAll(parsed.media, parsed.platform, parsed.title, post.url, parsed.coverUrl ?: post.cover)
             context.startService(DownloadService.intent(context, DownloadService.ACTION_RESUME))
         }
     }

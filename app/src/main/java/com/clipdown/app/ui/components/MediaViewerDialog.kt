@@ -3,22 +3,25 @@ package com.clipdown.app.ui.components
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.widget.MediaController
 import android.widget.VideoView
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -30,13 +33,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Repeat
+import androidx.compose.material.icons.filled.RepeatOne
+import androidx.compose.material.icons.filled.Replay
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -44,6 +53,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -66,10 +76,11 @@ import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.parser.model.MediaItem
+import kotlinx.coroutines.delay
 import java.io.File
 
 /**
- * 内置媒体浏览器：全屏图片查看（双击放大/手势缩放/多图滑动切换）+ 视频播放（内置播放与控制条）+ 分享与删除。
+ * 内置媒体浏览器：全屏图片查看（双击放大/手势缩放/多图滑动切换）+ 现代美观视频播放器（简洁控制条/拖动进度/时间戳/循环切换/居中操作）+ 分享与删除。
  */
 @Composable
 fun MediaViewerDialog(
@@ -120,7 +131,8 @@ fun MediaViewerDialog(
                         VideoPlayerPage(
                             task = task,
                             isCurrentPage = pagerState.currentPage == page,
-                            onToggleControls = { showControls = !showControls }
+                            showControls = showControls,
+                            onSetShowControls = { showControls = it }
                         )
                     } else {
                         ImageViewerPage(
@@ -134,8 +146,8 @@ fun MediaViewerDialog(
             // 顶部操作栏
             AnimatedVisibility(
                 visible = showControls,
-                enter = fadeIn(),
-                exit = fadeOut(),
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200)),
                 modifier = Modifier.align(Alignment.TopCenter)
             ) {
                 Box(
@@ -223,11 +235,11 @@ fun MediaViewerDialog(
                 }
             }
 
-            // 底部详情栏
+            // 底部详情栏（仅对非视频媒体显示；视频媒体由 VideoPlayerPage 统一承载播放控制与详情）
             AnimatedVisibility(
-                visible = showControls,
-                enter = fadeIn(),
-                exit = fadeOut(),
+                visible = showControls && !currentTask.mimeType.startsWith("video/"),
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200)),
                 modifier = Modifier.align(Alignment.BottomCenter)
             ) {
                 Box(
@@ -238,6 +250,7 @@ fun MediaViewerDialog(
                                 colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.75f))
                             )
                         )
+                        .navigationBarsPadding()
                         .padding(horizontal = 16.dp, vertical = 20.dp)
                 ) {
                     Column {
@@ -345,16 +358,24 @@ private fun ImageViewerPage(
     }
 }
 
-/** 视频播放：使用 Android 原生 VideoView + MediaController，支持硬件解码、拖动进度与循环播放 */
+/** 视频播放：全屏硬件加速解码 + 现代化美观 Compose 播放控制器（手势显隐/进度拖动/时间戳/循环切换/居中操作） */
 @Composable
 private fun VideoPlayerPage(
     task: TaskEntity,
     isCurrentPage: Boolean,
-    onToggleControls: () -> Unit
+    showControls: Boolean,
+    onSetShowControls: (Boolean) -> Unit
 ) {
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var isPrepared by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
+    var isCompleted by remember { mutableStateOf(false) }
+    var isLooping by remember { mutableStateOf(true) }
+
+    var currentPositionMs by remember { mutableIntStateOf(0) }
+    var durationMs by remember { mutableIntStateOf(0) }
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekPositionMs by remember { mutableIntStateOf(0) }
 
     DisposableEffect(task.id) {
         onDispose {
@@ -363,10 +384,11 @@ private fun VideoPlayerPage(
         }
     }
 
+    // 页面切出时暂停，切入时恢复
     LaunchedEffect(isCurrentPage) {
         val vv = videoViewRef ?: return@LaunchedEffect
         if (isCurrentPage) {
-            if (isPrepared && !vv.isPlaying) {
+            if (isPrepared && !vv.isPlaying && !isCompleted) {
                 vv.start()
                 isPlaying = true
             }
@@ -378,13 +400,36 @@ private fun VideoPlayerPage(
         }
     }
 
+    // 进度轮询更新（5Hz）
+    LaunchedEffect(isCurrentPage, isPlaying, isPrepared) {
+        if (!isCurrentPage) return@LaunchedEffect
+        while (isPlaying && isPrepared) {
+            val vv = videoViewRef ?: break
+            if (!isSeeking) {
+                currentPositionMs = vv.currentPosition.coerceAtLeast(0)
+                if (durationMs <= 0 || durationMs < vv.duration) {
+                    durationMs = vv.duration.coerceAtLeast(0)
+                }
+            }
+            delay(200L)
+        }
+    }
+
+    // 播放中自动收起控制条（3.5 秒无操作自动隐藏）
+    LaunchedEffect(showControls, isPlaying, isSeeking, isCurrentPage) {
+        if (showControls && isPlaying && !isSeeking && isCurrentPage && !isCompleted) {
+            delay(3500L)
+            onSetShowControls(false)
+        }
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onTap = { onToggleControls() }
+                    onTap = { onSetShowControls(!showControls) }
                 )
             },
         contentAlignment = Alignment.Center
@@ -394,20 +439,30 @@ private fun VideoPlayerPage(
             AndroidView(
                 factory = { ctx ->
                     VideoView(ctx).apply {
-                        val controller = MediaController(ctx)
-                        controller.setAnchorView(this)
-                        setMediaController(controller)
+                        // 不使用陈旧的系统 MediaController，全面采用 Compose 原生现代控件
                         setVideoURI(mediaUri)
-                        setOnPreparedListener { mp ->
+                        setOnPreparedListener { _ ->
                             isPrepared = true
-                            mp.isLooping = true
+                            durationMs = duration.coerceAtLeast(0)
                             if (isCurrentPage) {
                                 start()
                                 isPlaying = true
+                                isCompleted = false
                             }
                         }
                         setOnCompletionListener {
-                            isPlaying = false
+                            if (isLooping) {
+                                seekTo(0)
+                                start()
+                                currentPositionMs = 0
+                                isPlaying = true
+                                isCompleted = false
+                            } else {
+                                isPlaying = false
+                                isCompleted = true
+                                currentPositionMs = durationMs
+                                onSetShowControls(true)
+                            }
                         }
                         videoViewRef = this
                     }
@@ -415,11 +470,169 @@ private fun VideoPlayerPage(
                 modifier = Modifier.fillMaxSize()
             )
 
+            // 缓冲转圈
             if (!isPrepared) {
                 CircularProgressIndicator(
                     color = Color.White,
                     modifier = Modifier.size(36.dp)
                 )
+            }
+
+            // 居中操作圆钮（播放/暂停/重播）
+            AnimatedVisibility(
+                visible = showControls || !isPlaying || isCompleted,
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(68.dp)
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .border(1.dp, Color.White.copy(alpha = 0.2f), CircleShape)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) {
+                            val vv = videoViewRef ?: return@clickable
+                            if (isCompleted) {
+                                vv.seekTo(0)
+                                vv.start()
+                                isCompleted = false
+                                isPlaying = true
+                                currentPositionMs = 0
+                            } else if (isPlaying) {
+                                vv.pause()
+                                isPlaying = false
+                            } else {
+                                vv.start()
+                                isPlaying = true
+                            }
+                        },
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = when {
+                            isCompleted -> Icons.Default.Replay
+                            isPlaying -> Icons.Default.Pause
+                            else -> Icons.Default.PlayArrow
+                        },
+                        contentDescription = if (isPlaying) "暂停" else "播放",
+                        tint = Color.White,
+                        modifier = Modifier.size(36.dp)
+                    )
+                }
+            }
+
+            // 底部控制面板（时间、进度滑块、循环控制与文件信息）
+            AnimatedVisibility(
+                visible = showControls,
+                enter = fadeIn(tween(200)),
+                exit = fadeOut(tween(200)),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(Color.Transparent, Color.Black.copy(alpha = 0.85f))
+                            )
+                        )
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                        .clickable(
+                            interactionSource = remember { MutableInteractionSource() },
+                            indication = null
+                        ) { /* 消费点击事件，防止误触底层隐藏控制条 */ }
+                ) {
+                    Column(modifier = Modifier.fillMaxWidth()) {
+                        // 时间与进度条行
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            val displayPosition = if (isSeeking) seekPositionMs else currentPositionMs
+                            Text(
+                                text = formatMediaTime(displayPosition.toLong()),
+                                color = Color.White,
+                                style = MaterialTheme.typography.labelSmall
+                            )
+
+                            Spacer(Modifier.width(8.dp))
+
+                            val maxRange = durationMs.coerceAtLeast(1).toFloat()
+                            val currentSliderValue = (if (isSeeking) seekPositionMs else currentPositionMs)
+                                .coerceIn(0, durationMs.coerceAtLeast(1)).toFloat()
+
+                            Slider(
+                                value = currentSliderValue,
+                                onValueChange = { newPos ->
+                                    isSeeking = true
+                                    seekPositionMs = newPos.toInt()
+                                },
+                                onValueChangeFinished = {
+                                    videoViewRef?.seekTo(seekPositionMs)
+                                    currentPositionMs = seekPositionMs
+                                    isSeeking = false
+                                    if (isCompleted) {
+                                        isCompleted = false
+                                        videoViewRef?.start()
+                                        isPlaying = true
+                                    }
+                                },
+                                valueRange = 0f..maxRange,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color.White,
+                                    activeTrackColor = MaterialTheme.colorScheme.primary,
+                                    inactiveTrackColor = Color.White.copy(alpha = 0.25f)
+                                ),
+                                modifier = Modifier.weight(1f)
+                            )
+
+                            Spacer(Modifier.width(8.dp))
+
+                            Text(
+                                text = formatMediaTime(durationMs.toLong()),
+                                color = Color.White.copy(alpha = 0.7f),
+                                style = MaterialTheme.typography.labelSmall
+                            )
+
+                            Spacer(Modifier.width(4.dp))
+
+                            // 循环播放切换
+                            IconButton(
+                                onClick = { isLooping = !isLooping },
+                                modifier = Modifier.size(32.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isLooping) Icons.Default.RepeatOne else Icons.Default.Repeat,
+                                    contentDescription = if (isLooping) "循环开启" else "循环关闭",
+                                    tint = if (isLooping) MaterialTheme.colorScheme.primary else Color.White.copy(alpha = 0.5f),
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
+                        // 文件名与路径信息
+                        Text(
+                            text = task.fileName,
+                            color = Color.White.copy(alpha = 0.85f),
+                            style = MaterialTheme.typography.labelMedium,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        task.localPath?.let { p ->
+                            Text(
+                                text = p,
+                                color = Color.White.copy(alpha = 0.45f),
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
             }
         } else {
             Text("视频文件不存在或已被删除", color = Color.White.copy(alpha = 0.6f))
@@ -427,26 +640,39 @@ private fun VideoPlayerPage(
     }
 }
 
+/** 格式化媒体时间 (ms -> mm:ss 或 hh:mm:ss) */
+private fun formatMediaTime(ms: Long): String {
+    val totalSeconds = (ms / 1000).coerceAtLeast(0)
+    val minutes = totalSeconds / 60
+    val seconds = totalSeconds % 60
+    val hours = minutes / 60
+    return if (hours > 0) {
+        String.format(java.util.Locale.US, "%d:%02d:%02d", hours, minutes % 60, seconds)
+    } else {
+        String.format(java.util.Locale.US, "%02d:%02d", minutes, seconds)
+    }
+}
+
 /** 获取媒体的数据模型（供 Coil 读取） */
 private fun resolveMediaSource(task: TaskEntity): Any? {
-    task.localUri?.let { uriStr ->
-        if (uriStr.isNotBlank()) return Uri.parse(uriStr)
-    }
     task.localPath?.let { path ->
         val f = File(path)
-        if (f.exists()) return f
+        if (f.exists() && f.length() > 0) return f
+    }
+    task.localUri?.let { uriStr ->
+        if (uriStr.isNotBlank()) return Uri.parse(uriStr)
     }
     return task.coverUrl
 }
 
 /** 获取媒体的播放 Uri（供 VideoView 读取） */
 private fun resolveMediaUri(task: TaskEntity): Uri? {
-    task.localUri?.let { uriStr ->
-        if (uriStr.isNotBlank()) return Uri.parse(uriStr)
-    }
     task.localPath?.let { path ->
         val f = File(path)
-        if (f.exists()) return Uri.fromFile(f)
+        if (f.exists() && f.length() > 0) return Uri.fromFile(f)
+    }
+    task.localUri?.let { uriStr ->
+        if (uriStr.isNotBlank()) return Uri.parse(uriStr)
     }
     return null
 }

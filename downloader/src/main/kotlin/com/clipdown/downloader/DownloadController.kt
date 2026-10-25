@@ -68,7 +68,13 @@ object DownloadController {
      * @param sourceUrl 来源帖子链接（图集分组 + 下载页"查看来源"）
      * @return 任务 ID
      */
-    fun enqueue(item: MediaItem, platform: Platform, title: String?, sourceUrl: String? = null): String {
+    fun enqueue(
+        item: MediaItem,
+        platform: Platform,
+        title: String?,
+        sourceUrl: String? = null,
+        coverUrl: String? = null
+    ): String {
         // 入口兜底（修复 9 的第二道防线）：不管解析哪条路径漏了转义，入库 URL 必须干净——
         // 页面转义形态随版本变化，曾出现 video_versions 单层 \/ 残留导致 CDN 403
         val cleanUrl = sanitizeTaskUrl(item.url)
@@ -107,15 +113,15 @@ object DownloadController {
             container = ext,
             kind = kind,
             platformId = platform.id,
-            coverUrl = null,
+            coverUrl = coverUrl ?: if (mime.startsWith("image/")) cleanUrl else null,
             sourceUrl = sourceUrl
         )
         engine().enqueue(task)
         return task.id
     }
 
-    fun enqueueAll(items: List<MediaItem>, platform: Platform, title: String?, sourceUrl: String? = null): List<String> =
-        items.map { enqueue(it, platform, title, sourceUrl) }
+    fun enqueueAll(items: List<MediaItem>, platform: Platform, title: String?, sourceUrl: String? = null, coverUrl: String? = null): List<String> =
+        items.map { enqueue(it, platform, title, sourceUrl, coverUrl) }
 
     fun pause(taskId: String) = engine().pause(taskId)
     fun resume(taskId: String) = engine().resume(taskId)

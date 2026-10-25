@@ -317,7 +317,7 @@ private fun AlbumBarBody(
     Column(modifier = Modifier.fillMaxWidth()) {
         Box {
             AsyncImage(
-                model = result.media.firstOrNull()?.url,
+                model = result.coverUrl ?: result.media.firstOrNull { it.kind == com.clipdown.parser.model.MediaKind.IMAGE }?.url ?: result.media.firstOrNull()?.url,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier

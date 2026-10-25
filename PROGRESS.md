@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 52 已完成并发布 v1.1.9（versionCode 14）**：Instagram 解析失败多通道全面修复（移动端 REST info 接口原生支持 + 网页端 GraphQL 2026 xig_polaris 架构适配 + 自动补齐 CSRF 令牌 + WebView DOM 视频标签兜底提取 + Cookie 更新自动解除风控冻结）
-- 下一阶段任务：真机走查阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）+ 阶段 50-46 各项
+- 当前正在开发任务：**阶段 53 已完成并发布 v1.1.10（versionCode 15）**：预览缩略图全链路修复（引入 coil-video 截取视频首秒帧 + 全局 ImageLoaderFactory 注册 + DownloadController 与所有调用点入库 coverUrl 贯通 + 占位兜底）+ 内置视频播放器现代化重构（告别老旧 MediaController，构建 Compose 原生居中胶囊操作钮 + 磨砂渐变控制条 + 精确时间戳与拖动进度条 + 单曲循环）
+- 下一阶段任务：真机走查阶段 53（缩略图显示与内置播放器视觉/交互体验）+ 阶段 52（Instagram 帖子/Reel/图集解析与下载）+ 阶段 51（首页下载交互、下载页内置图片手势与视频播放、真实删除确认）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿
+- 测试基线：parser **99 例** + downloader 30 例 + app **4 例**全绿（共 133 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.25 14:34
+- 本次文档更新时间：10.25 15:00
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -862,5 +862,48 @@
   - `:app:assembleDebug` 与 `:app:assembleRelease` 构建成功，APK 正常打包产出；
   - **已一键发布正式版 v1.1.9（versionCode 14）至 GitHub Releases**，匿名校验 `releases/latest/download/update.json` 200 验证通过。
 - 本次文档更新时间：10.25 14:34
+
+## 阶段 53 预览缩略图全链路修复与内置视频播放器现代化重构 [计划时间：10.25 14:40 BY Antigravity][完成时间：10.25 15:00 BY Antigravity]
+- 用户反馈：
+  1. 预览图全部显示失败；
+  2. 内置的播放器太丑了，做美观简洁一些。
+- 根因排查与分析：
+  1. **缩略图全军覆没根因**：
+     - **下载前/中任务**：`DownloadController.kt` 入队时硬编码丢弃了 `coverUrl`（`coverUrl = null`），导致数据库 `tasks` 表中所有记录的 `cover_url` 全为空；下载未完成或失败的任务无任何封面数据。
+     - **下载后视频任务**：`app/build.gradle.kts` 仅依赖了 `coil-compose:2.7.0`，缺失 `coil-video` 视频帧解码器；当视频下载完成落盘（无论是 `content://` 还是本地私有目录文件），Coil 默认的 `BitmapFactoryDecoder` 尝试以静态图片位图方式解码 MP4，直接抛出 `DecodeException` 异常导致画面全白/全空。
+     - **数据源解析与权限**：`resolveThumbModel` 优先查询 `content://` MediaStore 授权 Uri，在 Android 10+ 分区存储与图库状态下容易发生权限失效或延时，且未配置对本地私有文件的直接读取及截取视频关键帧参数。
+  2. **内置播放器老旧突兀根因**：
+     - `MediaViewerDialog.kt` 绑定了 Android 2008 年代原生 `android.widget.MediaController`，悬浮灰黑控制条样式陈旧，不符合整体 Material 3 深色磨砂玻璃设计风格。
+- 落地重构与增强：
+  1. **缩略图全链路打通**：
+     - `app/build.gradle.kts` 引入 `io.coil-kt:coil-video:2.7.0`；
+     - `ClipDownApp.kt` 实现 `ImageLoaderFactory`，全局向 Coil 注入 `VideoFrameDecoder.Factory()`，并配置 25% 内存缓存与 100MB 本地磁盘缓存；
+     - `DownloadController.enqueue` 与 `enqueueAll` 增加 `coverUrl: String? = null` 参数，当 `mimeType` 为图片时自动兜底其直链，并在 `HomeScreen`、`FloatingWindowService`、`ProfileCenter` 等全部调用方注入 `ParseResult.coverUrl`；
+     - `DownloadsScreen.kt` 优化 `resolveThumbModel`（优先读取稳定的本地私有文件 `File(task.localPath)`，回退 `task.localUri` 与远端 `coverUrl`）；在 `AsyncImage` 中配置 `videoFrameMillis(1000)` 精准截取第 1 秒视频帧（避免首帧全黑）；并在缩略图底层增加 `Icons.Default.Movie` 与 `Icons.Default.Image` 柔和占位图标，加载中或失败均不出现空白黑洞；
+     - `HomeScreen.kt`、`BubbleBar.kt`、`ClipPopupContent.kt` 同步补齐图片直链 fallback 与占位保护。
+  2. **内置视频播放器现代化重构**：
+     - 完全移除废弃的 `MediaController`；
+     - 居中悬浮操作钮：68dp 圆形半透明磨砂玻璃胶囊（`Color.Black.copy(0.55f)` + 细白描边），流畅呈现播放、暂停、重播（Replay）状态切换，手势无水波纹干扰；
+     - 底部渐变控制面板：深黑半透明渐变（`Brush.verticalGradient`），带 `navigationBarsPadding()` 适配全面屏手势条与三键导航；
+     - 进度滑条：Material 3 `Slider` 配合主色调轨道，支持 `isSeeking` 毫秒级流畅拖动定位；
+     - 精确时间戳：`00:15 / 01:24` 等宽排版；
+     - 循环控制：单曲循环开/关（`Repeat` / `RepeatOne`）；
+     - 控制条显隐动画：3.5 秒无操作自动隐藏（暂停与拖拽时不隐藏），点击视频区域平滑淡入淡出（200ms `fadeIn`/`fadeOut`），底部与顶部操作栏完全同步。
+- 改动文件：
+  - `app/build.gradle.kts`
+  - `app/src/main/java/com/clipdown/app/ClipDownApp.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/MediaViewerDialog.kt`
+  - `app/src/main/java/com/clipdown/app/ui/downloads/DownloadsScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/profile/ProfileCenter.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/BubbleBar.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/ClipPopupContent.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/FloatingWindowService.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadController.kt`
+- 测试：
+  - 全量单元测试 **133 例全绿**（parser 99 例、downloader 30 例、app 4 例）；
+  - `:app:assembleDebug` 与 `:app:assembleRelease` 构建成功，APK 1.86MB 产出正常；
+- 本次文档更新时间：10.25 15:00
+
 
 

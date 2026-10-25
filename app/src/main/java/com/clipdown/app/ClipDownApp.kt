@@ -2,6 +2,11 @@ package com.clipdown.app
 
 import android.app.Application
 import android.util.Log
+import coil.ImageLoader
+import coil.ImageLoaderFactory
+import coil.decode.VideoFrameDecoder
+import coil.disk.DiskCache
+import coil.memory.MemoryCache
 import com.clipdown.app.data.CookieStore
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.clip.ClipboardMonitor
@@ -15,13 +20,33 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
-class ClipDownApp : Application() {
+class ClipDownApp : Application(), ImageLoaderFactory {
 
     /** 应用级协程作用域：与进程同生命周期，承载解析与守护任务 */
     val appScope = MainScope()
 
     lateinit var settings: SettingsRepository
         private set
+
+    override fun newImageLoader(): ImageLoader {
+        return ImageLoader.Builder(this)
+            .components {
+                add(VideoFrameDecoder.Factory())
+            }
+            .memoryCache {
+                MemoryCache.Builder(this)
+                    .maxSizePercent(0.25)
+                    .build()
+            }
+            .diskCache {
+                DiskCache.Builder()
+                    .directory(cacheDir.resolve("image_cache"))
+                    .maxSizeBytes(100L * 1024 * 1024)
+                    .build()
+            }
+            .crossfade(true)
+            .build()
+    }
 
     override fun onCreate() {
         super.onCreate()

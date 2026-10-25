@@ -25,6 +25,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Movie
+import androidx.compose.ui.layout.ContentScale
+import coil.request.ImageRequest
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -266,7 +270,7 @@ fun HomeScreen(
                     onDownload = { indices ->
                         val items = indices.mapNotNull { r.media.getOrNull(it) }
                         if (items.isNotEmpty()) {
-                            DownloadController.enqueueAll(items, r.platform, r.title, r.sourceUrl)
+                            DownloadController.enqueueAll(items, r.platform, r.title, r.sourceUrl, r.coverUrl)
                             context.startService(DownloadService.intent(context, DownloadService.ACTION_RESUME))
                             Toast.makeText(
                                 context,
@@ -310,14 +314,37 @@ private fun ResultCard(
     AppCard {
         // 作品信息：缩略图 + 标题 + 来源
         Row(verticalAlignment = Alignment.CenterVertically) {
-            AsyncImage(
-                model = result.coverUrl,
-                contentDescription = null,
+            val coverUrl = remember(result) {
+                result.coverUrl ?: result.media.firstOrNull { it.kind == MediaKind.IMAGE }?.url ?: result.media.firstOrNull()?.url
+            }
+            Box(
                 modifier = Modifier
                     .size(72.dp)
                     .clip(RoundedCornerShape(AppTheme.radius.thumb))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-            )
+                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = if (result.media.any { it.kind == MediaKind.VIDEO }) Icons.Default.Movie else Icons.Default.Image,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                    modifier = Modifier.size(28.dp)
+                )
+                if (!coverUrl.isNullOrBlank()) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(LocalContext.current)
+                            .data(coverUrl)
+                            .apply {
+                                result.coverHeaders?.forEach { (k, v) -> addHeader(k, v) }
+                            }
+                            .crossfade(true)
+                            .build(),
+                        contentDescription = null,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
+            }
             Spacer(Modifier.width(AppTheme.spacing.md))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
