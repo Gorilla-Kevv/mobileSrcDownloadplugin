@@ -2,9 +2,10 @@
  * ClipDown 跨端助手 - In-page Content Script
  * 深度适配 X (Twitter)、Instagram、小红书与 YouTube 的媒体嗅探与页面下载注入
  * 核心创新：
- * 1. 智能点赞监控 (Instagram & X)：自动捕获点赞推文/帖子，首图展示，待下载清单，去重防漏，一键批量落盘
- * 2. 全页面深度采集与下载 (X / Instagram / 小红书)：支持博主主页、个人点赞页、媒体标签页自动滚动嗅探、全选过滤、PC与手机双端批量下载
- * 3. 单帖即时解析：高清原图、无水印视频流嗅探与一键推送到手机
+ * 1. 方案 1（瀑布流卡片直接下载 - 最优解）：在图片/视频帖子右下角直接注入高质感下载胶囊按钮，点击只下载当前帖（视频/单图/多图图集秒级直接批量落盘）
+ * 2. 方案 2（智能点赞监控与双端待下载清单）：全覆盖捕获点击、双击与 React 节点替换事件，实时统计角标，首图去重防漏，批量一键下载
+ * 3. Instagram 多图图集深度解析：自动识别轮播组件、从页面内部 SSR 脚本或后台请求完整解析 edge_sidecar_to_children，彻底解决只能抓取单张问题
+ * 4. 全页面无限瀑布流深度采集（博主主页/个人点赞页/媒体页）
  */
 
 (() => {
@@ -56,6 +57,27 @@
     if (IS_XIAOHONGSHU) {
       return path.includes("/user/profile/");
     }
+    return false;
+  }
+
+  // ── Instagram 是否为轮播图集判断 ───────────────────────────────────────────
+  function isInstagramArticleCarousel(article) {
+    if (!article) return false;
+    // 1. 点状指示器 (dots)
+    if (article.querySelector('ul._acay, div._aamz, div._acaz, [aria-label*="slide" i], [aria-label*="幻灯片"]')) return true;
+    // 2. 下一页翻页按钮
+    if (article.querySelector('button[aria-label*="Next" i], button[aria-label*="下一个" i], button[aria-label*="Weiter" i]')) return true;
+    // 3. 多张图片已挂载
+    const imgs = article.querySelectorAll("img");
+    let nonAvatarCount = 0;
+    imgs.forEach(img => {
+      if (img.src && !img.src.includes("s150x150") && !img.src.includes("s320x320") && !img.closest("header")) {
+        nonAvatarCount++;
+      }
+    });
+    if (nonAvatarCount > 1) return true;
+    // 4. 多图图标
+    if (article.querySelector('svg[aria-label*="Carousel" i], svg[aria-label*="图集" i], svg[aria-label*="多图" i]')) return true;
     return false;
   }
 
@@ -121,6 +143,56 @@
       }
     });
 
+    const isCarousel = isInstagramArticleCarousel(article);
+
+    // 6. 核心优化：若是多图图集，优先从页面内嵌的 SSR script 中直接提取完整 edge_sidecar_to_children
+    if (isCarousel && shortcode) {
+      try {
+        const scripts = document.querySelectorAll('script[type="application/json"]');
+        for (const s of scripts) {
+          const txt = s.textContent || "";
+          if (txt.includes(shortcode) && (txt.includes("edge_sidecar_to_children") || txt.includes("carousel_media"))) {
+            const sidecarMatch = txt.match(/"edge_sidecar_to_children"\s*:\s*\{"edges"\s*:\s*(\[.*?\])\s*\}/);
+            if (sidecarMatch) {
+              const edges = JSON.parse(sidecarMatch[1]);
+              const sidecarItems = [];
+              edges.forEach((edge, idx) => {
+                const node = edge.node;
+                if (node.is_video && node.video_url) {
+                  sidecarItems.push({
+                    url: node.video_url,
+                    type: "video",
+                    label: `Reel 视频 ${idx + 1} (MP4)`,
+                    ext: "mp4"
+                  });
+                } else if (node.display_url) {
+                  sidecarItems.push({
+                    url: node.display_url,
+                    type: "image",
+                    label: `无水印原图 ${idx + 1}`,
+                    ext: "jpg"
+                  });
+                }
+              });
+              if (sidecarItems.length > 0) {
+                return {
+                  platform: "instagram",
+                  shortcode,
+                  url: `https://www.instagram.com/p/${shortcode}/`,
+                  title,
+                  author: author || "Instagram",
+                  cover: cover || sidecarItems[0].url,
+                  items: sidecarItems,
+                  isCarousel: true,
+                  likedAt: Date.now()
+                };
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     if (videos.length === 0 && images.length === 0) return null;
 
     const items = [];
@@ -152,6 +224,7 @@
       author: author || "Instagram",
       cover: cover || (videos.length > 0 ? videos[0] : ""),
       items,
+      isCarousel,
       likedAt: Date.now()
     };
   }
@@ -287,7 +360,6 @@
         }
       });
     } else if (IS_INSTAGRAM) {
-      // 1. 尝试直接文章容器
       document.querySelectorAll("article").forEach(art => {
         const item = extractMediaFromInstagramArticle(art);
         if (item && item.shortcode && !seenCodes.has(item.shortcode)) {
@@ -295,7 +367,6 @@
           harvested.push(item);
         }
       });
-      // 2. 尝试主页网格 a 链接
       document.querySelectorAll('a[href*="/p/"], a[href*="/reel/"]').forEach(a => {
         const href = a.getAttribute("href") || "";
         const m = href.match(/\/(p|reel|reels)\/([a-zA-Z0-9_-]+)/);
@@ -353,7 +424,7 @@
     return harvested;
   }
 
-  // ── 通用全页单帖媒体嗅探器（供通用页面与单帖模式使用）────────────────────
+  // ── 通用全页单帖媒体嗅探器 ────────────────────────────────────────────────
   function sniffPageMedia() {
     if (IS_X) {
       const match = window.location.pathname.match(/\/status\/(\d+)/);
@@ -478,7 +549,304 @@
     return true;
   });
 
-  // ── 主逻辑：右下角悬浮挂件与双端点赞+全页面采集体系 ───────────────────────
+  // ── 核心创新 1：瀑布流帖子右下角直接注入下载按钮 (最优解方案 1) ───────────
+  function injectCardDownloadButtons() {
+    // 1. Instagram 瀑布流单帖
+    if (IS_INSTAGRAM) {
+      document.querySelectorAll('article:not([data-clipdown-injected])').forEach(article => {
+        article.setAttribute("data-clipdown-injected", "true");
+
+        // 定位媒体容器或第一层卡片块
+        const mediaWrap = article.querySelector('div._aagv, div._aatk, div._aato, div._ab6-, div[role="presentation"], div[role="button"]') ||
+                          article.querySelector('div:has(> img), div:has(> video)') ||
+                          article;
+
+        if (mediaWrap) {
+          const compStyle = window.getComputedStyle(mediaWrap);
+          if (compStyle.position === "static") {
+            mediaWrap.style.position = "relative";
+          }
+
+          const isCarousel = isInstagramArticleCarousel(article);
+          const hasVideo = !!article.querySelector("video");
+          const labelText = isCarousel ? "📦 下载图集" : (hasVideo ? "🎬 下载视频" : "⬇️ 下载原图");
+
+          const btn = document.createElement("div");
+          btn.className = "clipdown-card-dl-btn";
+          btn.title = "ClipDown 一键下载此帖子 (仅下载此项)";
+          btn.innerHTML = `
+            <span class="clipdown-card-dl-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v13M17 10l-5 5-5-5"/>
+                <path d="M20 21H4"/>
+              </svg>
+            </span>
+            <span class="clipdown-card-dl-label">${labelText}</span>
+          `;
+
+          btn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const origContent = btn.innerHTML;
+            btn.classList.add("loading");
+            btn.innerHTML = `<span class="clipdown-inline-spinner"></span> 正在解析...`;
+
+            try {
+              let postData = extractMediaFromInstagramArticle(article);
+              if (!postData || !postData.shortcode) throw new Error("未能定位帖子标识");
+
+              // 若检测为图集或仅抓到 1 张图，向后台请求完整 shortcode 解析（解决多图问题）
+              if (isCarousel || (postData.items && postData.items.length <= 1)) {
+                btn.innerHTML = `<span class="clipdown-inline-spinner"></span> 解析图集中...`;
+                const fullRes = await new Promise(resolve => {
+                  chrome.runtime.sendMessage({
+                    action: "RESOLVE_INSTAGRAM_POST",
+                    shortcode: postData.shortcode,
+                    inpageItems: postData.items
+                  }, resolve);
+                });
+
+                if (fullRes && fullRes.success && fullRes.data && fullRes.data.items && fullRes.data.items.length > 0) {
+                  postData.items = fullRes.data.items;
+                  if (fullRes.data.title) postData.title = fullRes.data.title;
+                  if (fullRes.data.author) postData.author = fullRes.data.author;
+                }
+              }
+
+              const rawTitle = (postData.title || "Instagram_Post").substring(0, 40).replace(/[\\/:*?"<>|]/g, "_");
+              const images = (postData.items || []).filter(x => x.type === "image");
+              const videos = (postData.items || []).filter(x => x.type === "video");
+
+              if (videos.length > 0) {
+                btn.innerHTML = `⏳ 正在下载视频...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_MEDIA_PC",
+                  url: videos[0].url,
+                  filename: `${rawTitle}.mp4`,
+                  platform: "instagram"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载`;
+              } else if (images.length > 1) {
+                btn.innerHTML = `⏳ 下载全部 ${images.length} 张原图...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_BATCH_PC",
+                  items: images,
+                  baseTitle: rawTitle,
+                  platform: "instagram"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载 (${images.length}图)`;
+              } else if (images.length === 1) {
+                btn.innerHTML = `⏳ 正在下载原图...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_MEDIA_PC",
+                  url: images[0].url,
+                  filename: `${rawTitle}.jpg`,
+                  platform: "instagram"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载`;
+              }
+
+              // 记录已下载去重
+              const { ins_downloaded_posts = [] } = await chrome.storage.local.get(["ins_downloaded_posts"]);
+              if (!ins_downloaded_posts.includes(postData.shortcode)) {
+                ins_downloaded_posts.push(postData.shortcode);
+                await chrome.storage.local.set({ ins_downloaded_posts });
+                updateBadge();
+              }
+            } catch (err) {
+              console.warn("Instagram inline download error:", err);
+              btn.classList.remove("loading");
+              btn.innerHTML = `❌ 下载失败`;
+            }
+
+            setTimeout(() => {
+              btn.classList.remove("success", "loading");
+              btn.innerHTML = origContent;
+            }, 3000);
+          });
+
+          mediaWrap.appendChild(btn);
+        }
+      });
+    }
+
+    // 2. X (Twitter) 瀑布流单推文
+    if (IS_X) {
+      document.querySelectorAll('article[data-testid="tweet"]:not([data-clipdown-injected])').forEach(tweetEl => {
+        tweetEl.setAttribute("data-clipdown-injected", "true");
+
+        const mediaWrap = tweetEl.querySelector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="videoComponent"], div[aria-label*="Image" i]') ||
+                          tweetEl.querySelector('div[role="group"]') ||
+                          tweetEl;
+
+        if (mediaWrap) {
+          const compStyle = window.getComputedStyle(mediaWrap);
+          if (compStyle.position === "static") {
+            mediaWrap.style.position = "relative";
+          }
+
+          const hasVideo = !!tweetEl.querySelector("video");
+          const labelText = hasVideo ? "🎬 下载视频" : "⬇️ 下载原图";
+
+          const btn = document.createElement("div");
+          btn.className = "clipdown-card-dl-btn";
+          btn.title = "ClipDown 一键下载此推文媒体";
+          btn.innerHTML = `
+            <span class="clipdown-card-dl-icon">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 2v13M17 10l-5 5-5-5"/>
+                <path d="M20 21H4"/>
+              </svg>
+            </span>
+            <span class="clipdown-card-dl-label">${labelText}</span>
+          `;
+
+          btn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+
+            const origContent = btn.innerHTML;
+            btn.classList.add("loading");
+            btn.innerHTML = `<span class="clipdown-inline-spinner"></span> 准备下载...`;
+
+            try {
+              const tweetData = extractMediaFromXTweet(tweetEl);
+              if (!tweetData) throw new Error("未能定位推文");
+
+              const rawTitle = (tweetData.title || "X_Tweet").substring(0, 40).replace(/[\\/:*?"<>|]/g, "_");
+              const images = (tweetData.items || []).filter(x => x.type === "image");
+              const videos = (tweetData.items || []).filter(x => x.type === "video");
+
+              if (videos.length > 0) {
+                btn.innerHTML = `⏳ 正在下载视频...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_MEDIA_PC",
+                  url: videos[0].url,
+                  filename: `${rawTitle}.mp4`,
+                  platform: "x"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载`;
+              } else if (images.length > 1) {
+                btn.innerHTML = `⏳ 下载全部 ${images.length} 张原图...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_BATCH_PC",
+                  items: images,
+                  baseTitle: rawTitle,
+                  platform: "x"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载 (${images.length}图)`;
+              } else if (images.length === 1) {
+                btn.innerHTML = `⏳ 正在下载最高清原图...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_MEDIA_PC",
+                  url: images[0].url,
+                  filename: `${rawTitle}.jpg`,
+                  platform: "x"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载`;
+              } else if (tweetData.cover) {
+                btn.innerHTML = `⏳ 正在下载...`;
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_MEDIA_PC",
+                  url: tweetData.cover,
+                  filename: `${rawTitle}.jpg`,
+                  platform: "x"
+                });
+                btn.classList.remove("loading");
+                btn.classList.add("success");
+                btn.innerHTML = `✓ 已下载`;
+              }
+
+              const { x_downloaded_posts = [] } = await chrome.storage.local.get(["x_downloaded_posts"]);
+              if (!x_downloaded_posts.includes(tweetData.shortcode)) {
+                x_downloaded_posts.push(tweetData.shortcode);
+                await chrome.storage.local.set({ x_downloaded_posts });
+                updateBadge();
+              }
+            } catch (err) {
+              btn.classList.remove("loading");
+              btn.innerHTML = `❌ 下载失败`;
+            }
+
+            setTimeout(() => {
+              btn.classList.remove("success", "loading");
+              btn.innerHTML = origContent;
+            }, 3000);
+          });
+
+          mediaWrap.appendChild(btn);
+        }
+      });
+    }
+
+    // 3. 小红书瀑布流笔记
+    if (IS_XIAOHONGSHU) {
+      document.querySelectorAll('section.note-item:not([data-clipdown-injected]), .note-item:not([data-clipdown-injected])').forEach(noteEl => {
+        noteEl.setAttribute("data-clipdown-injected", "true");
+
+        const coverWrap = noteEl.querySelector('.cover, .image-wrapper') || noteEl;
+        const compStyle = window.getComputedStyle(coverWrap);
+        if (compStyle.position === "static") {
+          coverWrap.style.position = "relative";
+        }
+
+        const btn = document.createElement("div");
+        btn.className = "clipdown-card-dl-btn";
+        btn.title = "ClipDown 一键下载此笔记";
+        btn.innerHTML = `
+          <span class="clipdown-card-dl-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v13M17 10l-5 5-5-5"/>
+              <path d="M20 21H4"/>
+            </svg>
+          </span>
+          <span class="clipdown-card-dl-label">下载</span>
+        `;
+
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+
+          const img = noteEl.querySelector("img");
+          let cover = img ? img.src : "";
+          if (cover) cover = cover.replace(/![a-zA-Z0-9_-]+$/, "");
+          const title = noteEl.querySelector(".title, .name")?.textContent.trim() || "小红书笔记";
+
+          if (cover) {
+            btn.classList.add("success");
+            btn.innerHTML = `✓ 已下载`;
+            chrome.runtime.sendMessage({
+              action: "DOWNLOAD_MEDIA_PC",
+              url: cover,
+              filename: `${title.substring(0, 30)}.jpg`,
+              platform: "xiaohongshu"
+            });
+            setTimeout(() => {
+              btn.classList.remove("success");
+              btn.innerHTML = `下载`;
+            }, 2500);
+          }
+        });
+
+        coverWrap.appendChild(btn);
+      });
+    }
+  }
+
+  // ── 全局悬浮挂件与双端点赞+全页面采集体系 ──────────────────────────────────
   function injectFloatingWidget() {
     if (document.getElementById("clipdown-floating-widget")) return;
 
@@ -843,7 +1211,6 @@
 
     // ── 模式 2：全页面/主页资源深度采集与双端批量下载 (X / Instagram / 小红书) ─────
     function renderPageHarvesterPanel() {
-      // 首次载入先抓取当前视口
       const currentViewportItems = harvestCurrentPageItems();
       currentViewportItems.forEach(item => {
         if (!accumulatedHarvesterMap.has(item.shortcode)) {
@@ -940,7 +1307,6 @@
 
       bindHeaderToolEvents();
 
-      // 自动滚动控制
       const btnToggleScan = panel.querySelector("#btn-toggle-auto-scan");
       if (btnToggleScan) {
         btnToggleScan.addEventListener("click", (e) => {
@@ -955,13 +1321,11 @@
 
       function startAutoScan() {
         isAutoScanning = true;
-        let lastHeight = document.body.scrollHeight;
         let noNewCount = 0;
 
         autoScanInterval = setInterval(() => {
           window.scrollBy({ top: 900, behavior: "smooth" });
 
-          // 抓取新挂载 DOM
           const newlyFound = harvestCurrentPageItems();
           let added = 0;
           newlyFound.forEach(it => {
@@ -996,7 +1360,6 @@
         renderPageHarvesterPanel();
       }
 
-      // 过滤器切换
       panel.querySelectorAll(".clipdown-filter-chip").forEach(chip => {
         chip.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1005,7 +1368,6 @@
         });
       });
 
-      // 勾选逻辑
       const checkBoxes = panel.querySelectorAll(".clipdown-harvester-check");
       const btnSelectAll = panel.querySelector("#btn-harvester-select-all");
       const btnUnselectAll = panel.querySelector("#btn-harvester-unselect-all");
@@ -1046,7 +1408,6 @@
       checkBoxes.forEach(cb => cb.addEventListener("change", updateHarvesterButtons));
       updateHarvesterButtons();
 
-      // 1. 批量下载到电脑
       if (btnDownloadPc) {
         btnDownloadPc.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1072,7 +1433,6 @@
         });
       }
 
-      // 2. 批量推送到手机
       if (btnPushMobile) {
         btnPushMobile.addEventListener("click", (e) => {
           e.stopPropagation();
@@ -1297,14 +1657,39 @@
       });
     }
 
-    // ── 监听体系 1：Instagram 点赞监听器 ───────────────────────────────────────
+    // ── 监听体系 1：Instagram 点赞监听器（全面重构，双轨捕获）──────────────────
     if (IS_INSTAGRAM) {
       async function onPostLiked(articleEl) {
+        if (!articleEl) return;
         const postData = extractMediaFromInstagramArticle(articleEl);
         if (!postData || !postData.shortcode) return;
 
-        const { ins_liked_posts = [] } = await chrome.storage.local.get(["ins_liked_posts"]);
+        // 若是图集或单图，异步请求完整详情补充所有图集图片
+        if (postData.isCarousel || (postData.items && postData.items.length <= 1)) {
+          chrome.runtime.sendMessage({
+            action: "RESOLVE_INSTAGRAM_POST",
+            shortcode: postData.shortcode,
+            inpageItems: postData.items
+          }, async (resp) => {
+            if (resp && resp.success && resp.data && resp.data.items && resp.data.items.length > 0) {
+              postData.items = resp.data.items;
+              if (resp.data.title) postData.title = resp.data.title;
+              if (resp.data.author) postData.author = resp.data.author;
 
+              const { ins_liked_posts = [] } = await chrome.storage.local.get(["ins_liked_posts"]);
+              const idx = ins_liked_posts.findIndex(p => p.shortcode === postData.shortcode);
+              if (idx >= 0) {
+                ins_liked_posts[idx] = postData;
+                await chrome.storage.local.set({ ins_liked_posts });
+                if (!panel.classList.contains("hidden") && currentMode === "liked") {
+                  renderLikedPanel();
+                }
+              }
+            }
+          });
+        }
+
+        const { ins_liked_posts = [] } = await chrome.storage.local.get(["ins_liked_posts"]);
         const existingIdx = ins_liked_posts.findIndex(p => p.shortcode === postData.shortcode);
         if (existingIdx >= 0) {
           ins_liked_posts[existingIdx] = postData;
@@ -1316,39 +1701,71 @@
         await chrome.storage.local.set({ ins_liked_posts: pruned });
         updateBadge();
 
+        // 触发展开角标心跳动效
+        badge.classList.add("clipdown-badge-heartbeat");
+        setTimeout(() => badge.classList.remove("clipdown-badge-heartbeat"), 650);
+
         if (!panel.classList.contains("hidden") && currentMode === "liked") {
           renderLikedPanel();
         }
       }
 
+      // 1. 点击捕获爱心按钮与帖子操作区首个按钮
       document.addEventListener("click", (e) => {
-        const btn = e.target.closest('button, [role="button"], span');
+        const btn = e.target.closest('button, [role="button"], span, div');
         if (!btn) return;
 
-        const svg = btn.querySelector('svg[aria-label="Like"], svg[aria-label="赞"], svg[aria-label="点赞"]') ||
-                    (btn.matches('svg[aria-label="Like"], svg[aria-label="赞"]') ? btn : null);
-        if (svg) {
+        const isLikeTarget =
+          btn.matches('[aria-label="Like" i], [aria-label="赞"], [aria-label="喜欢"], [aria-label="点赞"]') ||
+          btn.querySelector('[aria-label="Like" i], [aria-label="赞"], [aria-label="喜欢"], [aria-label="点赞"]') ||
+          btn.querySelector('svg title')?.textContent?.match(/like|赞|喜欢/i) ||
+          btn.closest('section button:first-of-type, section [role="button"]:first-of-type');
+
+        if (isLikeTarget) {
           const article = btn.closest("article") || document.querySelector("article");
           if (article) {
-            setTimeout(() => {
-              onPostLiked(article);
-            }, 300);
+            setTimeout(() => onPostLiked(article), 150);
           }
         }
       }, true);
 
+      // 2. 双击图片点赞捕获 (Instagram 经典手势)
+      document.addEventListener("dblclick", (e) => {
+        const article = e.target.closest("article");
+        if (article) {
+          setTimeout(() => onPostLiked(article), 200);
+        }
+      }, true);
+
+      // 3. MutationObserver 监听已点赞状态变化 (覆盖 React 替换 node 与属性修改)
       const observer = new MutationObserver((mutations) => {
+        let shouldInject = false;
+
         for (const m of mutations) {
-          if (m.type === "attributes" && m.attributeName === "aria-label") {
-            const el = m.target;
-            const label = el.getAttribute("aria-label");
-            if (label === "Unlike" || label === "取消赞" || label === "收回赞") {
-              const article = el.closest("article") || document.querySelector("article");
-              if (article) {
-                onPostLiked(article);
+          if (m.type === "childList") {
+            if (m.addedNodes.length > 0) shouldInject = true;
+            for (const node of m.addedNodes) {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                const isLiked = node.matches?.('[aria-label="Unlike" i], [aria-label="取消赞"], [aria-label="取消喜欢"], [color="rgb(255, 48, 64)"], [fill="rgb(255, 48, 64)"]') ||
+                                node.querySelector?.('[aria-label="Unlike" i], [aria-label="取消赞"], [aria-label="取消喜欢"], [color="rgb(255, 48, 64)"], [fill="rgb(255, 48, 64)"]');
+                if (isLiked) {
+                  const article = node.closest("article") || document.querySelector("article");
+                  if (article) onPostLiked(article);
+                }
               }
             }
+          } else if (m.type === "attributes") {
+            const el = m.target;
+            const label = el.getAttribute("aria-label");
+            if (label && (label.toLowerCase() === "unlike" || label.includes("取消赞") || label.includes("取消喜欢"))) {
+              const article = el.closest("article") || document.querySelector("article");
+              if (article) onPostLiked(article);
+            }
           }
+        }
+
+        if (shouldInject) {
+          injectCardDownloadButtons();
         }
       });
 
@@ -1356,18 +1773,18 @@
         childList: true,
         subtree: true,
         attributes: true,
-        attributeFilter: ["aria-label"]
+        attributeFilter: ["aria-label", "data-testid"]
       });
     }
 
-    // ── 监听体系 2：X (Twitter) 点赞监听器 ─────────────────────────────────────
+    // ── 监听体系 2：X (Twitter) 点赞监听器（全面重构）─────────────────────────
     if (IS_X) {
       async function onXTweetLiked(tweetEl) {
+        if (!tweetEl) return;
         const tweetData = extractMediaFromXTweet(tweetEl);
         if (!tweetData || !tweetData.shortcode) return;
 
         const { x_liked_posts = [] } = await chrome.storage.local.get(["x_liked_posts"]);
-
         const existingIdx = x_liked_posts.findIndex(p => p.shortcode === tweetData.shortcode);
         if (existingIdx >= 0) {
           x_liked_posts[existingIdx] = tweetData;
@@ -1379,6 +1796,9 @@
         await chrome.storage.local.set({ x_liked_posts: pruned });
         updateBadge();
 
+        badge.classList.add("clipdown-badge-heartbeat");
+        setTimeout(() => badge.classList.remove("clipdown-badge-heartbeat"), 650);
+
         if (!panel.classList.contains("hidden") && currentMode === "liked") {
           renderLikedPanel();
         }
@@ -1386,29 +1806,41 @@
 
       // 1. 点击捕获爱心按钮 [data-testid="like"]
       document.addEventListener("click", (e) => {
-        const likeBtn = e.target.closest('button[data-testid="like"]');
+        const likeBtn = e.target.closest('[data-testid="like"]');
         if (likeBtn) {
           const tweetEl = likeBtn.closest('article[data-testid="tweet"]');
           if (tweetEl) {
-            setTimeout(() => {
-              onXTweetLiked(tweetEl);
-            }, 300);
+            setTimeout(() => onXTweetLiked(tweetEl), 150);
           }
         }
       }, true);
 
-      // 2. MutationObserver 监听 data-testid 变成 "unlike" (已点赞状态)
+      // 2. MutationObserver 监听 data-testid="unlike" 与新卡片挂载
       const xObserver = new MutationObserver((mutations) => {
+        let shouldInject = false;
+
         for (const m of mutations) {
-          if (m.type === "attributes" && m.attributeName === "data-testid") {
-            const el = m.target;
-            if (el.getAttribute("data-testid") === "unlike") {
-              const tweetEl = el.closest('article[data-testid="tweet"]');
-              if (tweetEl) {
-                onXTweetLiked(tweetEl);
+          if (m.type === "childList") {
+            if (m.addedNodes.length > 0) shouldInject = true;
+            for (const node of m.addedNodes) {
+              if (node.nodeType === Node.ELEMENT_NODE) {
+                const unlikeEl = node.matches?.('[data-testid="unlike"]') ? node : node.querySelector?.('[data-testid="unlike"]');
+                if (unlikeEl) {
+                  const tweetEl = unlikeEl.closest('article[data-testid="tweet"]');
+                  if (tweetEl) onXTweetLiked(tweetEl);
+                }
               }
             }
+          } else if (m.type === "attributes" && m.attributeName === "data-testid") {
+            if (m.target.getAttribute("data-testid") === "unlike") {
+              const tweetEl = m.target.closest('article[data-testid="tweet"]');
+              if (tweetEl) onXTweetLiked(tweetEl);
+            }
           }
+        }
+
+        if (shouldInject) {
+          injectCardDownloadButtons();
         }
       });
 
@@ -1419,8 +1851,24 @@
         attributeFilter: ["data-testid"]
       });
     }
+
+    // ── 初始化卡片下载按钮注入与滚动监听 ─────────────────────────────────────
+    injectCardDownloadButtons();
+
+    let scrollTimer = null;
+    window.addEventListener("scroll", () => {
+      if (!scrollTimer) {
+        scrollTimer = setTimeout(() => {
+          injectCardDownloadButtons();
+          scrollTimer = null;
+        }, 250);
+      }
+    }, { passive: true });
   }
 
-  // 延迟注入防白屏干扰
-  setTimeout(injectFloatingWidget, 1500);
+  // 延迟注入防白屏干扰，并立刻启动初次卡片按钮注入
+  setTimeout(() => {
+    injectFloatingWidget();
+    injectCardDownloadButtons();
+  }, 1200);
 })();

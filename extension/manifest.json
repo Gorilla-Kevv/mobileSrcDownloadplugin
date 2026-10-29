@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ClipDown 跨端助手",
-  "version": "1.5.0",
-  "description": "ClipDown 电脑端官方扩展：专注 X、Instagram、YouTube、小红书的高速媒体直接下载与解析，跨端双向同步下载记录、一键秒传网页登录态 Cookie（突破手机端风控），支持 X/Instagram 智能点赞监控与博主全页面深度批量下载。",
+  "version": "1.6.0",
+  "description": "ClipDown 电脑端官方扩展：专注 X、Instagram、YouTube、小红书的高速媒体直接下载与解析，支持瀑布流帖子右下角直接下载按钮、Instagram 多图图集无损解析、X/Instagram 智能点赞监控与博主全页面深度批量下载。",
   "permissions": [
     "cookies",
     "storage",

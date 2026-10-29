@@ -224,6 +224,217 @@ async function downloadToPc(url, filename, platform = "", forceSaveAs = false) {
   });
 }
 
+function parseInstagramMediaObj(media) {
+  if (!media) return null;
+  const author = media.owner?.username || media.user?.username || "";
+  const title = media.edge_media_to_caption?.edges?.[0]?.node?.text || media.caption?.text || "";
+  const items = [];
+
+  // 1. 图集 edge_sidecar_to_children (GraphQL)
+  if (media.edge_sidecar_to_children?.edges?.length > 0) {
+    media.edge_sidecar_to_children.edges.forEach((edge, idx) => {
+      const node = edge.node;
+      if (node.is_video && node.video_url) {
+        items.push({
+          url: node.video_url,
+          type: "video",
+          label: `Reel 视频 ${idx + 1} (MP4)`,
+          ext: "mp4"
+        });
+      } else {
+        const url = node.display_url || node.display_resources?.[node.display_resources.length - 1]?.src;
+        if (url) {
+          items.push({
+            url,
+            type: "image",
+            label: `无水印原图 ${idx + 1}`,
+            ext: "jpg"
+          });
+        }
+      }
+    });
+  } else if (media.carousel_media?.length > 0) {
+    // 2. 图集 carousel_media (REST API)
+    media.carousel_media.forEach((it, idx) => {
+      if (it.video_versions?.length > 0) {
+        items.push({
+          url: it.video_versions[0].url,
+          type: "video",
+          label: `Reel 视频 ${idx + 1} (MP4)`,
+          ext: "mp4"
+        });
+      } else {
+        const cands = it.image_versions2?.candidates || [];
+        const url = cands[0]?.url;
+        if (url) {
+          items.push({
+            url,
+            type: "image",
+            label: `无水印原图 ${idx + 1}`,
+            ext: "jpg"
+          });
+        }
+      }
+    });
+  } else if (media.is_video || media.video_versions?.length > 0 || media.video_url) {
+    // 3. 单视频
+    const url = media.video_url || media.video_versions?.[0]?.url;
+    if (url) {
+      items.push({
+        url,
+        type: "video",
+        label: "Reel 视频 (MP4)",
+        ext: "mp4"
+      });
+    }
+  } else if (media.display_url || media.image_versions2?.candidates?.length > 0) {
+    // 4. 单图片
+    const url = media.display_url || media.image_versions2?.candidates?.[0]?.url;
+    if (url) {
+      items.push({
+        url,
+        type: "image",
+        label: "无水印原图",
+        ext: "jpg"
+      });
+    }
+  }
+
+  return {
+    author,
+    title: (author ? `@${author}: ` : "") + (title ? title.substring(0, 40) : "Instagram 帖子"),
+    cover: items[0]?.url || "",
+    items
+  };
+}
+
+function parseInstagramFromHtml(html, shortcode) {
+  const items = [];
+  let author = "";
+  let title = `Instagram 帖子 (${shortcode})`;
+
+  // 1. 提取 edge_sidecar_to_children
+  const sidecarMatch = html.match(/"edge_sidecar_to_children"\s*:\s*\{"edges"\s*:\s*(\[.*?\])\s*\}/);
+  if (sidecarMatch) {
+    try {
+      const edges = JSON.parse(sidecarMatch[1]);
+      edges.forEach((edge, idx) => {
+        const node = edge.node;
+        if (node.is_video && node.video_url) {
+          items.push({
+            url: node.video_url,
+            type: "video",
+            label: `Reel 视频 ${idx + 1} (MP4)`,
+            ext: "mp4"
+          });
+        } else if (node.display_url) {
+          items.push({
+            url: node.display_url,
+            type: "image",
+            label: `无水印原图 ${idx + 1}`,
+            ext: "jpg"
+          });
+        }
+      });
+    } catch (_) {}
+  }
+
+  // 2. 尝试从 HTML 内 script 提取 xdt_shortcode_media 或 carousel_media
+  if (items.length === 0) {
+    const xdtMatch = html.match(/"xdt_shortcode_media"\s*:\s*(\{.*?\})\s*,\s*"viewer"/);
+    if (xdtMatch) {
+      try {
+        const media = JSON.parse(xdtMatch[1]);
+        const parsed = parseInstagramMediaObj(media);
+        if (parsed && parsed.items?.length > 0) {
+          return parsed;
+        }
+      } catch (_) {}
+    }
+  }
+
+  // 3. 提取所有 display_url
+  if (items.length === 0) {
+    const displayUrls = [];
+    const re = /"display_url"\s*:\s*"([^"]+)"/g;
+    let m;
+    while ((m = re.exec(html)) !== null) {
+      const u = m[1].replace(/\\u0026/g, "&").replace(/\\\//g, "/");
+      if (!displayUrls.includes(u)) {
+        displayUrls.push(u);
+      }
+    }
+    if (displayUrls.length > 0) {
+      displayUrls.forEach((u, idx) => {
+        items.push({
+          url: u,
+          type: "image",
+          label: `无水印原图 ${idx + 1}`,
+          ext: "jpg"
+        });
+      });
+    }
+  }
+
+  return {
+    author,
+    title,
+    cover: items[0]?.url || "",
+    items
+  };
+}
+
+async function resolveInstagramPost(shortcode, inpageItems = []) {
+  if (!shortcode) {
+    return { items: inpageItems };
+  }
+
+  // 1. 请求 __a=1&__d=dis
+  try {
+    const apiUrl = `https://www.instagram.com/p/${shortcode}/?__a=1&__d=dis`;
+    const resp = await fetch(apiUrl, {
+      headers: {
+        "X-IG-App-ID": "936619743392459",
+        "X-Requested-With": "XMLHttpRequest",
+        "Accept": "*/*"
+      }
+    });
+    if (resp.ok) {
+      const json = await resp.json();
+      const media = json.graphql?.shortcode_media || json.items?.[0];
+      if (media) {
+        const parsed = parseInstagramMediaObj(media);
+        if (parsed && parsed.items?.length > 0) {
+          return parsed;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn("Instagram __a=1 fetch failed", e);
+  }
+
+  // 2. 请求页面完整 HTML 提取
+  try {
+    const pageUrl = `https://www.instagram.com/p/${shortcode}/`;
+    const resp = await fetch(pageUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
+      }
+    });
+    if (resp.ok) {
+      const html = await resp.text();
+      const parsed = parseInstagramFromHtml(html, shortcode);
+      if (parsed && parsed.items?.length > 0) {
+        return parsed;
+      }
+    }
+  } catch (e) {
+    console.warn("Instagram HTML fetch failed", e);
+  }
+
+  return { items: inpageItems };
+}
+
 // ── 四大主流平台专属深度解析器 ──────────────────────────────────────────────
 async function resolveMediaForPlatform(targetUrl, inpageData) {
   const url = targetUrl.toLowerCase();
@@ -342,7 +553,26 @@ async function resolveMediaForPlatform(targetUrl, inpageData) {
     };
   }
 
-  // 3. Instagram & 小红书（使用 Inpage 采集到的 DOM/媒体直链）
+  // 3. Instagram 专属深度图集与视频解析
+  if (url.includes("instagram.com")) {
+    const match = targetUrl.match(/\/(p|reel|reels)\/([a-zA-Z0-9_-]+)/);
+    const shortcode = match ? match[2] : (inpageData?.id || null);
+    if (shortcode) {
+      const igRes = await resolveInstagramPost(shortcode, inpageData?.items || []);
+      if (igRes && igRes.items && igRes.items.length > 0) {
+        return {
+          platform: "instagram",
+          platformName: "Instagram",
+          title: igRes.title || inpageData?.title || "Instagram 作品",
+          author: igRes.author || inpageData?.author || "Instagram",
+          cover: igRes.cover || inpageData?.cover || igRes.items[0]?.url,
+          items: igRes.items
+        };
+      }
+    }
+  }
+
+  // 4. 小红书与其他平台（使用 Inpage 采集到的 DOM/媒体直链）
   if (inpageData && (inpageData.videos.length > 0 || inpageData.images.length > 0)) {
     const items = [];
     inpageData.videos.forEach((v, idx) => {
@@ -422,6 +652,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const { url, inpageData } = msg;
           const media = await resolveMediaForPlatform(url, inpageData);
           sendResponse({ success: true, data: media });
+          break;
+        }
+
+        case "RESOLVE_INSTAGRAM_POST": {
+          const { shortcode, inpageItems = [] } = msg;
+          const res = await resolveInstagramPost(shortcode, inpageItems);
+          sendResponse({ success: true, data: res });
           break;
         }
 
