@@ -1,0 +1,152 @@
+/* ClipDown 页面内注入悬浮下载控件样式 (Obsidian Aegis 秘境紫夜) */
+
+.clipdown-floating-widget {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  user-select: none;
+}
+
+.clipdown-float-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 6px;
+  background-color: #130E1F;
+  border: 1.5px solid #8B5CF6;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.clipdown-float-btn:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 6px 20px rgba(168, 85, 247, 0.6);
+  border-color: #A855F7;
+}
+
+.clipdown-pulse {
+  position: absolute;
+  inset: -3px;
+  border-radius: 8px;
+  border: 1px solid #A855F7;
+  opacity: 0.4;
+  animation: clipdown-glow 2s infinite ease-in-out;
+  pointer-events: none;
+}
+
+@keyframes clipdown-glow {
+  0%, 100% { opacity: 0.2; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(1.06); }
+}
+
+.clipdown-float-menu {
+  position: absolute;
+  bottom: 54px;
+  right: 0;
+  width: 180px;
+  background-color: #09060E;
+  border: 1px solid #2E2048;
+  border-radius: 6px;
+  padding: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: clipdown-pop 0.15s ease-out;
+}
+
+@keyframes clipdown-pop {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.clipdown-float-menu.hidden {
+  display: none !important;
+}
+
+.clipdown-menu-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid #2E2048;
+  padding-bottom: 6px;
+}
+
+.clipdown-menu-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #F5F3FF;
+}
+
+.clipdown-menu-close {
+  color: #94A3B8;
+  font-size: 16px;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.clipdown-menu-close:hover {
+  color: #F5F3FF;
+}
+
+.clipdown-menu-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.clipdown-menu-btn {
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background-color: #8B5CF6;
+  color: #FFFFFF;
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: center;
+  transition: background-color 0.15s ease;
+}
+
+.clipdown-menu-btn:hover {
+  background-color: #A855F7;
+}
+
+.clipdown-btn-secondary {
+  background-color: #130E1F;
+  border-color: #2E2048;
+  color: #DDD6FE;
+}
+
+.clipdown-btn-secondary:hover {
+  border-color: #8B5CF6;
+  background-color: #1F1633;
+}
+
+.clipdown-toast {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background-color: #130E1F;
+  color: #F5F3FF;
+  border: 1px solid #8B5CF6;
+  border-radius: 6px;
+  padding: 10px 16px;
+  font-size: 12px;
+  font-weight: 600;
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.5);
+  z-index: 2147483647;
+  animation: clipdown-pop 0.2s ease;
+  transition: opacity 0.3s ease;
+}
+
+.clipdown-toast.fade-out {
+  opacity: 0;
+}

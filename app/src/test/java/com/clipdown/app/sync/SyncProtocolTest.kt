@@ -56,7 +56,10 @@ class SyncProtocolTest {
         assertEquals(2, decoded.cookies.size)
         assertTrue(CookieStore.isValidSessionCookie(Platform.INSTAGRAM, decoded.cookies["instagram"]!!))
         assertTrue(CookieStore.isValidSessionCookie(Platform.XIAOHONGSHU, decoded.cookies["xiaohongshu"]!!))
+        assertTrue(CookieStore.isValidSessionCookie(Platform.X, "auth_token=abc123twitter"))
+        assertTrue(CookieStore.isValidSessionCookie(Platform.YOUTUBE, "LOGIN_INFO=yt_login_tok; SAPISID=xyz"))
         assertFalse(CookieStore.isValidSessionCookie(Platform.INSTAGRAM, "csrftoken=fake_only"))
+        assertFalse(CookieStore.isValidSessionCookie(Platform.X, "random_cookie=123"))
     }
 
     @Test

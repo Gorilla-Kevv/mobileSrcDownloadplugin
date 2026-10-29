@@ -55,6 +55,8 @@ object CookieStore {
     fun isValidSessionCookie(platform: Platform, cookie: String): Boolean = when (platform) {
         Platform.INSTAGRAM -> cookie.contains("sessionid=")
         Platform.XIAOHONGSHU -> cookie.contains("web_session=") || cookie.contains("a1=")
+        Platform.X -> cookie.contains("auth_token=")
+        Platform.YOUTUBE -> cookie.contains("LOGIN_INFO=") || cookie.contains("SAPISID=") || cookie.contains("VISITOR_INFO1_LIVE=")
         Platform.FACEBOOK -> cookie.contains("c_user=") || cookie.contains("xs=")
         else -> cookie.isNotBlank() && cookie.length >= 20
     }
@@ -65,7 +67,8 @@ object CookieStore {
      * 注意与 [Platform.loginRequired] 解耦：小红书笔记解析已实测免登录可用
      * （2026-10-08 真机，标注为公开可解析），但其**主页解析仍强依赖 Cookie**，
      * 所以设置页的 Cookie 入口保留。
+     * 现已全面覆盖四大焦点平台（Instagram、小红书、X、YouTube）及 Facebook。
      */
     fun platformsNeedingCookie(): List<Platform> =
-        listOf(Platform.INSTAGRAM, Platform.XIAOHONGSHU, Platform.FACEBOOK)
+        listOf(Platform.INSTAGRAM, Platform.XIAOHONGSHU, Platform.X, Platform.YOUTUBE, Platform.FACEBOOK)
 }

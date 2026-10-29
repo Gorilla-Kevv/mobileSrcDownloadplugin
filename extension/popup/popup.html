@@ -14,7 +14,7 @@
         <img src="../icons/icon48.png" alt="ClipDown" class="logo">
         <div class="brand-text">
           <div class="title">ClipDown 跨端助手</div>
-          <div class="subtitle">局域网同步 · 登录态共享 · 媒体嗅探</div>
+          <div class="subtitle">X · Instagram · YouTube · 小红书</div>
         </div>
       </div>
       <div id="connection-pill" class="pill pill-offline" title="点击配置连接">
@@ -25,14 +25,14 @@
 
     <!-- 标签栏导航 -->
     <nav class="tabs">
-      <button class="tab-btn active" data-tab="tab-cookies">
+      <button class="tab-btn active" data-tab="tab-sniffer">
+        <span class="tab-icon">⚡</span> 嗅探与下载
+      </button>
+      <button class="tab-btn" data-tab="tab-cookies">
         <span class="tab-icon">🍪</span> 登录态共享
       </button>
       <button class="tab-btn" data-tab="tab-tasks">
         <span class="tab-icon">📥</span> 下载记录
-      </button>
-      <button class="tab-btn" data-tab="tab-sniffer">
-        <span class="tab-icon">⚡</span> 快捷嗅探
       </button>
       <button class="tab-btn" data-tab="tab-settings">
         <span class="tab-icon">⚙️</span> 配对设置
@@ -41,21 +41,87 @@
 
     <!-- 标签内容区 -->
     <main class="content">
-      <!-- 标签 1：登录态共享 -->
-      <section id="tab-cookies" class="tab-pane active">
+      <!-- 标签 1：快捷嗅探与电脑直接下载（核心重点功能） -->
+      <section id="tab-sniffer" class="tab-pane active">
+        <!-- 动态媒体卡片 -->
+        <div id="media-card-container">
+          <div class="media-card" id="active-media-card">
+            <div class="media-card-header">
+              <span id="media-platform-badge" class="pill pill-brand">检测中...</span>
+              <span id="media-type-badge" class="pill pill-neutral">正在扫描</span>
+            </div>
+            
+            <div class="media-preview-row">
+              <img id="media-cover-img" class="media-cover" src="../icons/icon48.png" alt="Cover" />
+              <div class="media-meta">
+                <div class="media-title" id="media-title-text">正在扫描当前网页媒体...</div>
+                <div class="media-url" id="media-url-text">...</div>
+              </div>
+            </div>
+
+            <!-- 检测到的媒体资源列表 -->
+            <div class="media-items-box" id="media-items-box">
+              <div class="items-title">解析到的媒体流与原图：</div>
+              <div class="items-list" id="media-items-list">
+                <div class="item-placeholder">暂未检测到媒体，请在 X、Instagram、YouTube、小红书帖子页面打开</div>
+              </div>
+            </div>
+
+            <!-- 操作按钮组（电脑下载 + 手机推送双通道） -->
+            <div class="media-actions-group">
+              <button id="btn-pc-download-primary" class="btn btn-primary btn-block">
+                💻 一键下载到电脑 (Downloads)
+              </button>
+              <div class="sub-actions-row">
+                <button id="btn-batch-download-images" class="btn btn-secondary btn-sm hidden">
+                  📦 批量打包下载原图
+                </button>
+                <button id="btn-push-to-mobile" class="btn btn-secondary btn-sm">
+                  🚀 推送到手机下载
+                </button>
+                <button id="btn-copy-media-url" class="btn btn-secondary btn-sm">
+                  📋 复制直链
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 手动输入链接下载 -->
+        <div class="manual-enqueue">
+          <div class="section-label">手动解析下载链接：</div>
+          <div class="input-group">
+            <input type="text" id="manual-url-input" placeholder="支持 X、Instagram、YouTube、小红书..." />
+            <button id="btn-manual-resolve" class="btn btn-secondary">解析</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 标签 2：登录态共享 -->
+      <section id="tab-cookies" class="tab-pane">
         <div class="notice-card">
           <div class="notice-icon">🛡️</div>
           <div class="notice-text">
-            读取电脑 Edge / Chrome 中已登录的 Cookie 并一键灌入手机，<strong>彻底绕过手机端 WebView 风控与 2FA 死循环</strong>！
+            读取电脑 Edge / Chrome 中已登录的 Cookie 并一键灌入手机，<strong>彻底绕过手机端 Instagram、小红书、X 等风控与 2FA 死循环</strong>！
           </div>
         </div>
 
         <div class="card-list" id="cookie-platform-list">
-          <!-- 动态加载或静态骨架 -->
+          <div class="platform-row" data-platform="x">
+            <div class="platform-info">
+              <div class="platform-name">X (Twitter)</div>
+              <div class="platform-desc">超清视频、原图与敏感内容 (auth_token)</div>
+            </div>
+            <div class="platform-status">
+              <span class="pill pill-neutral checking">检测中...</span>
+              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="x">同步</button>
+            </div>
+          </div>
+
           <div class="platform-row" data-platform="instagram">
             <div class="platform-info">
               <div class="platform-name">Instagram</div>
-              <div class="platform-desc">Reel 视频、图集与原画质</div>
+              <div class="platform-desc">Reel 视频、图集与原画质 (sessionid)</div>
             </div>
             <div class="platform-status">
               <span class="pill pill-neutral checking">检测中...</span>
@@ -66,7 +132,7 @@
           <div class="platform-row" data-platform="xiaohongshu">
             <div class="platform-info">
               <div class="platform-name">小红书</div>
-              <div class="platform-desc">无水印原图、视频与博主主页</div>
+              <div class="platform-desc">无水印原图、视频与博主主页 (web_session)</div>
             </div>
             <div class="platform-status">
               <span class="pill pill-neutral checking">检测中...</span>
@@ -74,21 +140,21 @@
             </div>
           </div>
 
-          <div class="platform-row" data-platform="x">
+          <div class="platform-row" data-platform="youtube">
             <div class="platform-info">
-              <div class="platform-name">X (Twitter)</div>
-              <div class="platform-desc">高清视频、原图与敏感内容</div>
+              <div class="platform-name">YouTube</div>
+              <div class="platform-desc">解除年龄限制与私享视频 (LOGIN_INFO)</div>
             </div>
             <div class="platform-status">
               <span class="pill pill-neutral checking">检测中...</span>
-              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="x">同步</button>
+              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="youtube">同步</button>
             </div>
           </div>
 
           <div class="platform-row" data-platform="facebook">
             <div class="platform-info">
               <div class="platform-name">Facebook</div>
-              <div class="platform-desc">高清视频与图集帖</div>
+              <div class="platform-desc">高清视频与图集帖 (c_user/xs)</div>
             </div>
             <div class="platform-status">
               <span class="pill pill-neutral checking">检测中...</span>
@@ -112,7 +178,7 @@
         </div>
       </section>
 
-      <!-- 标签 2：下载记录同步 -->
+      <!-- 标签 3：下载记录同步 -->
       <section id="tab-tasks" class="tab-pane">
         <div class="tasks-toolbar">
           <div class="stats-text" id="tasks-stats-text">📱 手机记录: 0 · 🖥️ 电脑记录: 0</div>
@@ -131,28 +197,6 @@
           <div class="empty-state">
             <div class="empty-icon">📭</div>
             <div class="empty-text">暂无同步记录，点击上方「双向同步」即可拉取手机历史任务</div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 标签 3：快捷嗅探 -->
-      <section id="tab-sniffer" class="tab-pane">
-        <div class="sniffer-card">
-          <div class="sniffer-label">当前标签页链接检测：</div>
-          <div class="sniffer-title" id="current-tab-title">读取中...</div>
-          <div class="sniffer-url" id="current-tab-url">...</div>
-          <div class="sniffer-actions">
-            <button id="btn-enqueue-current" class="btn btn-primary btn-block">
-              🚀 推送到手机下载识别中枢
-            </button>
-          </div>
-        </div>
-
-        <div class="manual-enqueue">
-          <div class="sniffer-label">手动发送链接到手机：</div>
-          <div class="input-group">
-            <input type="text" id="manual-url-input" placeholder="粘贴任何受支持的帖子链接..." />
-            <button id="btn-manual-enqueue" class="btn btn-secondary">发送</button>
           </div>
         </div>
       </section>
@@ -193,7 +237,7 @@
     <!-- 底部状态条 -->
     <footer class="footer">
       <span id="footer-status">就绪</span>
-      <span class="version">v1.0.0</span>
+      <span class="version">v1.1.0</span>
     </footer>
 
     <!-- 弹窗：二维码扫码导入 -->
@@ -207,9 +251,10 @@
           <div class="qr-select-group">
             <label>选择同步平台：</label>
             <select id="qr-platform-select">
+              <option value="x">X (Twitter)</option>
               <option value="instagram">Instagram</option>
               <option value="xiaohongshu">小红书</option>
-              <option value="x">X (Twitter)</option>
+              <option value="youtube">YouTube</option>
               <option value="facebook">Facebook</option>
             </select>
           </div>

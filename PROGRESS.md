@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 67 已完成**：多端协同拓展 · Windows Edge / Chrome 官方扩展插件 + 手机局域网数据中枢（双向同步下载记录 + 共享网页登录态 Cookie + 快捷嗅探推送）（已发布正式版 v1.1.26 / versionCode 31）
-- 下一阶段任务：真机与电脑浏览器端到端走查 v1.1.26（验证插件配对、一键秒传 Cookie、双向同步下载记录与推送下载）
+- 当前正在开发任务：**阶段 68 已完成**：电脑端下载体验终极强化 · 针对 X、Instagram、YouTube、小红书的深度直接下载与页面注入（已发布正式版 v1.1.27 / versionCode 32）
+- 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **105 例** + downloader **41 例** + app **14 例**全绿（共 160 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.29 23:25
+- 本次文档更新时间：10.29 23:45
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1437,3 +1437,46 @@
   - `assembleRelease` 成功构建，Release APK 体积 1.90 MB (1,997,649 字节)，严守 2MB 极限红线；
   - 成功发布 GitHub Release 正式版 **v1.1.26 (versionCode 31)** 并更新 `update.json` 清单。
 - 本次文档更新时间：10.29 23:25
+
+## 阶段 68 电脑端下载体验终极强化 · 针对 X、Instagram、YouTube、小红书的深度直接下载与页面注入 [计划时间：10.29 23:30 BY Antigravity][完成时间：10.29 23:45 BY Antigravity]
+- 用户反馈与核心诉求：
+  - 用户反馈：“电脑端更注重x ins youtube 小红书的下载，若有缺的请完善”；
+  - 核心诉求：
+    1. 电脑端不仅要能推送到手机，更需要具备强大的**本地直接下载 (PC Direct Download)** 能力，把媒体直接保存到电脑本地磁盘；
+    2. 针对用户最核心的四大平台（X、Instagram、YouTube、小红书）进行针对性深度解析（无水印视频原流、图集原画、1080p 超清与音频提取、批量原图打包下载）；
+    3. 浏览网页时无感下载，提供页面内注入的原生悬浮快捷小部件；
+    4. 移动端与电脑端 Cookie 共享全面扩充支持 YouTube 与 X。
+- 落地成果：
+  1. **电脑端直接下载与双轨架构 (`extension/background/service-worker.js`, `extension/popup/`)**：
+     - `extension/manifest.json` 引入 `downloads` 与 `scripting` 权限，集成 Chromium 原生下载管理器，媒体自动归档至用户电脑本地 `Downloads/ClipDown/<平台>/` 目录；
+     - 双轨操作：对任意嗅探到的资源，均支持「💻 一键下载到电脑」与「🚀 推送到手机下载」自由切换；
+     - 图集批量打包：针对小红书和 Instagram 的多图图集，提供「📦 一键批量下载全部原图」，一键无损剥离水印保存。
+  2. **四大焦点平台深度解析器 (`extension/background/service-worker.js`)**：
+     - **X (Twitter)**：直连 FxTwitter API 提取 1080p/720p 原画 MP4，照片自动替换为 `:orig` 极限无损分辨率；
+     - **Instagram**：提取 Reel 视频高码率 MP4 直链与无水印图集多图；
+     - **YouTube**：提取 1080p 超清 MP4 视频流与独立纯音频 MP3，适配 Shorts；Cookie 同步新增 YouTube (`LOGIN_INFO`, `SAPISID`)，解除手机端年龄限制；
+     - **小红书**：自动提取视频笔记无水印超清 MP4 原流，图文笔记解析完整多图图集并剥离水印（`!nd_dft.jpg`）。
+  3. **页面内原生悬浮下载小部件 (`extension/content/content-script.js`, `extension/content/content-style.css`)**：
+     - 针对 X、Instagram、小红书、YouTube 页面注入【Obsidian Aegis / 暗黑秘境紫夜】风格的微光紫悬浮下载按钮，无需每次点击扩展弹窗即可在页面直接一键下载或推送到手机。
+  4. **Android 手机端对齐 (`CookieStore.kt`, `SyncProtocolTest.kt`)**：
+     - `CookieStore.kt` 全面纳入 `Platform.X` 与 `Platform.YOUTUBE` 核心 Token 鉴权，支持双端 Cookie 无缝流转；
+     - 单元测试增补，全量 160 例全部通过。
+- 改动文件：
+  - `extension/manifest.json`
+  - `extension/README.md`
+  - `extension/background/service-worker.js`
+  - `extension/content/content-script.js` (新建)
+  - `extension/content/content-style.css` (新建)
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.css`
+  - `extension/popup/popup.js`
+  - `app/src/main/java/com/clipdown/app/data/CookieStore.kt`
+  - `app/src/test/java/com/clipdown/app/sync/SyncProtocolTest.kt`
+  - `version.properties` (31 → 32, 1.1.26 → 1.1.27)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试与发布：
+  - 全量单元测试 **160 例全绿**（parser 105 例、downloader 41 例、app 14 例）；
+  - `assembleRelease` 成功构建，Release APK 体积 1.90 MB (1,997,649 字节)，严守 2MB 极限红线；
+  - 成功发布 GitHub Release 正式版 **v1.1.27 (versionCode 32)** 并更新 `update.json` 清单。
+- 本次文档更新时间：10.29 23:45

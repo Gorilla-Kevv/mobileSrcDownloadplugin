@@ -1,22 +1,27 @@
 {
   "manifest_version": 3,
   "name": "ClipDown 跨端助手",
-  "version": "1.0.0",
-  "description": "ClipDown 电脑端扩展：与手机双向同步下载记录、一键共享 PC 网页登录态 Cookie（突破 Instagram / 小红书等风控）、网页媒体快捷嗅探与推送到手机。",
+  "version": "1.1.0",
+  "description": "ClipDown 电脑端官方扩展：专注 X、Instagram、YouTube、小红书的高速媒体直接下载与解析，跨端双向同步下载记录、一键秒传网页登录态 Cookie（突破手机端风控）。",
   "permissions": [
     "cookies",
     "storage",
     "tabs",
-    "activeTab"
+    "activeTab",
+    "downloads",
+    "scripting"
   ],
   "host_permissions": [
     "*://*.instagram.com/*",
     "*://*.xiaohongshu.com/*",
     "*://*.twitter.com/*",
     "*://*.x.com/*",
+    "*://*.youtube.com/*",
+    "*://*.youtu.be/*",
     "*://*.facebook.com/*",
     "*://*.bilibili.com/*",
-    "*://*.youtube.com/*",
+    "*://api.fxtwitter.com/*",
+    "*://api.cobalt.tools/*",
     "http://*/*",
     "https://*/*"
   ],
@@ -31,6 +36,21 @@
   "background": {
     "service_worker": "background/service-worker.js"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "*://*.x.com/*",
+        "*://*.twitter.com/*",
+        "*://*.instagram.com/*",
+        "*://*.xiaohongshu.com/*",
+        "*://*.youtube.com/*",
+        "*://*.youtu.be/*"
+      ],
+      "js": ["content/content-script.js"],
+      "css": ["content/content-style.css"],
+      "run_at": "document_idle"
+    }
+  ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",

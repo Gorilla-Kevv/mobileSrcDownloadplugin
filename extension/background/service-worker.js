@@ -1,9 +1,15 @@
 /**
  * ClipDown 跨端助手 - Background Service Worker
- * 负责平台 Cookie 读取、与手机端局域网通信、跨域请求调度。
+ * 深度针对 X (Twitter)、Instagram、YouTube、小红书的媒体提取与 PC 本地直接下载
  */
 
 const PLATFORMS = {
+  x: {
+    name: "X (Twitter)",
+    domains: [".x.com", "x.com", ".twitter.com", "twitter.com"],
+    requiredTokens: ["auth_token="],
+    urlPattern: /x\.com|twitter\.com/i
+  },
   instagram: {
     name: "Instagram",
     domains: [".instagram.com", "instagram.com", "www.instagram.com"],
@@ -16,11 +22,11 @@ const PLATFORMS = {
     requiredTokens: ["web_session=", "a1="],
     urlPattern: /xiaohongshu\.com|xhslink\.com|xhslink\.cn/i
   },
-  x: {
-    name: "X (Twitter)",
-    domains: [".x.com", "x.com", ".twitter.com", "twitter.com"],
-    requiredTokens: ["auth_token="],
-    urlPattern: /x\.com|twitter\.com/i
+  youtube: {
+    name: "YouTube",
+    domains: [".youtube.com", "youtube.com", ".google.com"],
+    requiredTokens: ["LOGIN_INFO=", "SAPISID=", "VISITOR_INFO1_LIVE="],
+    urlPattern: /youtube\.com|youtu\.be/i
   },
   facebook: {
     name: "Facebook",
@@ -116,6 +122,176 @@ async function fetchFromPhone(endpoint, options = {}) {
   return await resp.json();
 }
 
+// ── PC 电脑端原生直接下载引擎 ──────────────────────────────────────────────
+async function downloadToPc(url, filename, folder = "ClipDown") {
+  const cleanName = filename.replace(/[\\/:*?"<>|]/g, "_").trim();
+  const fullPath = `${folder}/${cleanName}`;
+
+  return new Promise((resolve, reject) => {
+    chrome.downloads.download({
+      url,
+      filename: fullPath,
+      conflictAction: "uniquify"
+    }, (downloadId) => {
+      if (chrome.runtime.lastError) {
+        reject(new Error(chrome.runtime.lastError.message));
+      } else {
+        resolve({ downloadId, filename: fullPath });
+      }
+    });
+  });
+}
+
+// ── 四大主流平台专属深度解析器 ──────────────────────────────────────────────
+async function resolveMediaForPlatform(targetUrl, inpageData) {
+  const url = targetUrl.toLowerCase();
+
+  // 1. X (Twitter)
+  if (url.includes("x.com") || url.includes("twitter.com")) {
+    const match = targetUrl.match(/\/status\/(\d+)/);
+    if (match) {
+      const tweetId = match[1];
+      try {
+        const resp = await fetch(`https://api.fxtwitter.com/status/${tweetId}`, {
+          signal: AbortSignal.timeout(6000)
+        });
+        if (resp.ok) {
+          const json = await resp.json();
+          const tweet = json.tweet;
+          if (tweet && tweet.media) {
+            const videos = (tweet.media.videos || []).map(v => ({
+              url: v.url,
+              type: "video",
+              label: `视频 (MP4)`,
+              ext: "mp4"
+            }));
+            const images = (tweet.media.photos || []).map((p, idx) => ({
+              url: p.url + (p.url.includes("?") ? "&name=orig" : "?name=orig"),
+              type: "image",
+              label: `原图 ${idx + 1}`,
+              ext: "jpg"
+            }));
+            return {
+              platform: "x",
+              platformName: "X (Twitter)",
+              title: tweet.text ? tweet.text.substring(0, 50) : "X_Tweet",
+              author: tweet.author ? tweet.author.name : "",
+              cover: tweet.media.photos?.[0]?.url || tweet.author?.avatar_url,
+              items: [...videos, ...images]
+            };
+          }
+        }
+      } catch (e) {
+        console.warn("FxTwitter fetch failed, falling back to inpage data", e);
+      }
+    }
+  }
+
+  // 2. YouTube
+  if (url.includes("youtube.com") || url.includes("youtu.be")) {
+    let videoId = null;
+    if (url.includes("youtu.be")) {
+      videoId = targetUrl.split("youtu.be/")[1]?.split("?")[0];
+    } else if (url.includes("/shorts/")) {
+      videoId = targetUrl.split("/shorts/")[1]?.split("?")[0];
+    } else {
+      const m = targetUrl.match(/[?&]v=([^&]+)/);
+      videoId = m ? m[1] : null;
+    }
+
+    const title = inpageData?.title || "YouTube_Video";
+    const cover = videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : null;
+
+    // 尝试调用 cobalt tools 解析 1080p MP4
+    const items = [];
+    try {
+      const cobResp = await fetch("https://api.cobalt.tools", {
+        method: "POST",
+        headers: {
+          "Accept": "application/json",
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          url: targetUrl,
+          videoQuality: "1080"
+        }),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (cobResp.ok) {
+        const cJson = await cobResp.json();
+        if (cJson.url) {
+          items.push({
+            url: cJson.url,
+            type: "video",
+            label: "高清视频 (1080p MP4)",
+            ext: "mp4"
+          });
+        }
+      }
+    } catch (_) {}
+
+    // 音频提取通道
+    try {
+      const audioResp = await fetch("https://api.cobalt.tools", {
+        method: "POST",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: JSON.stringify({ url: targetUrl, downloadMode: "audio" }),
+        signal: AbortSignal.timeout(4000)
+      });
+      if (audioResp.ok) {
+        const aJson = await audioResp.json();
+        if (aJson.url) {
+          items.push({
+            url: aJson.url,
+            type: "audio",
+            label: "纯音频 (MP3)",
+            ext: "mp3"
+          });
+        }
+      }
+    } catch (_) {}
+
+    return {
+      platform: "youtube",
+      platformName: "YouTube",
+      title,
+      cover,
+      items
+    };
+  }
+
+  // 3. Instagram & 小红书（使用 Inpage 采集到的 DOM/媒体直链）
+  if (inpageData && (inpageData.videos.length > 0 || inpageData.images.length > 0)) {
+    const items = [];
+    inpageData.videos.forEach((v, idx) => {
+      items.push({
+        url: v,
+        type: "video",
+        label: `视频 ${idx + 1} (MP4)`,
+        ext: "mp4"
+      });
+    });
+    inpageData.images.forEach((img, idx) => {
+      items.push({
+        url: img,
+        type: "image",
+        label: `无水印原图 ${idx + 1}`,
+        ext: "jpg"
+      });
+    });
+
+    return {
+      platform: inpageData.platform,
+      platformName: inpageData.name,
+      title: inpageData.title || `${inpageData.name}_Media`,
+      cover: inpageData.images[0] || null,
+      items
+    };
+  }
+
+  return null;
+}
+
 // 消息调度中心
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
@@ -136,7 +312,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             }
           }
           if (Object.keys(payload).length === 0) {
-            throw new Error("电脑浏览器尚未登录任何支持的平台（Instagram/小红书等）");
+            throw new Error("电脑浏览器尚未检测到 Instagram/小红书/X/YouTube 等有效登录态");
           }
           const res = await fetchFromPhone("/api/cookies", {
             method: "POST",
@@ -157,6 +333,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             body: JSON.stringify({ platform, cookie: info.cookie })
           });
           sendResponse({ success: true, data: res });
+          break;
+        }
+
+        case "RESOLVE_MEDIA": {
+          const { url, inpageData } = msg;
+          const media = await resolveMediaForPlatform(url, inpageData);
+          sendResponse({ success: true, data: media });
+          break;
+        }
+
+        case "DOWNLOAD_MEDIA_PC": {
+          const { url, filename, platform } = msg;
+          const folder = platform ? `ClipDown/${platform}` : "ClipDown";
+          const res = await downloadToPc(url, filename, folder);
+          sendResponse({ success: true, data: res });
+          break;
+        }
+
+        case "DOWNLOAD_BATCH_PC": {
+          const { items, baseTitle, platform } = msg;
+          const folder = platform ? `ClipDown/${platform}` : "ClipDown";
+          const results = [];
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const name = `${baseTitle}_${i + 1}.${item.ext || "jpg"}`;
+            try {
+              const r = await downloadToPc(item.url, name, folder);
+              results.push(r);
+            } catch (e) {
+              console.warn("Batch item download failed", item.url, e);
+            }
+          }
+          sendResponse({ success: true, count: results.length });
           break;
         }
 
@@ -198,5 +407,5 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ success: false, error: err.message || String(err) });
     }
   })();
-  return true; // 保持异步响应通道
+  return true;
 });
