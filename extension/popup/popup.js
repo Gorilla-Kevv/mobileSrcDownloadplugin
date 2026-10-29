@@ -23,6 +23,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   const manualUrlInput = document.getElementById("manual-url-input");
   const btnManualResolve = document.getElementById("btn-manual-resolve");
 
+  // 下载路径指示与快速更改元素
+  const currentDownloadPathDisplay = document.getElementById("current-download-path-display");
+  const btnQuickConfigPath = document.getElementById("btn-quick-config-path");
+
+  // 下载目录设置卡片元素
+  const inputDownloadSubfolder = document.getElementById("input-download-subfolder");
+  const previewPathText = document.getElementById("preview-path-text");
+  const checkGroupByPlatform = document.getElementById("check-group-by-platform");
+  const checkPromptSaveas = document.getElementById("check-prompt-saveas");
+  const btnSaveDownloadSettings = document.getElementById("btn-save-download-settings");
+  const downloadSettingsStatus = document.getElementById("download-settings-status");
+  const btnOpenEdgeSettings = document.getElementById("btn-open-edge-settings");
+  const btnOpenChromeSettings = document.getElementById("btn-open-chrome-settings");
+
   // Cookie 共享页元素
   const btnSyncAllCookies = document.getElementById("btn-sync-all-cookies");
   const btnQrSync = document.getElementById("btn-qr-sync");
@@ -63,10 +77,103 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 
   // ── 初始化配置加载 ─────────────────────────────────────────────────────────
-  const stored = await chrome.storage.local.get(["phoneUrl", "phonePin", "cached_tasks"]);
+  const stored = await chrome.storage.local.get([
+    "phoneUrl",
+    "phonePin",
+    "cached_tasks",
+    "downloadSubfolder",
+    "groupByPlatform",
+    "promptSaveAs"
+  ]);
+
   inputPhoneUrl.value = stored.phoneUrl || "http://192.168.1.108:8765";
   inputPhonePin.value = stored.phonePin || "";
   cachedTasks = stored.cached_tasks || [];
+
+  // 下载目录设置初始化
+  inputDownloadSubfolder.value = stored.downloadSubfolder !== undefined ? stored.downloadSubfolder : "ClipDown";
+  checkGroupByPlatform.checked = stored.groupByPlatform !== false;
+  checkPromptSaveas.checked = !!stored.promptSaveAs;
+
+  function updateDownloadPreview() {
+    const sub = (inputDownloadSubfolder.value || "").trim().replace(/^[\\/]+|[\\/]+$/g, "");
+    const group = checkGroupByPlatform.checked;
+    const prompt = checkPromptSaveas.checked;
+
+    const parts = ["此电脑 > 下载"];
+    if (sub) {
+      parts.push(`<strong>${sub}</strong>`);
+    }
+    if (group) {
+      parts.push("<strong>[平台名]</strong>");
+    }
+    parts.push("视频.mp4");
+
+    previewPathText.innerHTML = parts.join(" / ");
+
+    // 格式化主嗅探面板简要路径与主按钮文案
+    const displayFolder = sub ? (group ? `Downloads/${sub}/<平台>` : `Downloads/${sub}`) : (group ? "Downloads/<平台>" : "Downloads");
+    if (prompt) {
+      currentDownloadPathDisplay.textContent = `${displayFolder} (弹窗另存为)`;
+      btnPcDownloadPrimary.textContent = "💻 下载并选择保存位置... (另存为)";
+    } else {
+      currentDownloadPathDisplay.textContent = displayFolder;
+      btnPcDownloadPrimary.textContent = `💻 一键下载到电脑 (${sub || "Downloads"})`;
+    }
+  }
+
+  // 绑定下载目录实时输入预览与开关监听
+  inputDownloadSubfolder.addEventListener("input", updateDownloadPreview);
+  checkGroupByPlatform.addEventListener("change", updateDownloadPreview);
+  checkPromptSaveas.addEventListener("change", updateDownloadPreview);
+
+  // 初始触发一次路径预览刷新
+  updateDownloadPreview();
+
+  // 快速跳转至下载设置
+  btnQuickConfigPath.addEventListener("click", () => {
+    tabs.forEach(t => t.classList.remove("active"));
+    tabPanes.forEach(p => p.classList.remove("active"));
+    const settingsTab = document.querySelector('[data-tab="tab-settings"]');
+    const settingsPane = document.getElementById("tab-settings");
+    if (settingsTab && settingsPane) {
+      settingsTab.classList.add("active");
+      settingsPane.classList.add("active");
+      inputDownloadSubfolder.focus();
+    }
+  });
+
+  // 保存下载目录设置
+  btnSaveDownloadSettings.addEventListener("click", async () => {
+    const subfolder = (inputDownloadSubfolder.value || "").trim().replace(/^[\\/]+|[\\/]+$/g, "");
+    const groupByPlatform = checkGroupByPlatform.checked;
+    const promptSaveAs = checkPromptSaveas.checked;
+
+    await chrome.storage.local.set({
+      downloadSubfolder: subfolder,
+      groupByPlatform,
+      promptSaveAs
+    });
+
+    updateDownloadPreview();
+    downloadSettingsStatus.className = "status-box success";
+    downloadSettingsStatus.textContent = "✅ 下载目录设置已成功保存！";
+    downloadSettingsStatus.classList.remove("hidden");
+    setTimeout(() => {
+      downloadSettingsStatus.classList.add("hidden");
+    }, 3500);
+  });
+
+  // 复制浏览器默认下载设置 URL
+  btnOpenEdgeSettings.addEventListener("click", () => {
+    navigator.clipboard.writeText("edge://settings/downloads");
+    alert("已复制 Edge 下载设置地址：\nedge://settings/downloads\n请粘贴至浏览器新标签页打开，即可将默认下载盘符修改为 D盘或 E盘！");
+  });
+
+  btnOpenChromeSettings.addEventListener("click", () => {
+    navigator.clipboard.writeText("chrome://settings/downloads");
+    alert("已复制 Chrome 下载设置地址：\nchrome://settings/downloads\n请粘贴至浏览器新标签页打开，即可将默认下载盘符修改为 D盘或 E盘！");
+  });
 
   // 初始化检查
   testConnection(false);
@@ -236,7 +343,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     btnBatchDownloadImages.textContent = `📦 批量下载全部 ${images.length} 张原图`;
 
     if (res && res.success) {
-      alert(`🎉 成功启动下载全部 ${res.count} 张高清原图！\n文件保存在电脑 Downloads/ClipDown 目录。`);
+      const folderMsg = res.folder ? `Downloads/${res.folder}` : "Downloads (根目录)";
+      alert(`🎉 成功启动下载全部 ${res.count} 张高清原图！\n文件保存在: ${folderMsg}`);
     } else {
       alert("下载遇到问题，请重试");
     }
@@ -258,7 +366,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       if (res && res.success) {
-        alert(`✅ 已在电脑端开始下载: ${filename}\n保存于 Downloads/ClipDown 目录。`);
+        if (res.data?.saveAs) {
+          alert(`📂 请在弹出的 Windows 保存窗口中选择任意磁盘与保存文件夹！\n建议文件名: ${filename}`);
+        } else {
+          const folderMsg = res.data?.folder ? `Downloads/${res.data.folder}` : "Downloads (根目录)";
+          alert(`✅ 已在电脑端开始下载: ${filename}\n保存于: ${folderMsg}`);
+        }
       } else {
         alert(`❌ 下载失败: ${res ? res.error : "未知错误"}`);
       }
@@ -266,7 +379,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       alert(`❌ 下载异常: ${e.message}`);
     } finally {
       btnPcDownloadPrimary.disabled = false;
-      btnPcDownloadPrimary.textContent = "💻 一键下载到电脑 (Downloads)";
+      updateDownloadPreview();
     }
   }
 

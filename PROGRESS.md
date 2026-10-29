@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 68 已完成**：电脑端下载体验终极强化 · 针对 X、Instagram、YouTube、小红书的深度直接下载与页面注入（已发布正式版 v1.1.27 / versionCode 32）
+- 当前正在开发任务：**阶段 69 已完成**：电脑端扩展支持下载目录手动更改与另存为自由选盘（扩展升级为 v1.2.0）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **105 例** + downloader **41 例** + app **14 例**全绿（共 160 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.29 23:45
+- 本次文档更新时间：10.30 00:15
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1479,4 +1479,38 @@
   - 全量单元测试 **160 例全绿**（parser 105 例、downloader 41 例、app 14 例）；
   - `assembleRelease` 成功构建，Release APK 体积 1.90 MB (1,997,649 字节)，严守 2MB 极限红线；
   - 成功发布 GitHub Release 正式版 **v1.1.27 (versionCode 32)** 并更新 `update.json` 清单。
-- 本次文档更新时间：10.29 23:45
+- 本次文档更新时间：10.30 00:15
+
+
+## 阶段 69 电脑端扩展支持下载目录手动更改与另存为自由选盘 [计划时间：10.30 00:05 BY Antigravity][完成时间：10.30 00:15 BY Antigravity]
+- 已完成：
+  1. **电脑端自定义下载目录引擎 (`extension/background/service-worker.js`)**：
+     - 新增 `getDownloadConfig()` 与 `computeDownloadTarget(filename, platform, forceSaveAs)`；
+     - 支持读取用户自定义子目录 `downloadSubfolder`（支持任意相对多级子目录，如 `MediaVault/Videos`，留空为根目录）；
+     - 支持自由开启/关闭 `groupByPlatform`（按平台自动建立 `/X`、`/Instagram`、`/小红书`、`/YouTube` 子目录）；
+     - 突破系统限制与自由选盘：支持 `promptSaveAs` 开关，开启后调用 Chromium `chrome.downloads.download({ saveAs: true })`，每次下载直接弹出 Windows 另存为窗口，用户可自由选择 D盘、E盘、桌面或任意文件夹保存；
+     - 批量图集下载防卡死优化：批量下载保持静默落盘至自定义目录，避免连续弹出几十个窗口卡死浏览器。
+  2. **扩展设置中心与实时路径指示交互 (`extension/popup/`)**：
+     - 升级第 4 标签栏为「⚙️ 设置中心」，划分为「📁 电脑端下载目录设置」与「📱 手机局域网配对设置」两大卡片；
+     - 增加实时保存路径效果预览卡片（`此电脑 > 下载 / [自定义目录] / [平台名] / 视频.mp4`）；
+     - 嗅探下载主面板新增「📂 保存位置」实时指示条与「更改目录」快捷跳转通道；
+     - 主下载按钮根据另存为开关动态切换文案（`💻 一键下载到电脑 (Downloads/...)` 或 `💻 下载并选择保存位置... (另存为)`）；
+     - 增加 Edge 与 Chrome 全局默认下载盘符修改的一键复制指引（`edge://settings/downloads` / `chrome://settings/downloads`）；
+     - 扩展升级为 v1.2.0。
+  3. **页面内悬浮小部件与文档同步 (`extension/content/`, `extension/README.md`)**：
+     - 页面右下角悬浮下载小部件调用 background 下载时自动继承用户设置的自定义保存目录；
+     - `extension/README.md` 详尽补充手动更改下载目录与另存为自由选盘指引。
+- 改动文件：
+  - `extension/manifest.json` (升级至 1.2.0)
+  - `extension/README.md`
+  - `extension/background/service-worker.js`
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.css`
+  - `extension/popup/popup.js`
+  - `extension/content/content-script.js`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - Android 单元测试 **160 例全绿**；
+  - 扩展无任何语法与打包报错。
+- 本次文档更新时间：10.30 00:15

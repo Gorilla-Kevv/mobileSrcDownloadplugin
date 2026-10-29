@@ -212,7 +212,8 @@
         action: "DOWNLOAD_CURRENT_TAB_PC"
       }, (res) => {
         if (res && res.success) {
-          triggerToast("✅ 已启动电脑端直接下载");
+          const folder = res.data?.folder ? `Downloads/${res.data.folder}` : "Downloads";
+          triggerToast(`✅ 已启动电脑端下载 (保存至 ${folder})`);
         } else {
           triggerToast("⚠️ 请点击浏览器右上角 ClipDown 助手查看清晰度选项");
         }

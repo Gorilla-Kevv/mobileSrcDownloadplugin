@@ -122,21 +122,71 @@ async function fetchFromPhone(endpoint, options = {}) {
   return await resp.json();
 }
 
-// ── PC 电脑端原生直接下载引擎 ──────────────────────────────────────────────
-async function downloadToPc(url, filename, folder = "ClipDown") {
+// ── PC 电脑端原生直接下载与路径配置引擎 ────────────────────────────────────
+async function getDownloadConfig() {
+  const data = await chrome.storage.local.get([
+    "downloadSubfolder",
+    "groupByPlatform",
+    "promptSaveAs"
+  ]);
+
+  let subfolder = data.downloadSubfolder !== undefined ? String(data.downloadSubfolder).trim() : "ClipDown";
+  // 移除开头的 / 或 \ 以及末尾的 / 或 \
+  subfolder = subfolder.replace(/^[\\/]+|[\\/]+$/g, "");
+  // Windows/Chromium 非法字符过滤
+  subfolder = subfolder.replace(/[:*?"<>|]/g, "_");
+
+  return {
+    downloadSubfolder: subfolder,
+    groupByPlatform: data.groupByPlatform !== false, // 默认 true
+    promptSaveAs: !!data.promptSaveAs
+  };
+}
+
+async function computeDownloadTarget(filename, platform, forceSaveAs = false) {
+  const cfg = await getDownloadConfig();
   const cleanName = filename.replace(/[\\/:*?"<>|]/g, "_").trim();
-  const fullPath = `${folder}/${cleanName}`;
+
+  const parts = [];
+  if (cfg.downloadSubfolder) {
+    parts.push(cfg.downloadSubfolder);
+  }
+  if (cfg.groupByPlatform && platform) {
+    const platformFolder = PLATFORMS[platform]?.name?.replace(/[\\/:*?"<>|]/g, "_") || platform;
+    parts.push(platformFolder);
+  }
+  parts.push(cleanName);
+
+  const fullPath = parts.join("/");
+  const folder = parts.slice(0, -1).join("/");
+  const shouldPrompt = forceSaveAs || cfg.promptSaveAs;
+
+  return {
+    fullPath,
+    folder,
+    saveAs: shouldPrompt
+  };
+}
+
+async function downloadToPc(url, filename, platform = "", forceSaveAs = false) {
+  const target = await computeDownloadTarget(filename, platform, forceSaveAs);
 
   return new Promise((resolve, reject) => {
     chrome.downloads.download({
       url,
-      filename: fullPath,
+      filename: target.fullPath,
+      saveAs: target.saveAs,
       conflictAction: "uniquify"
     }, (downloadId) => {
       if (chrome.runtime.lastError) {
         reject(new Error(chrome.runtime.lastError.message));
       } else {
-        resolve({ downloadId, filename: fullPath });
+        resolve({
+          downloadId,
+          filename: target.fullPath,
+          folder: target.folder,
+          saveAs: target.saveAs
+        });
       }
     });
   });
@@ -343,29 +393,50 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
 
+        case "GET_DOWNLOAD_CONFIG": {
+          const cfg = await getDownloadConfig();
+          sendResponse({ success: true, data: cfg });
+          break;
+        }
+
         case "DOWNLOAD_MEDIA_PC": {
-          const { url, filename, platform } = msg;
-          const folder = platform ? `ClipDown/${platform}` : "ClipDown";
-          const res = await downloadToPc(url, filename, folder);
+          const { url, filename, platform, forceSaveAs } = msg;
+          const res = await downloadToPc(url, filename, platform, forceSaveAs);
           sendResponse({ success: true, data: res });
           break;
         }
 
         case "DOWNLOAD_BATCH_PC": {
           const { items, baseTitle, platform } = msg;
-          const folder = platform ? `ClipDown/${platform}` : "ClipDown";
           const results = [];
+          let savedFolder = "";
           for (let i = 0; i < items.length; i++) {
             const item = items[i];
             const name = `${baseTitle}_${i + 1}.${item.ext || "jpg"}`;
             try {
-              const r = await downloadToPc(item.url, name, folder);
+              // 批量图集下载强制避免弹窗轰炸，安全存入指定目录
+              const r = await downloadToPc(item.url, name, platform, false);
+              savedFolder = r.folder;
               results.push(r);
             } catch (e) {
               console.warn("Batch item download failed", item.url, e);
             }
           }
-          sendResponse({ success: true, count: results.length });
+          sendResponse({ success: true, count: results.length, folder: savedFolder });
+          break;
+        }
+
+        case "DOWNLOAD_CURRENT_TAB_PC": {
+          const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+          if (!tab || !tab.url) throw new Error("未检测到当前网页标签");
+          const media = await resolveMediaForPlatform(tab.url, msg.inpageData);
+          if (!media || !media.items || media.items.length === 0) {
+            throw new Error("当前网页未检测到可直接下载的媒体流");
+          }
+          const item = media.items[0];
+          const filename = `${(media.title || "ClipDown_Media").substring(0, 40)}.${item.ext || "mp4"}`;
+          const res = await downloadToPc(item.url, filename, media.platform);
+          sendResponse({ success: true, data: res });
           break;
         }
 

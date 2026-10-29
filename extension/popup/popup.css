@@ -829,3 +829,172 @@ body {
   text-align: center;
   line-height: 1.4;
 }
+
+/* ── 电脑端下载目录管理与实时路径指示样式 ── */
+.download-path-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  background-color: rgba(20, 13, 36, 0.85);
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+  font-size: 11.5px;
+}
+
+.download-path-bar .path-text {
+  color: var(--text-secondary);
+  flex: 1;
+  margin-left: 6px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.download-path-bar strong {
+  color: var(--brand-glow);
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+
+.btn-link-action {
+  background: transparent;
+  border: 1px solid var(--border-bright);
+  color: var(--brand-glow);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-link-action:hover {
+  background-color: rgba(147, 51, 234, 0.3);
+  border-color: var(--border-focus);
+  color: #FFFFFF;
+}
+
+.settings-card {
+  background-color: var(--bg-card);
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  margin-bottom: 14px;
+}
+
+.card-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.card-heading-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: #FFFFFF;
+  letter-spacing: 0.3px;
+}
+
+.path-preview-box {
+  padding: 9px 12px;
+  background-color: var(--bg-input);
+  border: 1.5px dashed var(--border-bright);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+}
+
+.path-preview-box .preview-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #94A3B8;
+  margin-bottom: 4px;
+}
+
+.path-preview-box .preview-path {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  color: #E2E8F0;
+  line-height: 1.45;
+  word-break: break-all;
+}
+
+.path-preview-box .preview-path strong {
+  color: var(--brand-glow);
+  font-weight: 700;
+}
+
+.checkbox-group {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #E2E8F0;
+  line-height: 1.45;
+  user-select: none;
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  accent-color: var(--brand-purple);
+  cursor: pointer;
+}
+
+.checkbox-label.highlight-checkbox {
+  padding: 8px 10px;
+  background: rgba(147, 51, 234, 0.15);
+  border: 1px solid rgba(192, 132, 252, 0.35);
+  border-radius: var(--radius-sm);
+}
+
+.checkbox-label.highlight-checkbox strong {
+  color: #C084FC;
+  font-weight: 700;
+}
+
+.btn-xs {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.root-dir-tip {
+  margin-top: 12px;
+  padding: 10px 12px;
+  background-color: var(--bg-secondary);
+  border: 1.5px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+}
+
+.root-dir-tip .tip-header {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #F59E0B;
+  margin-bottom: 4px;
+}
+
+.root-dir-tip .tip-body {
+  font-size: 11px;
+  color: #CBD5E1;
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.root-dir-tip .tip-actions {
+  display: flex;
+  gap: 8px;
+}
+
