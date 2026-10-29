@@ -4,6 +4,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.widget.Toast
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -13,9 +14,9 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -24,10 +25,12 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +38,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
+import com.clipdown.app.sync.QrCodeUtil
 import com.clipdown.app.ui.theme.AppTheme
 
 /**
@@ -100,44 +104,86 @@ fun SyncPairingDialog(
                 Hairline()
                 VSpace(AppTheme.spacing.md)
 
-                // 当前配对凭据卡
+                // 当前配对凭据与二维码卡片
+                val pairPayload = "clipdown://pair?url=$connectUrl&pin=$pin"
+                val qrBitmap = remember(connectUrl, pin) {
+                    try {
+                        QrCodeUtil.createQrBitmap(pairPayload, sizePx = 400)
+                    } catch (_: Throwable) {
+                        null
+                    }
+                }
+
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF130E1F))
                         .border(1.dp, Color(0xFF2E2048), RectangleShape)
-                        .padding(AppTheme.spacing.md)
+                        .padding(AppTheme.spacing.md),
+                    horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Text(
-                        text = "手机局域网服务地址",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF94A3B8)
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = connectUrl,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        color = Color(0xFF8B5CF6),
-                        fontSize = 15.sp
-                    )
+                    // 配对二维码
+                    if (qrBitmap != null) {
+                        Surface(
+                            shape = RectangleShape,
+                            color = Color.White,
+                            modifier = Modifier.padding(bottom = AppTheme.spacing.sm)
+                        ) {
+                            Image(
+                                bitmap = qrBitmap.asImageBitmap(),
+                                contentDescription = "电脑扩展扫码配对",
+                                modifier = Modifier
+                                    .size(160.dp)
+                                    .padding(8.dp)
+                            )
+                        }
+                        Text(
+                            text = "📷 电脑扩展打开「设置中心」点击「扫码连接」对准即可",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = Color(0xFFC084FC),
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        VSpace(AppTheme.spacing.sm)
+                    }
 
-                    VSpace(AppTheme.spacing.sm)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text(
+                                text = "局域网服务地址",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF94A3B8)
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = connectUrl,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF8B5CF6),
+                                fontSize = 14.sp
+                            )
+                        }
 
-                    Text(
-                        text = "6 位安全配对码 (PIN)",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = Color(0xFF94A3B8)
-                    )
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        text = pin,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Black,
-                        color = Color(0xFF10B981),
-                        fontSize = 20.sp,
-                        letterSpacing = 2.sp
-                    )
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = "配对 PIN 码",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = Color(0xFF94A3B8)
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                text = pin,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Black,
+                                color = Color(0xFF10B981),
+                                fontSize = 18.sp,
+                                letterSpacing = 1.sp
+                            )
+                        }
+                    }
                 }
 
                 VSpace(AppTheme.spacing.md)
@@ -191,8 +237,8 @@ fun SyncPairingDialog(
                     Button(
                         onClick = {
                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cm.setPrimaryClip(ClipData.newPlainText("ClipDown Sync Config", "$connectUrl PIN:$pin"))
-                            Toast.makeText(context, "已复制配对地址与 PIN 码到剪贴板", Toast.LENGTH_SHORT).show()
+                            cm.setPrimaryClip(ClipData.newPlainText("ClipDown Sync Config", pairPayload))
+                            Toast.makeText(context, "已复制一键配对口令！在电脑扩展点击「粘贴口令」即可秒连", Toast.LENGTH_SHORT).show()
                         },
                         shape = RectangleShape,
                         colors = ButtonDefaults.buttonColors(
@@ -201,7 +247,7 @@ fun SyncPairingDialog(
                         ),
                         modifier = Modifier.height(36.dp)
                     ) {
-                        Text("复制配对参数", style = MaterialTheme.typography.labelMedium)
+                        Text("📋 复制一键配对口令", style = MaterialTheme.typography.labelMedium)
                     }
                 }
             }

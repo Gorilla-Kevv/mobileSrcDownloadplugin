@@ -54,7 +54,20 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnTestSaveSettings = document.getElementById("btn-test-save-settings");
   const settingsStatusBox = document.getElementById("settings-status-box");
 
-  // 扫码弹窗
+  // 快捷免输配对元素
+  const btnScanQr = document.getElementById("btn-scan-qr");
+  const btnPastePairing = document.getElementById("btn-paste-pairing");
+  const btnAutoDiscover = document.getElementById("btn-auto-discover");
+  const modalScanner = document.getElementById("modal-scanner");
+  const btnCloseScanner = document.getElementById("btn-close-scanner");
+  const scannerVideo = document.getElementById("scanner-video");
+  const scannerCanvas = document.getElementById("scanner-canvas");
+  const scannerCameraStatus = document.getElementById("scanner-camera-status");
+  const scannerStatusText = document.getElementById("scanner-status-text");
+  const btnUploadQrImg = document.getElementById("btn-upload-qr-img");
+  const inputQrFile = document.getElementById("input-qr-file");
+
+  // 离线 Cookie 二维码弹窗
   const modalQr = document.getElementById("modal-qr");
   const btnCloseQr = document.getElementById("btn-close-qr");
   const qrPlatformSelect = document.getElementById("qr-platform-select");
@@ -665,7 +678,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       const dateStr = t.createdAt ? new Date(t.createdAt).toLocaleDateString() : "";
       return `
         <div class="task-item">
-          <img src="${cover}" class="task-thumb" onerror="this.src='../icons/icon48.png'" />
+          <img src="${cover}" class="task-thumb" alt="封面" />
           <div class="task-content">
             <div class="task-title" title="${t.title}">${t.title || "未命名媒体"}</div>
             <div class="task-meta">
@@ -677,12 +690,432 @@ document.addEventListener("DOMContentLoaded", async () => {
         </div>
       `;
     }).join("");
+
+    // 严守 CSP 规范：杜绝内联 onerror，通过原生事件监听进行图片兜底
+    tasksListContainer.querySelectorAll(".task-thumb").forEach(img => {
+      img.addEventListener("error", () => {
+        img.src = "../icons/icon48.png";
+      }, { once: true });
+    });
   }
 
-  // ── 配对设置 ───────────────────────────────────────────────────────────────
+  // ── 局域网配对数据清洗与协议解析核心 ───────────────────────────────────────
+  function sanitizeUrl(raw) {
+    if (!raw) return "";
+    let u = String(raw).trim().replace(/：/g, ":").replace(/。/g, ".").replace(/\s+/g, "");
+    if (u && !/^https?:\/\//i.test(u)) {
+      u = "http://" + u;
+    }
+    return u.replace(/\/+$/, "");
+  }
+
+  function parsePairPayload(text) {
+    if (!text) return null;
+    text = String(text).trim();
+
+    // 1. 标准 ClipDown 深度配对协议: clipdown://pair?url=http://...:8765&pin=...
+    if (text.startsWith("clipdown://pair")) {
+      try {
+        const qIndex = text.indexOf("?");
+        if (qIndex !== -1) {
+          const params = new URLSearchParams(text.slice(qIndex + 1));
+          const rawUrl = params.get("url");
+          const rawPin = params.get("pin");
+          if (rawUrl) {
+            return {
+              url: sanitizeUrl(rawUrl),
+              pin: (rawPin || "").trim().replace(/\D/g, "").slice(0, 6)
+            };
+          }
+        }
+      } catch (_) {}
+    }
+
+    // 2. JSON 格式配对凭据
+    if (text.startsWith("{") && text.endsWith("}")) {
+      try {
+        const obj = JSON.parse(text);
+        if (obj.url || obj.ip) {
+          const rawUrl = obj.url || `http://${obj.ip}:${obj.port || 8765}`;
+          return {
+            url: sanitizeUrl(rawUrl),
+            pin: String(obj.pin || "").trim().replace(/\D/g, "").slice(0, 6)
+          };
+        }
+      } catch (_) {}
+    }
+
+    // 3. 通用文本探测 (匹配 IP、端口与 6 位数字 PIN)
+    const ipMatch = text.match(/((?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?:\s*[:：]\s*\d{2,5})?)/);
+    const pinMatch = text.match(/\b(\d{6})\b/);
+
+    if (ipMatch) {
+      let raw = ipMatch[1].replace(/\s+/g, "").replace(/：/g, ":");
+      if (!raw.includes(":")) raw += ":8765";
+      const cleanUrl = sanitizeUrl(raw);
+      const pin = pinMatch ? pinMatch[1] : "";
+      return { url: cleanUrl, pin };
+    }
+
+    return null;
+  }
+
+  async function applyAndConnectPair(pair, toastPrefix = "") {
+    if (!pair || !pair.url) return;
+    const cleanUrl = sanitizeUrl(pair.url);
+    const cleanPin = (pair.pin || "").trim().replace(/\D/g, "").slice(0, 6);
+
+    inputPhoneUrl.value = cleanUrl;
+    if (cleanPin) inputPhonePin.value = cleanPin;
+
+    await chrome.storage.local.set({ phoneUrl: cleanUrl, phonePin: cleanPin });
+
+    // 自动切到「配对设置」页方便用户查看状态
+    tabs.forEach(t => {
+      if (t.dataset.tab === "tab-settings") t.classList.add("active");
+      else t.classList.remove("active");
+    });
+    tabPanes.forEach(p => {
+      if (p.id === "tab-settings") p.classList.add("active");
+      else p.classList.remove("active");
+    });
+
+    if (cleanPin && cleanPin.length === 6) {
+      showStatusBox(`${toastPrefix} 识别到地址: ${cleanUrl}，正在建立局域网连接...`, "info");
+      await testConnection(true);
+    } else {
+      showStatusBox(`${toastPrefix} 已填入手机服务地址 (${cleanUrl})，请输入 6 位 PIN 码后点击连接`, "info");
+      inputPhonePin.focus();
+    }
+  }
+
+  // 输入框实时清洗（防误粘空格或全角冒号，自动解包配对链接）
+  inputPhoneUrl.addEventListener("input", () => {
+    const val = inputPhoneUrl.value;
+    if (val.includes("clipdown://pair") || val.includes("pin=")) {
+      const pair = parsePairPayload(val);
+      if (pair) {
+        inputPhoneUrl.value = pair.url;
+        if (pair.pin) inputPhonePin.value = pair.pin;
+        return;
+      }
+    }
+    const sanitized = val.replace(/\s+/g, "").replace(/：/g, ":");
+    if (sanitized !== val) {
+      inputPhoneUrl.value = sanitized;
+    }
+  });
+
+  inputPhonePin.addEventListener("input", () => {
+    inputPhonePin.value = inputPhonePin.value.replace(/\D/g, "").slice(0, 6);
+  });
+
+  // ── 扫码配对核心逻辑 (BarcodeDetector + jsQR 双轨保障) ──────────────────────
+  let cameraStream = null;
+  let scanRafId = null;
+
+  async function decodeQrFromVideoOrImage(source) {
+    // 1. 优先采用 Chromium 原生硬件加速 BarcodeDetector (Chrome 88+)
+    if (window.BarcodeDetector) {
+      try {
+        const detector = new window.BarcodeDetector({ formats: ["qr_code"] });
+        const results = await detector.detect(source);
+        if (results && results.length > 0 && results[0].rawValue) {
+          return results[0].rawValue;
+        }
+      } catch (_) {}
+    }
+
+    // 2. 纯 JS 离线兜底 jsQR 引擎 (100% 稳定运行)
+    if (typeof jsQR !== "undefined" && scannerCanvas) {
+      try {
+        const w = source.videoWidth || source.naturalWidth || source.width;
+        const h = source.videoHeight || source.naturalHeight || source.height;
+        if (w && h) {
+          scannerCanvas.width = w;
+          scannerCanvas.height = h;
+          const ctx = scannerCanvas.getContext("2d", { willReadFrequently: true });
+          ctx.drawImage(source, 0, 0, w, h);
+          const imgData = ctx.getImageData(0, 0, w, h);
+          const res = jsQR(imgData.data, imgData.width, imgData.height, {
+            inversionAttempts: "dontInvert"
+          }) || jsQR(imgData.data, imgData.width, imgData.height, {
+            inversionAttempts: "onlyInvert"
+          });
+          if (res && res.data) {
+            return res.data;
+          }
+        }
+      } catch (e) {
+        console.warn("jsQR decode error:", e);
+      }
+    }
+    return null;
+  }
+
+  async function decodeQrFromBlob(blob) {
+    const img = new Image();
+    const blobUrl = URL.createObjectURL(blob);
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = reject;
+        img.src = blobUrl;
+      });
+      return await decodeQrFromVideoOrImage(img);
+    } catch (_) {
+      return null;
+    } finally {
+      URL.revokeObjectURL(blobUrl);
+    }
+  }
+
+  async function startCameraScan() {
+    scannerCameraStatus.classList.add("hidden");
+    try {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error("当前环境未开放摄像头权限");
+      }
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: "environment", width: { ideal: 640 }, height: { ideal: 480 } }
+      });
+      scannerVideo.srcObject = cameraStream;
+      await scannerVideo.play();
+
+      const scanLoop = async () => {
+        if (!cameraStream) return;
+        if (scannerVideo.readyState === scannerVideo.HAVE_ENOUGH_DATA) {
+          const rawText = await decodeQrFromVideoOrImage(scannerVideo);
+          if (rawText) {
+            const pair = parsePairPayload(rawText);
+            if (pair) {
+              closeScannerModal();
+              applyAndConnectPair(pair, "📷 扫码成功！");
+              return;
+            }
+          }
+        }
+        scanRafId = requestAnimationFrame(scanLoop);
+      };
+      scanRafId = requestAnimationFrame(scanLoop);
+    } catch (err) {
+      console.warn("Camera access failed:", err);
+      scannerCameraStatus.classList.remove("hidden");
+      scannerStatusText.innerHTML = `未检测到可用摄像头或未授权<br><small style="color:#94A3B8;">请直接按 <strong>Ctrl + V</strong> 粘贴手机截屏，或点击下方选择图片</small>`;
+    }
+  }
+
+  function stopCameraScan() {
+    if (scanRafId) {
+      cancelAnimationFrame(scanRafId);
+      scanRafId = null;
+    }
+    if (cameraStream) {
+      cameraStream.getTracks().forEach(t => t.stop());
+      cameraStream = null;
+    }
+    scannerVideo.srcObject = null;
+  }
+
+  function openScannerModal() {
+    modalScanner.classList.remove("hidden");
+    startCameraScan();
+  }
+
+  function closeScannerModal() {
+    stopCameraScan();
+    modalScanner.classList.add("hidden");
+    scannerCameraStatus.classList.add("hidden");
+  }
+
+  if (btnScanQr) {
+    btnScanQr.addEventListener("click", openScannerModal);
+  }
+  if (btnCloseScanner) {
+    btnCloseScanner.addEventListener("click", closeScannerModal);
+  }
+  if (modalScanner) {
+    modalScanner.addEventListener("click", e => {
+      if (e.target === modalScanner) closeScannerModal();
+    });
+  }
+  if (btnUploadQrImg) {
+    btnUploadQrImg.addEventListener("click", () => inputQrFile.click());
+  }
+  if (inputQrFile) {
+    inputQrFile.addEventListener("change", async () => {
+      const file = inputQrFile.files?.[0];
+      if (!file) return;
+      showStatusBox("正在识别图片中的二维码...", "info");
+      const text = await decodeQrFromBlob(file);
+      if (text) {
+        const pair = parsePairPayload(text);
+        if (pair) {
+          closeScannerModal();
+          applyAndConnectPair(pair, "📁 识别到图片中的配对信息！");
+          return;
+        }
+      }
+      showStatusBox("所选图片未包含有效的 ClipDown 配对二维码", "error");
+      inputQrFile.value = "";
+    });
+  }
+
+  // ── ⚡ 一键粘贴口令 ────────────────────────────────────────────────────────
+  if (btnPastePairing) {
+    btnPastePairing.addEventListener("click", async () => {
+      try {
+        const text = await navigator.clipboard.readText();
+        if (!text || !text.trim()) {
+          showStatusBox("剪贴板为空，请先在手机端配对弹窗点击「复制一键配对口令」", "error");
+          return;
+        }
+        const pair = parsePairPayload(text);
+        if (pair) {
+          await applyAndConnectPair(pair, "⚡ 成功解析剪贴板配对口令！");
+        } else {
+          showStatusBox("剪贴板内容未包含有效配对信息，请确认已复制手机端口令", "error");
+        }
+      } catch (err) {
+        showStatusBox(`读取剪贴板受阻 (${err.message})，可直接按 Ctrl + V 粘贴`, "error");
+      }
+    });
+  }
+
+  // ── 🔍 自动搜寻局域网手机 ──────────────────────────────────────────────────
+  if (btnAutoDiscover) {
+    btnAutoDiscover.addEventListener("click", async () => {
+      btnAutoDiscover.disabled = true;
+      btnAutoDiscover.textContent = "🔍 搜寻中...";
+      showStatusBox("正在并发扫描局域网中的 ClipDown 手机端...", "info");
+
+      try {
+        const subnets = new Set();
+        const currVal = inputPhoneUrl.value || "";
+        const match = currVal.match(/(\d+\.\d+\.\d+)\.\d+/);
+        if (match) subnets.add(match[1]);
+
+        // 默认内置常见家用与手机热点 Wi-Fi 网段
+        subnets.add("192.168.1");
+        subnets.add("192.168.0");
+        subnets.add("192.168.43"); // Android 热点
+        subnets.add("172.20.10");  // iOS 热点
+        subnets.add("192.168.31"); // 小米路由
+        subnets.add("10.252.146"); // 校园网/办公网用户当前网段
+
+        let priorityList = [];
+        if (match) {
+          const lastOctet = parseInt(currVal.match(/\.(\d+)(?::|$)/)?.[1] || "100", 10);
+          for (let diff = 0; diff <= 20; diff++) {
+            if (lastOctet + diff <= 254) priorityList.push(`${match[1]}.${lastOctet + diff}`);
+            if (diff > 0 && lastOctet - diff >= 1) priorityList.push(`${match[1]}.${lastOctet - diff}`);
+          }
+        } else {
+          for (let i = 1; i <= 30; i++) {
+            priorityList.push(`192.168.1.${i}`);
+            priorityList.push(`192.168.0.${i}`);
+          }
+        }
+
+        async function probeHost(hostIp, port = 8765) {
+          const testUrl = `http://${hostIp}:${port}/api/status`;
+          const ctrl = new AbortController();
+          const tid = setTimeout(() => ctrl.abort(), 900);
+          try {
+            const resp = await fetch(testUrl, { signal: ctrl.signal });
+            clearTimeout(tid);
+            if (resp.ok) {
+              const data = await resp.json();
+              if (data && (data.app === "ClipDown" || data.status === "OK" || data.deviceName)) {
+                return { ip: hostIp, port, data };
+              }
+            }
+          } catch (_) {
+            clearTimeout(tid);
+          }
+          return null;
+        }
+
+        // 优先检查当前已输入的 IP
+        if (currVal) {
+          const parsed = currVal.replace(/^https?:\/\//, "").split(":")[0];
+          const res = await probeHost(parsed);
+          if (res) {
+            showStatusBox(`🎉 已连通手机: ${res.data.deviceName || res.ip}`, "success");
+            await testConnection(true);
+            return;
+          }
+        }
+
+        let found = null;
+        const batchSize = 10;
+        for (let i = 0; i < priorityList.length; i += batchSize) {
+          const batch = priorityList.slice(i, i + batchSize);
+          const results = await Promise.all(batch.map(ip => probeHost(ip)));
+          found = results.find(r => r !== null);
+          if (found) break;
+        }
+
+        if (found) {
+          const phoneUrl = `http://${found.ip}:${found.port}`;
+          inputPhoneUrl.value = phoneUrl;
+          await chrome.storage.local.set({ phoneUrl });
+          showStatusBox(`🎉 成功发现手机: ${found.data.deviceName || found.ip}！已自动填入地址`, "success");
+          inputPhonePin.focus();
+        } else {
+          showStatusBox("未能在当前网段探测到手机。建议使用「📷 扫码连接」或对准手机屏幕二维码", "error");
+        }
+      } catch (e) {
+        showStatusBox(`搜寻失败: ${e.message}`, "error");
+      } finally {
+        btnAutoDiscover.disabled = false;
+        btnAutoDiscover.textContent = "🔍 自动搜寻";
+      }
+    });
+  }
+
+  // 全局 Ctrl + V 粘贴识别 (支持直接粘贴手机截图或口令)
+  window.addEventListener("paste", async (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+
+    for (const item of items) {
+      if (item.type.startsWith("image/")) {
+        e.preventDefault();
+        const file = item.getAsFile();
+        if (file) {
+          showStatusBox("正在解析粘贴的图片二维码...", "info");
+          const text = await decodeQrFromBlob(file);
+          if (text) {
+            const pair = parsePairPayload(text);
+            if (pair) {
+              closeScannerModal();
+              applyAndConnectPair(pair, "📋 识别到截图二维码！");
+              return;
+            }
+          }
+          showStatusBox("粘贴的图片中未能识别到 ClipDown 配对二维码", "error");
+        }
+        return;
+      }
+    }
+
+    const pastedText = e.clipboardData.getData("text");
+    if (pastedText && (pastedText.includes("clipdown://pair") || (pastedText.includes(":8765") && pastedText.includes("http")))) {
+      const pair = parsePairPayload(pastedText);
+      if (pair) {
+        e.preventDefault();
+        applyAndConnectPair(pair, "⚡ 识别到配对口令！");
+      }
+    }
+  });
+
+  // ── 配对设置保存与连接测试 ─────────────────────────────────────────────────
   btnTestSaveSettings.addEventListener("click", async () => {
-    const url = inputPhoneUrl.value.trim().replace(/\/+$/, "");
-    const pin = inputPhonePin.value.trim();
+    const url = sanitizeUrl(inputPhoneUrl.value);
+    inputPhoneUrl.value = url;
+    const pin = inputPhonePin.value.trim().replace(/\D/g, "");
+    inputPhonePin.value = pin;
 
     if (!url) {
       showStatusBox("请输入手机服务地址", "error");
@@ -711,14 +1144,15 @@ document.addEventListener("DOMContentLoaded", async () => {
       } else {
         updateConnectionPill(false);
         if (showToast) {
-          showStatusBox(`❌ 连接失败: ${resp ? resp.error : "无法访问手机"}，请检查 IP 与 PIN`, "error");
+          const errDetail = resp ? (resp.error || "无法访问手机") : "服务无响应";
+          showStatusBox(`❌ 连接失败: ${errDetail}`, "error");
         }
         footerStatus.textContent = "未连接手机";
       }
     } catch (err) {
       updateConnectionPill(false);
       if (showToast) {
-        showStatusBox(`❌ 网络异常: ${err.message}`, "error");
+        showStatusBox(`❌ 网络异常: ${err.message || err}`, "error");
       }
       footerStatus.textContent = "连接异常";
     }

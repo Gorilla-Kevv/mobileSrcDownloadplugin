@@ -220,7 +220,7 @@
       if (HOST.includes("youtu.be")) {
         videoId = window.location.pathname.substring(1);
       } else if (window.location.pathname.includes("/shorts/")) {
-        videoId = window.location.pathname.split("/shorts/")[1].split("/")[0];
+        videoId = window.location.pathname.split("/shorts/")[1]?.split("/")[0] || null;
       } else {
         const params = new URLSearchParams(window.location.search);
         videoId = params.get("v");

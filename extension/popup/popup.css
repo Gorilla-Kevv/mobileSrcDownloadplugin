@@ -830,6 +830,147 @@ body {
   line-height: 1.4;
 }
 
+/* ── 快速配对工具栏 ── */
+.quick-pair-toolbar {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.btn-pair-action {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.btn-pair-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(147, 51, 234, 0.3);
+}
+
+.btn-pair-action:active {
+  transform: translateY(0);
+}
+
+/* ── 扫码配对高反差暗黑紫夜取景框 ── */
+.scanner-modal-content {
+  width: 360px;
+  max-width: 94vw;
+  background-color: var(--bg-secondary);
+  border: 1.5px solid var(--border-focus);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.95), 0 0 32px rgba(168, 85, 247, 0.3);
+}
+
+.scanner-viewport-wrapper {
+  position: relative;
+  width: 100%;
+  height: 230px;
+  background-color: #05030A;
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid var(--border-color);
+}
+
+#scanner-video {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.scanner-aim-box {
+  position: absolute;
+  width: 160px;
+  height: 160px;
+  pointer-events: none;
+}
+
+.aim-corner {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  border-color: #C084FC;
+  border-style: solid;
+}
+
+.aim-corner.tl { top: 0; left: 0; border-width: 3.5px 0 0 3.5px; }
+.aim-corner.tr { top: 0; right: 0; border-width: 3.5px 3.5px 0 0; }
+.aim-corner.bl { bottom: 0; left: 0; border-width: 0 0 3.5px 3.5px; }
+.aim-corner.br { bottom: 0; right: 0; border-width: 0 3.5px 3.5px 0; }
+
+.scanner-laser {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2.5px;
+  background: linear-gradient(90deg, transparent, #C084FC, #FFFFFF, #C084FC, transparent);
+  box-shadow: 0 0 12px #C084FC, 0 0 24px #9333EA;
+  animation: scanLaserAnim 2.2s cubic-bezier(0.45, 0.05, 0.55, 0.95) infinite alternate;
+}
+
+@keyframes scanLaserAnim {
+  0% { transform: translateY(0); opacity: 0.8; }
+  100% { transform: translateY(158px); opacity: 1; }
+}
+
+.scanner-fallback-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  text-align: center;
+  background-color: rgba(10, 6, 20, 0.96);
+  gap: 10px;
+  z-index: 10;
+}
+
+.scanner-status-icon {
+  font-size: 36px;
+  filter: drop-shadow(0 0 8px rgba(192, 132, 252, 0.5));
+}
+
+.scanner-status-text {
+  font-size: 12.5px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
+.scanner-tip-text {
+  margin: 12px 0;
+  font-size: 12px;
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.scanner-tip-text strong {
+  color: var(--brand-glow);
+  font-weight: 700;
+}
+
+.scanner-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
 /* ── 电脑端下载目录管理与实时路径指示样式 ── */
 .download-path-bar {
   display: flex;

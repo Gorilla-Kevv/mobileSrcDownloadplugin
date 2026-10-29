@@ -83,12 +83,31 @@ async function checkAllPlatformCookies() {
   return result;
 }
 
+// 强力清洗与规范化手机局域网 URL（根除空格、全角冒号与格式错误）
+function sanitizePhoneUrl(rawUrl) {
+  if (!rawUrl) return "http://192.168.1.108:8765";
+  let url = String(rawUrl).trim();
+  // 替换全角冒号、全角句号
+  url = url.replace(/：/g, ":").replace(/。/g, ".");
+  // 移除所有内部空白字符（包括空格、制表符、零宽字符）
+  url = url.replace(/\s+/g, "");
+  // 自动补全 http://
+  if (!/^https?:\/\//i.test(url)) {
+    url = "http://" + url;
+  }
+  // 移除末尾多余斜杠
+  url = url.replace(/\/+$/, "");
+  return url;
+}
+
 // 获取配对设置
 async function getPairingConfig() {
   const data = await chrome.storage.local.get(["phoneUrl", "phonePin", "autoSync"]);
+  const cleanUrl = sanitizePhoneUrl(data.phoneUrl);
+  const cleanPin = String(data.phonePin || "").trim().replace(/\s+/g, "");
   return {
-    phoneUrl: (data.phoneUrl || "http://192.168.1.108:8765").replace(/\/+$/, ""),
-    phonePin: data.phonePin || "",
+    phoneUrl: cleanUrl,
+    phonePin: cleanPin,
     autoSync: !!data.autoSync
   };
 }
@@ -96,7 +115,8 @@ async function getPairingConfig() {
 // 局域网发送 HTTP 请求到手机
 async function fetchFromPhone(endpoint, options = {}) {
   const { phoneUrl, phonePin } = await getPairingConfig();
-  const url = `${phoneUrl}${endpoint}`;
+  const safeEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  const url = `${phoneUrl}${safeEndpoint}`;
 
   const headers = {
     "Content-Type": "application/json",
@@ -104,22 +124,34 @@ async function fetchFromPhone(endpoint, options = {}) {
     ...(options.headers || {})
   };
 
-  const resp = await fetch(url, {
-    ...options,
-    headers,
-    signal: AbortSignal.timeout(8000)
-  });
+  try {
+    const resp = await fetch(url, {
+      ...options,
+      headers,
+      signal: AbortSignal.timeout(8000)
+    });
 
-  if (!resp.ok) {
-    let errMsg = `HTTP ${resp.status} ${resp.statusText}`;
-    try {
-      const errJson = await resp.json();
-      if (errJson && errJson.message) errMsg = errJson.message;
-    } catch (_) {}
-    throw new Error(errMsg);
+    if (!resp.ok) {
+      let errMsg = `HTTP ${resp.status} ${resp.statusText}`;
+      try {
+        const errJson = await resp.json();
+        if (errJson && errJson.message) errMsg = errJson.message;
+      } catch (_) {}
+      throw new Error(errMsg);
+    }
+
+    return await resp.json();
+  } catch (err) {
+    let errStr = err.message || (err.name ? `${err.name}` : String(err));
+    if (err.name === "TimeoutError") {
+      errStr = "请求超时：手机未开启局域网同步服务，或电脑与手机不在同一 Wi-Fi";
+    } else if (errStr.includes("Failed to fetch") || errStr.includes("NetworkError")) {
+      errStr = "连接失败：请确认手机 ClipDown 已开启同步、IP 地址正确且处于同一局域网";
+    } else if (errStr.includes("Failed to parse URL")) {
+      errStr = `服务地址格式有误: ${url}`;
+    }
+    throw new Error(errStr);
   }
-
-  return await resp.json();
 }
 
 // ── PC 电脑端原生直接下载与路径配置引擎 ────────────────────────────────────

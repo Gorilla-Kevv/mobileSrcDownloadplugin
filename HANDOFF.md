@@ -142,5 +142,5 @@
 - 阶段 30（release 装机冒烟）：release 装机成功、R8 无运行时崩溃；下载闭环受模拟器出口 IP 限制未完成（环境，非回归），下载引擎由 30 例单测兜底。踩坑 14（`adb shell cat` 二进制 CRLF 翻译损坏 DataStore proto）
 - 验收标准：`assembleDebug`/`assembleRelease` 全绿 + `:parser:test`（105）+ `:downloader:testDebugUnitTest`（40）+ `:app:testDebugUnitTest`（7）+ 模拟器/真机关键链路实测 + release 冒烟
 - 下一步：①**真机复验阶段 61 内置浏览器一键登录与风控解除** ②**IG 主页用有效 Cookie 实测校准**（`ig_profile_api.json`/`ig_profile_page.html` 目前是结构样本，需换成真响应；严守坑 13 纪律 + 坑 28 不复用会话）③**XHS 重新导出 Cookie 后复验主页回归**④B 站/微博主页接入（免登录，可用来验证多平台主页框架；B 站项目内已有 WBI 签名代码）⑤加载更多效率优化（透传 `cursor`，避免每轮从首屏重扫；或放宽 `maxPosts`）⑥IG 风控恢复后复测阶段 25 ⑦keystore 备份提醒：`app/signing/clipdown.jks`（密码 clipdown2026）务必备份
-- 文档：PROGRESS.md 全阶段记录（阶段 1-61，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
-- 本次文档更新时间：10.30 00:55 [BY Antigravity]
+- 文档：PROGRESS.md 全阶段记录（阶段 1-72，头部进度看板，含旧编号对照，阶段条目严格升序）；PLAN.md（阶段 14-18 计划，已全部实现）；docs/06（博主主页功能设计）
+- 本次文档更新时间：10.30 01:20 [BY Antigravity]

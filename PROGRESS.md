@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 71 已完成**：Instagram 智能点赞监控下载架构 · 点赞帖子自动捕获 · 帖子首图缩略图多选 · 默认全选与历史下载去重（扩展升级 v1.3.0）
+- 当前正在开发任务：**阶段 72 已完成**：局域网配对全面支持扫码与免输秒连 · 扩展报错根除 · 跨端体验全面升级（扩展升级 v1.4.0）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
@@ -1565,3 +1565,41 @@
   - Android 单元测试 **160 例全绿**；
   - 扩展无任何语法报错。
 - 本次文档更新时间：10.30 00:55
+
+
+
+## 阶段 72 局域网配对全面支持扫码与免输秒连 · 扩展报错根除 · 跨端体验全面升级 (v1.4.0) [计划时间：10.30 01:05 BY Antigravity][完成时间：10.30 01:20 BY Antigravity]
+- 已完成：
+  1. **手机端自包含二维码生成器与一键口令复制 (`app/src/main/java/com/clipdown/app/sync/QrCodeUtil.kt`, `SyncPairingDialog.kt`)**：
+     - 纯 Kotlin 手写 Byte 模式 + Reed-Solomon 纠错码 QR 生成引擎，体积 <3KB，零外部第三方 JAR 依赖，维持 2MB APK 极限红线；
+     - 手机端配对弹窗居中展示 160dp 白底高反差二维码（`clipdown://pair?url=http://<IP>:<PORT>&pin=<PIN>`）；
+     - 新增「📋 复制一键配对口令」按钮，手机端一键复制，电脑端秒连。
+  2. **电脑端 Chromium 扩展免输配对体系 (`extension/popup/popup.html`, `popup.css`, `popup.js`, `manifest.json`)**：
+     - 卡片 B 新增「📷 扫码连接」、「⚡ 粘贴口令」、「🔍 自动搜寻」3 大快捷入口；
+     - 扫码弹窗 `modal-scanner`：HTML5 摄像头实时取景（高对比度紫夜准星激光动效）+ 原生 `BarcodeDetector` 与离线 `jsQR` 双轨解码；
+     - 全局与弹窗内无缝 Ctrl+V：支持直接粘贴手机截屏图片或剪贴板深层口令（`clipdown://pair?...`），一键秒连；
+     - 局域网智能搜寻：并发探测同网段 ClipDown 实例并自动填入；
+     - 扩展升级至 v1.4.0。
+  3. **彻底根除用户反馈的 4 项扩展错误 (`service-worker.js`, `content-script.js`, `popup.js`)**：
+     - `Failed to parse URL from http://10.252.146.198: 8765/api/status`：彻底剔除空格与全角符号，各层 `sanitizeUrl` 强力清洗；
+     - `Uncaught TypeError: Cannot read properties of undefined (reading '1')`：YouTube Shorts split 安全可选链式解包；
+     - `Executing inline event handler violates CSP directive`：清除 `renderTasks` 中的内联 `onerror`，转为 JS 动态事件监听；
+     - `Action error: TEST_CONNECTION [object DOMException]`：超时与网络异常详细分诊与清晰的人类友好中文提示。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/sync/QrCodeUtil.kt` (新建)
+  - `app/src/test/java/com/clipdown/app/sync/QrCodeUtilTest.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/ui/components/SyncPairingDialog.kt`
+  - `extension/manifest.json` (升级至 1.4.0)
+  - `extension/background/service-worker.js`
+  - `extension/content/content-script.js`
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.css`
+  - `extension/popup/popup.js`
+  - `extension/lib/jsqr.js` (新建)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - Android 单元测试 **160+ 例全绿**；
+  - APK Release 打包成功，体积 **1.91MB**（严守 2.0MB 红线）；
+  - 扩展全量 JS 语法通过，0 编译错误。
+- 本次文档更新时间：10.30 01:20

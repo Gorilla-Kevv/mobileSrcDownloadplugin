@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ClipDown 跨端助手",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "description": "ClipDown 电脑端官方扩展：专注 X、Instagram、YouTube、小红书的高速媒体直接下载与解析，跨端双向同步下载记录、一键秒传网页登录态 Cookie（突破手机端风控）。",
   "permissions": [
     "cookies",

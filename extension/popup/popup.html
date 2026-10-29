@@ -265,16 +265,29 @@
             <span class="pill pill-neutral">跨端同步</span>
           </div>
 
+          <!-- 免手动输入：扫码/粘贴/自动搜寻 3 大极速配对工具 -->
+          <div class="quick-pair-toolbar">
+            <button id="btn-scan-qr" class="btn btn-primary btn-sm btn-pair-action" title="打开摄像头扫码，或按 Ctrl+V 粘贴手机截图">
+              📷 扫码连接
+            </button>
+            <button id="btn-paste-pairing" class="btn btn-secondary btn-sm btn-pair-action" title="一键识别剪贴板中的配对口令或服务地址">
+              ⚡ 粘贴口令
+            </button>
+            <button id="btn-auto-discover" class="btn btn-secondary btn-sm btn-pair-action" title="并发扫描局域网，自动寻找手机端 ClipDown">
+              🔍 自动搜寻
+            </button>
+          </div>
+
           <div class="form-group">
             <label for="input-phone-url">手机服务地址 (局域网 IP & 端口)</label>
             <input type="text" id="input-phone-url" placeholder="例如: http://192.168.1.108:8765" />
-            <div class="input-hint">在手机 ClipDown「设置」→「跨端同步」查看</div>
+            <div class="input-hint">扫码或粘贴口令后自动填入，亦可在手机「跨端同步」查看</div>
           </div>
 
           <div class="form-group">
             <label for="input-phone-pin">6 位安全配对码 (PIN)</label>
             <input type="text" id="input-phone-pin" maxlength="6" placeholder="例如: 839201" />
-            <div class="input-hint">手机屏幕显示的 6 位随机 PIN 码</div>
+            <div class="input-hint">扫码或粘贴口令后自动填入，或输入手机屏幕显示的 6 位随机 PIN</div>
           </div>
 
           <div class="form-actions">
@@ -286,11 +299,12 @@
           <div id="settings-status-box" class="status-box hidden"></div>
 
           <div class="guide-box">
-            <div class="guide-title">📖 跨端配对说明：</div>
+            <div class="guide-title">📖 极速连接方式（免输 IP）：</div>
             <ol class="guide-steps">
-              <li>电脑与手机连接至<strong>同一个 Wi-Fi 局域网</strong>；</li>
-              <li>在手机 ClipDown「设置」开启「局域网同步服务」；</li>
-              <li>将手机显示的地址与 PIN 码填入，点击测试连接。</li>
+              <li><strong>摄像头扫码</strong>：点击上方「📷 扫码连接」，直接对准手机屏幕二维码；</li>
+              <li><strong>截屏粘贴</strong>：微信/截图手机屏幕后，直接在此处按 <strong>Ctrl + V</strong> 即可自动解析；</li>
+              <li><strong>一键口令</strong>：手机弹窗点击「复制一键配对口令」，电脑点击「⚡ 粘贴口令」秒连；</li>
+              <li><strong>局域网搜寻</strong>：同一 Wi-Fi 下点击「🔍 自动搜寻」，自动嗅探手机 IP。</li>
             </ol>
           </div>
         </div>
@@ -300,10 +314,46 @@
     <!-- 底部状态条 -->
     <footer class="footer">
       <span id="footer-status">就绪</span>
-      <span class="version">v1.3.0</span>
+      <span class="version">v1.4.0</span>
     </footer>
 
-    <!-- 弹窗：二维码扫码导入 -->
+    <!-- 弹窗 1：摄像头/截屏扫码配对 -->
+    <div id="modal-scanner" class="modal hidden">
+      <div class="modal-content scanner-modal-content">
+        <div class="modal-header">
+          <span class="modal-title">📷 扫码连接手机 ClipDown</span>
+          <button id="btn-close-scanner" class="btn-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="scanner-viewport-wrapper" id="scanner-dropzone">
+            <video id="scanner-video" playsinline muted></video>
+            <canvas id="scanner-canvas" style="display:none;"></canvas>
+            <div class="scanner-aim-box">
+              <div class="aim-corner tl"></div>
+              <div class="aim-corner tr"></div>
+              <div class="aim-corner bl"></div>
+              <div class="aim-corner br"></div>
+              <div class="scanner-laser"></div>
+            </div>
+            <div id="scanner-camera-status" class="scanner-fallback-message hidden">
+              <span class="scanner-status-icon">📷</span>
+              <span class="scanner-status-text" id="scanner-status-text">未检测到可用摄像头</span>
+            </div>
+          </div>
+          <div class="scanner-tip-text">
+            <span>对准手机二维码；支持直接 <strong>Ctrl + V</strong> 粘贴手机截图</span>
+          </div>
+          <div class="scanner-actions">
+            <button id="btn-upload-qr-img" class="btn btn-secondary btn-sm btn-block">
+              📁 选择二维码图片 / 截图
+            </button>
+            <input type="file" id="input-qr-file" accept="image/*" style="display:none;" />
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 弹窗 2：离线二维码生成 -->
     <div id="modal-qr" class="modal hidden">
       <div class="modal-content">
         <div class="modal-header">
@@ -328,6 +378,7 @@
     </div>
   </div>
 
+  <script src="../lib/jsqr.js"></script>
   <script src="../lib/qrcode.min.js"></script>
   <script src="popup.js"></script>
 </body>
