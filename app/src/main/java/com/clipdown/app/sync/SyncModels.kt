@@ -59,6 +59,20 @@ data class SyncTasksBatchRequest(
 )
 
 @Serializable
+data class SyncBatchEnqueueItem(
+    val url: String,
+    val title: String? = null,
+    val coverUrl: String? = null
+)
+
+@Serializable
+data class SyncBatchEnqueueRequest(
+    val urls: List<String> = emptyList(),
+    val items: List<SyncBatchEnqueueItem> = emptyList()
+)
+
+
+@Serializable
 data class SyncApiResponse(
     val success: Boolean,
     val message: String,

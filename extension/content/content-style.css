@@ -490,3 +490,78 @@
   font-weight: 700;
 }
 
+/* ── 全页面资源采集与下载专享样式 ── */
+.clipdown-harvester-bar {
+  margin-bottom: 2px;
+}
+
+.clipdown-scan-btn {
+  width: 100%;
+  padding: 8px 10px;
+  background: linear-gradient(135deg, #7C3AED, #9333EA);
+  border: 1.5px solid #C084FC;
+  border-radius: 6px;
+  color: #FFFFFF;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(147, 51, 234, 0.35);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+}
+
+.clipdown-scan-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 18px rgba(168, 85, 247, 0.5);
+}
+
+.clipdown-scan-btn.clipdown-btn-scanning {
+  background: linear-gradient(135deg, #DC2626, #EF4444);
+  border-color: #FCA5A5;
+  animation: scanPulse 1.2s infinite alternate;
+}
+
+@keyframes scanPulse {
+  0% { box-shadow: 0 0 10px rgba(239, 68, 68, 0.4); }
+  100% { box-shadow: 0 0 22px rgba(239, 68, 68, 0.8); }
+}
+
+.clipdown-filter-chips {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+}
+
+.clipdown-filter-chip {
+  background: #170F2B;
+  border: 1px solid #432E6A;
+  color: #CBD5E1;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.clipdown-filter-chip:hover {
+  color: #FFFFFF;
+  border-color: #A855F7;
+}
+
+.clipdown-filter-chip.active {
+  background: #7C3AED;
+  border-color: #C084FC;
+  color: #FFFFFF;
+  font-weight: 800;
+}
+
+.clipdown-sel-actions {
+  display: flex;
+  gap: 4px;
+}
+
+

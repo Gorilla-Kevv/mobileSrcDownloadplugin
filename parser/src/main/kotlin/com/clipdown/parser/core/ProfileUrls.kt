@@ -15,7 +15,7 @@ enum class LinkKind {
 }
 
 /** 主页识别结果 */
-data class ProfileMatch(val platform: Platform, val handle: String)
+data class ProfileMatch(val platform: Platform, val handle: String, val tab: String? = null)
 
 /**
  * 主页链接识别。
@@ -94,15 +94,28 @@ object ProfileUrls {
                 else -> null
             }
 
-            // Instagram / X：/<handle>（单段且不是保留段）
-            Platform.INSTAGRAM, Platform.X ->
-                if (segments.size == 1 &&
+            // Instagram / X：/<handle>（单段且不是保留段）或 /<handle>/likes, /<handle>/media, /<handle>/reels
+            Platform.INSTAGRAM, Platform.X -> {
+                val allowedSubTabs = setOf("likes", "media", "with_replies", "highlights", "reels", "tagged", "saved")
+                when {
+                    segments.size == 1 &&
                     segments[0].lowercase() !in RESERVED &&
                     HANDLE.matches(segments[0]) &&
-                    !segments[0].startsWith("@")
-                ) {
-                    ProfileMatch(platform, segments[0])
-                } else null
+                    !segments[0].startsWith("@") -> ProfileMatch(platform, segments[0])
+
+                    segments.size == 2 &&
+                    segments[0].lowercase() !in RESERVED &&
+                    HANDLE.matches(segments[0]) &&
+                    !segments[0].startsWith("@") &&
+                    segments[1].lowercase() in allowedSubTabs ->
+                        ProfileMatch(platform, segments[0], segments[1].lowercase())
+
+                    platform == Platform.INSTAGRAM && path.contains("interactions/likes") ->
+                        ProfileMatch(platform, "me", "likes")
+
+                    else -> null
+                }
+            }
 
             else -> null
         }

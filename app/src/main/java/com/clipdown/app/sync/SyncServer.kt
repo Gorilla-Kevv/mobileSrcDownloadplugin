@@ -191,6 +191,10 @@ class SyncServer(
                     handleEnqueue(output, body)
                 }
 
+                path == "/api/enqueue_batch" && method == "POST" -> {
+                    handleEnqueueBatch(output, body)
+                }
+
                 else -> {
                     sendJson(output, 404, "Not Found", json.encodeToString(
                         SyncApiResponse(success = false, message = "未找到接口: $path")
@@ -385,6 +389,44 @@ class SyncServer(
         } catch (e: Exception) {
             sendJson(output, 400, "Bad Request", json.encodeToString(
                 SyncApiResponse(success = false, message = "处理推送下载失败: ${e.message}")
+            ))
+        }
+    }
+
+    private fun handleEnqueueBatch(output: OutputStream, body: String) {
+        if (body.isBlank()) {
+            sendJson(output, 400, "Bad Request", json.encodeToString(
+                SyncApiResponse(success = false, message = "请求体为空")
+            ))
+            return
+        }
+
+        try {
+            val req = json.decodeFromString<SyncBatchEnqueueRequest>(body)
+            val targets = mutableListOf<String>()
+            targets.addAll(req.urls.filter { it.isNotBlank() })
+            targets.addAll(req.items.map { it.url }.filter { it.isNotBlank() })
+            val distinctUrls = targets.distinct()
+
+            if (distinctUrls.isEmpty()) {
+                sendJson(output, 400, "Bad Request", json.encodeToString(
+                    SyncApiResponse(success = false, message = "待下载链接列表为空")
+                ))
+                return
+            }
+
+            var enqueued = 0
+            distinctUrls.forEach { url ->
+                val detected = LinkCenter.submit(url.trim(), LinkSource.PC_SYNC, force = true)
+                if (detected != null) enqueued++
+            }
+
+            sendJson(output, 200, "OK", json.encodeToString(
+                SyncApiResponse(success = true, message = "成功接收并已将 $enqueued/${distinctUrls.size} 篇全页面作品加入手机下载队列")
+            ))
+        } catch (e: Exception) {
+            sendJson(output, 400, "Bad Request", json.encodeToString(
+                SyncApiResponse(success = false, message = "批量推送处理失败: ${e.message}")
             ))
         }
     }

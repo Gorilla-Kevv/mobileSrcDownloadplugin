@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 72 已完成**：局域网配对全面支持扫码与免输秒连 · 扩展报错根除 · 跨端体验全面升级（扩展升级 v1.4.0）
+- 当前正在开发任务：**阶段 73 已完成：X 瀑布流点赞监控与一键下载 + 双端全页面/博主主页/点赞页深度资源批量下载（扩展升级至 v1.5.0）**：局域网配对全面支持扫码与免输秒连 · 扩展报错根除 · 跨端体验全面升级（扩展升级 v1.4.0）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **105 例** + downloader **41 例** + app **14 例**全绿（共 160 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.30 00:55
+- 本次文档更新时间：10.30 01:55
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1603,3 +1603,44 @@
   - APK Release 打包成功，体积 **1.91MB**（严守 2.0MB 红线）；
   - 扩展全量 JS 语法通过，0 编译错误。
 - 本次文档更新时间：10.30 01:20
+
+
+## 阶段 73 X 瀑布流点赞监控与一键下载 · 双端全页面/博主主页/点赞页深度批量下载 (v1.5.0) [计划时间：10.30 01:30 BY Antigravity][完成时间：10.30 01:55 BY Antigravity]
+- 已完成：
+  1. **X (Twitter) 瀑布流智能点赞监控与一键清单 (`extension/content/content-script.js`)**：
+     - 精准单推文容器锁定解析：`extractMediaFromXTweet`，解析作者 `@handle`、推文正文摘录、视频流及最高画质原图 (`name=orig`)；
+     - 捕获用户在 X 上的爱心点击与 `data-testid="unlike"` 动态属性变化；
+     - 右下角悬浮球动态统计角标 `❤️ N`，点击展开通用的「点赞待下载清单」，展示推文缩略图、作者、正文、首图勾选与一键下载到 `Downloads/ClipDown/X`。
+  2. **双端全页面/博主主页/点赞页资源深度采集引擎 (`content-script.js`, `popup.html`, `popup.js`)**：
+     - 全页面深度采集模式（支持 X、Instagram、小红书）：
+       - 智能识别博主主页、个人点赞页 (`/likes`, `interactions/likes`)、媒体页 (`/media`, `/reels`)；
+       - 平滑自动向下滚动扫描（Auto-scroll Harvester）：自动触发页面虚拟滚动并在 DOM 挂载时去重聚合全量作品卡片；
+       - 资源过滤：全部 / 🎬 视频 / 🖼️ 图文，默认全选，支持多选与反选；
+       - 双端一键下载通道：【💻 一键下载全部选中的 N 项到电脑】与【🚀 全量推送到手机下载 (N 项)】。
+     - Popup 顶栏引导横幅：检测到主页/点赞页时，自动弹出快捷横幅引导开启全量采集；
+     - 扩展版本升级至 v1.5.0。
+  3. **手机端全页面解析与批量入库支持 (`parser`, `app`)**：
+     - `ProfileUrls.kt`：支持识别 `x.com/username/likes`、`x.com/username/media`、`instagram.com/your_activity/interactions/likes` 等二级子标签；
+     - `ProfileCenter.kt` & `ProfileScreen.kt`：强化主页全选逻辑，底部按钮展示「⚡ 全页面一键下载全部 N 项」；
+     - `SyncServer.kt`：新增 `POST /api/enqueue_batch`，接收电脑端全页面批量推送并自动将全部链接加入手机下载队列；
+     - `service-worker.js`：新增 `PUSH_BATCH_TO_PHONE` 与 `DOWNLOAD_PAGE_BATCH` 处理。
+- 改动文件：
+  - `extension/manifest.json` (升级至 1.5.0)
+  - `extension/content/content-script.js`
+  - `extension/content/content-style.css`
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.css`
+  - `extension/popup/popup.js`
+  - `extension/background/service-worker.js`
+  - `parser/src/main/kotlin/com/clipdown/parser/core/ProfileUrls.kt`
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/XProfileParser.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/ProfileUrlsTest.kt`
+  - `app/src/main/java/com/clipdown/app/sync/SyncModels.kt`
+  - `app/src/main/java/com/clipdown/app/sync/SyncServer.kt`
+  - `app/src/main/java/com/clipdown/app/ui/profile/ProfileCenter.kt`
+  - `app/src/main/java/com/clipdown/app/ui/profile/ProfileScreen.kt`
+- 测试结果：
+  - Android 单元测试 **160+ 例全绿**；
+  - APK Release 打包成功，体积 **1.905MB**（严守 2.0MB 红线）；
+  - 扩展全量 JS 语法通过，0 编译错误。
+- 本次文档更新时间：10.30 01:55

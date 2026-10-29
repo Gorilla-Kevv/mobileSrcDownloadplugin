@@ -140,8 +140,9 @@ fun ProfileScreen() {
                         NoticeBar(it, Tone.Brand)
                         VSpace(AppTheme.spacing.sm)
                     }
+                    val isAll = loaded.selected.size >= loaded.visible.size
                     PrimaryButton(
-                        text = "下载所选 ${loaded.selected.size} 项",
+                        text = if (isAll) "⚡ 全页面一键下载全部 ${loaded.selected.size} 项" else "下载所选 ${loaded.selected.size} 项",
                         icon = Icons.Default.Download,
                         modifier = Modifier.fillMaxWidth(),
                         enabled = loaded.progress == null,

@@ -502,6 +502,58 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           break;
         }
 
+        case "PUSH_BATCH_TO_PHONE": {
+          const posts = msg.posts || [];
+          const res = await fetchFromPhone("/api/enqueue_batch", {
+            method: "POST",
+            body: JSON.stringify({
+              urls: posts.map(p => p.url).filter(Boolean),
+              items: posts.map(p => ({
+                url: p.url,
+                title: p.title || p.text || p.author,
+                coverUrl: p.coverUrl
+              }))
+            })
+          });
+          sendResponse({ success: true, data: res });
+          break;
+        }
+
+        case "DOWNLOAD_PAGE_BATCH": {
+          const { posts = [], platform = "Batch", subfolderName } = msg;
+          const results = [];
+          let savedFolder = "";
+          for (let i = 0; i < posts.length; i++) {
+            const post = posts[i];
+            const authorPrefix = (post.author || "media").replace(/[^a-zA-Z0-9_\u4e00-\u9fa5]/g, "").slice(0, 20);
+            const postItems = post.items || [];
+            if (postItems.length > 0) {
+              for (let j = 0; j < postItems.length; j++) {
+                const it = postItems[j];
+                const filename = `${authorPrefix}_${post.shortcode || post.id || i}_${j + 1}.${it.ext || "jpg"}`;
+                try {
+                  const r = await downloadToPc(it.url, filename, subfolderName || platform, false);
+                  savedFolder = r.folder;
+                  results.push(r);
+                } catch (e) {
+                  console.warn("Batch item download failed", it.url, e);
+                }
+              }
+            } else if (post.coverUrl) {
+              const filename = `${authorPrefix}_${post.shortcode || post.id || i}.jpg`;
+              try {
+                const r = await downloadToPc(post.coverUrl, filename, subfolderName || platform, false);
+                savedFolder = r.folder;
+                results.push(r);
+              } catch (e) {
+                console.warn("Cover download failed", post.coverUrl, e);
+              }
+            }
+          }
+          sendResponse({ success: true, count: results.length, folder: savedFolder });
+          break;
+        }
+
         default:
           sendResponse({ success: false, error: "未知操作" });
       }

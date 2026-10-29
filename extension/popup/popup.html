@@ -43,6 +43,18 @@
     <main class="content">
       <!-- 标签 1：快捷嗅探与电脑直接下载（核心重点功能） -->
       <section id="tab-sniffer" class="tab-pane active">
+        <!-- 全页面/主页采集快捷引导条 -->
+        <div id="page-harvester-banner" class="harvester-banner hidden">
+          <div class="banner-content">
+            <span class="banner-icon">📦</span>
+            <div class="banner-text">
+              <div class="banner-title" id="harvester-banner-title">检测到主页 / 点赞页</div>
+              <div class="banner-sub">支持无限瀑布流自动滚动扫描与双端全量下载</div>
+            </div>
+          </div>
+          <button id="btn-trigger-page-harvest" class="btn btn-sm btn-primary">⚡ 开启全页采集</button>
+        </div>
+
         <!-- 动态媒体卡片 -->
         <div id="media-card-container">
           <div class="media-card" id="active-media-card">
@@ -314,7 +326,7 @@
     <!-- 底部状态条 -->
     <footer class="footer">
       <span id="footer-status">就绪</span>
-      <span class="version">v1.4.0</span>
+      <span class="version">v1.5.0</span>
     </footer>
 
     <!-- 弹窗 1：摄像头/截屏扫码配对 -->

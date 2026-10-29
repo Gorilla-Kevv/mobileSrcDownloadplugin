@@ -91,12 +91,21 @@ class XProfileParser : ProfileParser {
         }
         ctx.log(id, "X 主页：$screenName 推文=${list.size} 条目=${entries.size}")
 
+        val isLikes = url.contains("/likes")
+        val isMedia = url.contains("/media")
+        val rawName = user.str("name") ?: handle
+        val subTitle = when {
+            isLikes -> "$rawName 的点赞"
+            isMedia -> "$rawName 的媒体"
+            else -> rawName
+        }
+
         return ProfileResult(
             platform = platform,
             resolverId = id,
             sourceUrl = url,
             userId = user.str("id_str"),
-            nickname = user.str("name"),
+            nickname = subTitle,
             // _normal 只有 48px，换 400px 档做信息卡头像
             avatar = (user.str("profile_image_url_https") ?: user.str("profile_image_url"))
                 ?.replace("_normal.", "_400x400."),

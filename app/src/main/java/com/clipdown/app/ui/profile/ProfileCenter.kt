@@ -26,8 +26,8 @@ sealed interface ProfileUiState {
 
     data class Loaded(
         val result: ProfileResult,
-        /** 已勾选的笔记 id */
-        val selected: Set<String> = emptySet(),
+        /** 已勾选的笔记 id，默认全选便于用户全页面直接一键下载 */
+        val selected: Set<String> = result.posts.map { it.id }.toSet(),
         /** 类型筛选：null = 全部 */
         val filter: PostKind? = null,
         /** 批量下载进行中的进度文案 */

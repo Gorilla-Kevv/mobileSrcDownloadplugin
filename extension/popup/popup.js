@@ -23,6 +23,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   const manualUrlInput = document.getElementById("manual-url-input");
   const btnManualResolve = document.getElementById("btn-manual-resolve");
 
+  // 全页面采集引导横幅元素
+  const pageHarvesterBanner = document.getElementById("page-harvester-banner");
+  const harvesterBannerTitle = document.getElementById("harvester-banner-title");
+  const btnTriggerPageHarvest = document.getElementById("btn-trigger-page-harvest");
+
   // 下载路径指示与快速更改元素
   const currentDownloadPathDisplay = document.getElementById("current-download-path-display");
   const btnQuickConfigPath = document.getElementById("btn-quick-config-path");
@@ -200,6 +205,38 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderTasks(cachedTasks);
   sniffCurrentTabMedia();
 
+  function isProfileOrLikesUrl(url) {
+    if (!url) return false;
+    try {
+      const u = new URL(url);
+      const host = u.hostname.toLowerCase();
+      const path = u.pathname.toLowerCase();
+      if (host.includes("x.com") || host.includes("twitter.com")) {
+        const parts = path.split("/").filter(Boolean);
+        return parts.length >= 1 && !["home", "explore", "notifications", "messages", "search", "settings", "i"].includes(parts[0]);
+      }
+      if (host.includes("instagram.com")) {
+        if (url.includes("interactions/likes") || url.includes("/saved/")) return true;
+        const parts = path.split("/").filter(Boolean);
+        return parts.length >= 1 && !["explore", "direct", "stories", "accounts"].includes(parts[0]);
+      }
+      if (host.includes("xiaohongshu.com")) {
+        return path.includes("/user/profile/");
+      }
+    } catch (_) {}
+    return false;
+  }
+
+  if (btnTriggerPageHarvest) {
+    btnTriggerPageHarvest.addEventListener("click", async () => {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.id) {
+        chrome.tabs.sendMessage(tab.id, { action: "OPEN_HARVESTER_MODE" });
+        window.close();
+      }
+    });
+  }
+
   // ── 核心：X / Instagram / YouTube / 小红书 深度媒体嗅探与下载 ───────────────
   async function sniffCurrentTabMedia() {
     try {
@@ -208,6 +245,18 @@ document.addEventListener("DOMContentLoaded", async () => {
 
       mediaUrlText.textContent = tab.url;
       mediaTitleText.textContent = tab.title || "正在嗅探网页媒体...";
+
+      // 检测主页/点赞页快捷横幅
+      if (pageHarvesterBanner && isProfileOrLikesUrl(tab.url)) {
+        pageHarvesterBanner.classList.remove("hidden");
+        if (tab.url.includes("/likes") || tab.url.includes("interactions/likes")) {
+          harvesterBannerTitle.textContent = "检测到点赞页，支持全量下载";
+        } else {
+          harvesterBannerTitle.textContent = "检测到博主主页，支持全量下载";
+        }
+      } else if (pageHarvesterBanner) {
+        pageHarvesterBanner.classList.add("hidden");
+      }
 
       // 向当前标签页 content script 发送嗅探指令
       let inpageData = null;
