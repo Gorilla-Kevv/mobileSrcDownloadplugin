@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 63 已完成**：内置浏览器终极加固 · 真机动态 Chrome 原生 UA 杜绝指纹异常 · 多窗口协同与 2FA 弹窗支持 · 一键清理重置风控缓存 · 600ms 高灵敏嗅探 · Via 浏览器手机免电脑提取指引（已发布正式版 v1.1.22 / versionCode 27）
-- 下一阶段任务：真机走查 v1.1.22（验证 Instagram 内置浏览器登录无阻、两步验证直通个人主页并自动捕获有效 sessionid，或通过 Via 浏览器一键粘贴导入）
+- 当前正在开发任务：**阶段 64 已完成**：通知栏下载进度断续与下载完成后仍显示正在下载中双重根因彻底根除 · 协程采样取消安全 join 杜绝竞态覆写 · 跨渠道通知注销与 ongoing/progress 彻底清除 · TaskDatabase 进度状态终态防护 · 前台服务超时优雅收口与孤儿自愈（已发布正式版 v1.1.23 / versionCode 28）
+- 下一阶段任务：真机走查 v1.1.23（验证通知栏下载时实时展示进度与合并状态，下载完成后立即切换完成或优雅消除，绝无残留）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **105 例** + downloader **40 例** + app **7 例**全绿（共 152 例）
+- 测试基线：parser **105 例** + downloader **41 例** + app **7 例**全绿（共 153 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.26 00:15
+- 本次文档更新时间：10.29 18:15
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1266,6 +1266,48 @@
   - `assembleRelease` 成功构建，Release APK 体积 1.89 MB (1,986,141 字节)，严格控制在 2MB 以内；
   - 成功发布 GitHub Release 正式版 **v1.1.22 (versionCode 27)** 并更新 `update.json` 清单。
 - 本次文档更新时间：10.26 00:15
+
+## 阶段 64 通知栏下载进度断续与下载完成后仍显示正在下载中双重根因彻底根除 · 协程采样取消安全 join · 跨渠道通知注销与 ongoing/progress 彻底清除 · TaskDatabase 终态防护 · 前台服务超时优雅收口与孤儿自愈 [计划时间：10.29 18:05 BY Antigravity][完成时间：10.29 18:15 BY Antigravity]
+- 用户反馈与痛点本质诊断：
+  - 用户反馈：“通知栏有时候会显示下载进度，但是经常下载完了还在显示正在下载中”；
+  - **根因深度复盘与定位**：
+    1. **为什么“有时候会显示下载进度”？**
+       - `reportLoop` 采样协程在启动时首先执行了 `delay(500)`；
+       - 对于小文件、高速网络或短视频任务，下载可能在 100~400ms 内即告结束，采样协程尚未苏醒任务便已退出，导致整个下载周期一次 `notifyProgress` 都没有发出，通知栏表现为“断断续续/有时候才出现进度条”；
+    2. **为什么“经常下载完了还在显示正在下载中”？（双重并发致命 Bug）**
+       - **Bug A（协程取消未 join 导致的竞态覆写）**：在 `runTask` 中，`execute` 完成后仅调用了非阻塞的 `job.cancel()`，随后立即调用 `notifyFinished` 并将数据库标记为 `COMPLETED`。由于没有 `cancelAndJoin()`，正在从挂起恢复的 `reportLoop` 协程滞后执行，调用 `db.updateProgress(..., DOWNLOADING)` 将数据库中的 `COMPLETED` 任务倒退覆盖回 `DOWNLOADING`，更紧接着调用 `notifyProgress` 重新发布了一条 `setOngoing(true)` 带进度条的通知。由于此时 `runTask` 已经退出，再无后续代码处理该通知，该通知就永远以不可滑除的 Ongoing 状态卡在通知栏中！
+       - **Bug B（跨渠道通知切换未注销与属性残留）**：单任务进度通知发布在 `CHANNEL_DOWNLOAD` 上（ongoing=true, 带进度条）。完成时 `notifyFinished` 直接切换至 `CHANNEL_RESULT` 进行发布，但没有先调用 `cancel(taskId)`，也没有显式指定 `setOngoing(false)` 与 `setProgress(0, 0, false)`。在许多 Android 系统及厂商定制 ROM 下，同一 ID 跨渠道更新时保留了原有通知的 ongoing 与进度条属性，造成“下载完了依然卡在下载中”的视觉假象；
+       - **Bug C（前台服务常驻通知 detach 滞留与孤儿任务污染）**：当所有任务完成时，`DownloadService` 仅调用了 `stopForeground(STOP_FOREGROUND_DETACH)`，常驻通知被永久解绑滞留在通知栏。加之如果有历史中断的孤儿任务导致 `activeCount()` 计算大于 0，前台通知便永远显示“正在下载 1”且不可滑除。
+- 落地加固与修复措施：
+  1. **彻底消除 `reportLoop` 竞态覆写与初始盲区**：
+     - `runTask` 启动进入 `DOWNLOADING` 瞬间立即发出初始进度通知（0%），彻底消除初始 500ms 盲区；
+     - `execute` 完成后必须执行 `job.cancelAndJoin()`，严格等待采样协程彻底终止后才允许进入终态流程；
+     - `reportLoop` 头部检查：当任务非活动或进入 `MERGING` 阶段时立即退出，循环内每次更新前再次检查协程活动状态；
+     - 增加音视频合并中通知：`execute` 进入 `MERGING` 状态时调用 `notifyMerging(task)`，通知栏同步显示“正在合并音视频…”，消除 99% 卡顿假象；
+  2. **`TaskDatabase` 进度更新增加终态防护**：
+     - `updateProgress` 的 SQL 更新条件加固为 `id = ? AND status IN (?, ?)`（仅对 PENDING/DOWNLOADING 生效），从底层数据库引擎坚决阻断任何将 MERGING/COMPLETED/FAILED 倒退改回 DOWNLOADING 的可能；
+  3. **`DownloadNotifier` 通知生命周期彻底加固**：
+     - `notifyFinished` 入口先显式调用 `cancel(task.id)` 彻底注销旧进度通知，再发布完成通知；显式指定 `setOngoing(false)`、`setAutoCancel(true)`、`setProgress(0, 0, false)`，彻底消除属性残留；
+     - `foregroundNotification` 显式清除进度条，新增 `cancelForeground()` 方法；
+     - `formatSpeed` 抽取至 companion object 并指定 `Locale.US`；
+  4. **前台服务超时优雅收口与孤儿自愈**：
+     - `DownloadEngine.activeCount()` 增加自愈逻辑：若内存中当前无作业且队列为空但数据库查出非终态任务，自动触发 `resetOrphans` 清理孤儿记录，返回 0；
+     - `DownloadService` 在 `activeCount == 0` 时启动 6 秒倒计时定时器；若 6 秒内无新任务启动，自动调用 `stopForegroundCompat(STOP_FOREGROUND_REMOVE)` 优雅移除常驻通知并 `stopSelf()` 退出服务，杜绝无意义霸占通知栏。
+- 改动文件：
+  - `downloader/src/main/kotlin/com/clipdown/downloader/db/TaskDatabase.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/notify/Notifier.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/DownloadEngine.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadService.kt`
+  - `downloader/src/test/kotlin/com/clipdown/downloader/notify/DownloadNotifierTest.kt`
+  - `version.properties` (27 → 28, 1.1.22 → 1.1.23)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试与发布：
+  - 全量单元测试 **153 例全绿**（parser 105 例、downloader 41 例、app 7 例）；
+  - `assembleRelease` 成功构建，Release APK 体积 1.89 MB (1,986,145 字节)，严格保持在 2MB 以内；
+  - 成功发布 GitHub Release 正式版 **v1.1.23 (versionCode 28)** 并更新 `update.json` 清单。
+- 本次文档更新时间：10.29 18:15
+
 
 
 

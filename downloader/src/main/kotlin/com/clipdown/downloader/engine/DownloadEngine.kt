@@ -12,6 +12,7 @@ import com.clipdown.downloader.notify.DownloadNotifier
 import com.clipdown.downloader.storage.MediaStoreWriter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -99,7 +100,17 @@ class DownloadEngine(
         config = newConfig
     }
 
-    fun activeCount(): Int = runCatching { db.activeCount() }.getOrDefault(jobs.size)
+    fun activeCount(): Int {
+        val dbCount = runCatching { db.activeCount() }.getOrDefault(0)
+        // 自愈防护：若内存中当前无作业且任务队列已空，但数据库由于历史崩溃/异常仍残留非终态任务，
+        // 自动触发 resetOrphans 重置孤儿任务，彻底防止 activeCount 永久卡死大于 0
+        if (jobs.isEmpty() && dbCount > 0) {
+            db.resetOrphans()
+            repository.refresh()
+            return 0
+        }
+        return dbCount
+    }
 
     fun foregroundNotification() = notifier.foregroundNotification(
         activeCount = activeCount(),
@@ -174,6 +185,12 @@ class DownloadEngine(
             repository.refresh()
             refreshForegroundNotification()
 
+            // 关键：任务启动进入 DOWNLOADING 瞬间，立即发出初始进度通知（0%），消除 500ms 盲区
+            notifier.notifyProgress(
+                task,
+                ProgressEvent(taskId, task.downloadedBytes, task.totalBytes, 0, DownloadStatus.DOWNLOADING)
+            )
+
             val state = HttpFileDownloader.State(
                 downloaded = task.downloadedBytes,
                 total = task.totalBytes
@@ -183,7 +200,7 @@ class DownloadEngine(
 
             val result = runCatching { execute(task, state) }
 
-            job.cancel()
+            job.cancelAndJoin()
             jobs.remove(taskId)
             speedTrackers.remove(taskId)
 
@@ -275,6 +292,7 @@ class DownloadEngine(
         _progress.tryEmit(
             ProgressEvent(task.id, state.downloaded, state.total, 0, DownloadStatus.MERGING)
         )
+        db.get(task.id)?.let { notifier.notifyMerging(it) }
 
         val uri = if (config.saveToAlbum) {
             MediaStoreWriter.save(context, target, task.fileName, task.mimeType)
@@ -294,12 +312,15 @@ class DownloadEngine(
         tmpDir.deleteRecursively()
     }
 
-    /** 每 500ms 采样一次：更新数据库、进度流与通知 */
+    /** 采样：更新数据库、进度流与通知 */
     private suspend fun reportLoop(taskId: String, state: HttpFileDownloader.State) {
         var lastBytes = 0L
         var lastTime = System.currentTimeMillis()
         while (currentCoroutineContext().isActive) {
-            delay(500)
+            val task = db.get(taskId) ?: break
+            // 严格守卫：若任务已非活动或已进入合并处理阶段，立即退出循环，绝不覆写状态
+            if (!task.status.isActive || task.status == DownloadStatus.MERGING) break
+
             val now = System.currentTimeMillis()
             val downloaded = state.downloaded
             val dt = (now - lastTime).coerceAtLeast(1)
@@ -307,13 +328,14 @@ class DownloadEngine(
             lastBytes = downloaded
             lastTime = now
 
-            val task = db.get(taskId) ?: break
-            if (!task.status.isActive) break
+            if (!currentCoroutineContext().isActive) break
 
             db.updateProgress(taskId, downloaded, state.total, DownloadStatus.DOWNLOADING)
             val event = ProgressEvent(taskId, downloaded, state.total, speed, DownloadStatus.DOWNLOADING)
             _progress.tryEmit(event)
             notifier.notifyProgress(task, event)
+
+            delay(500)
         }
     }
 

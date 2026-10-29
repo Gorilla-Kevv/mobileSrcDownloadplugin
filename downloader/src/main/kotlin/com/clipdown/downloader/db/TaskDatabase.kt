@@ -74,7 +74,14 @@ class TaskDatabase(context: Context) :
             put("status", status.name)
             put("updated_at", System.currentTimeMillis())
         }
-        writableDatabase.update(TABLE, cv, "id = ?", arrayOf(id))
+        // 防御性守卫：只在任务仍处于未终态（PENDING / DOWNLOADING）时才允许更新进度与状态，
+        // 杜绝任何已进入 MERGING / COMPLETED / FAILED / CANCELED 的任务被异步进度采样覆写回 DOWNLOADING
+        writableDatabase.update(
+            TABLE,
+            cv,
+            "id = ? AND status IN (?, ?)",
+            arrayOf(id, DownloadStatus.PENDING.name, DownloadStatus.DOWNLOADING.name)
+        )
     }
 
     fun updateStatus(id: String, status: DownloadStatus, error: String? = null) {

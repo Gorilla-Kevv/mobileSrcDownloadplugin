@@ -60,4 +60,13 @@ class DownloadNotifierTest {
             DownloadNotifier.formatForegroundTitle(activeCount = 0, completedCount = 0, failedCount = 0)
         )
     }
+
+    @Test
+    fun formatSpeed_formatsKbAndMbCorrectly() {
+        assertEquals("--", DownloadNotifier.formatSpeed(-1))
+        assertEquals("--", DownloadNotifier.formatSpeed(0))
+        assertEquals("512 KB/s", DownloadNotifier.formatSpeed(512 * 1024))
+        assertEquals("1.0 MB/s", DownloadNotifier.formatSpeed(1024 * 1024))
+        assertEquals("2.5 MB/s", DownloadNotifier.formatSpeed((2.5 * 1024 * 1024).toLong()))
+    }
 }

@@ -7,6 +7,13 @@ import android.os.IBinder
 import com.clipdown.downloader.engine.DownloadEngine
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.downloader.notify.DownloadNotifier
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
 /**
  * 下载宿主服务。
@@ -16,6 +23,9 @@ import com.clipdown.downloader.notify.DownloadNotifier
  * 2. 承接通知栏上的暂停 / 取消等动作。
  */
 class DownloadService : Service(), DownloadEngine.EngineListener {
+
+    private var idleJob: Job? = null
+    private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -28,6 +38,8 @@ class DownloadService : Service(), DownloadEngine.EngineListener {
 
     override fun onDestroy() {
         super.onDestroy()
+        idleJob?.cancel()
+        serviceScope.cancel()
         runCatching {
             if (DownloadController.engine().listener === this) {
                 DownloadController.engine().listener = null
@@ -52,9 +64,7 @@ class DownloadService : Service(), DownloadEngine.EngineListener {
 
         startForegroundCompat()
         val active = runCatching { DownloadController.engine().activeCount() }.getOrDefault(0)
-        if (active == 0) {
-            detachForegroundCompat()
-        }
+        onForegroundStateChanged(active)
         return START_STICKY
     }
 
@@ -96,7 +106,18 @@ class DownloadService : Service(), DownloadEngine.EngineListener {
     override fun onForegroundStateChanged(activeCount: Int) {
         if (activeCount == 0) {
             detachForegroundCompat()
+            idleJob?.cancel()
+            idleJob = serviceScope.launch {
+                delay(6000)
+                val currentActive = runCatching { DownloadController.engine().activeCount() }.getOrDefault(0)
+                if (currentActive == 0) {
+                    stopForegroundCompat()
+                    stopSelf()
+                }
+            }
         } else {
+            idleJob?.cancel()
+            idleJob = null
             startForegroundCompat()
         }
     }

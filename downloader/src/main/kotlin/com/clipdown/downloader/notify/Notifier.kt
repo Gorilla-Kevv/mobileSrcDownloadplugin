@@ -60,6 +60,7 @@ class DownloadNotifier(private val context: Context) {
             .setContentText(content)
             .setOngoing(isOngoing)
             .setAutoCancel(!isOngoing)
+            .setProgress(0, 0, false)
             .setOnlyAlertOnce(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .apply {
@@ -73,6 +74,11 @@ class DownloadNotifier(private val context: Context) {
         runCatching {
             nm.notify(FOREGROUND_ID, foregroundNotification(activeCount, completedCount, failedCount))
         }
+    }
+
+    /** 移除前台服务常驻通知 */
+    fun cancelForeground() {
+        runCatching { nm.cancel(FOREGROUND_ID) }
     }
 
     private fun getAppLaunchPendingIntent(): PendingIntent? = runCatching {
@@ -104,15 +110,39 @@ class DownloadNotifier(private val context: Context) {
         runCatching { nm.notify(task.id.hashCode(), n) }
     }
 
+    /** 音视频合并处理中通知（消除 99% 卡顿假象） */
+    fun notifyMerging(task: TaskEntity) {
+        val intent = getAppLaunchPendingIntent()
+        val n = NotificationCompat.Builder(context, CHANNEL_DOWNLOAD)
+            .setSmallIcon(android.R.drawable.stat_sys_download)
+            .setContentTitle(task.title)
+            .setContentText("正在合并音视频…")
+            .setProgress(100, 100, true)
+            .setOngoing(true)
+            .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .apply {
+                if (intent != null) setContentIntent(intent)
+            }
+            .build()
+        runCatching { nm.notify(task.id.hashCode(), n) }
+    }
+
     fun notifyFinished(task: TaskEntity) {
+        // 关键第一步：显式撤销原正在下载进度通知，抹除 CHANNEL_DOWNLOAD 上的 ongoing 标志
+        cancel(task.id)
+
         val success = task.status == DownloadStatus.COMPLETED
         val intent = getAppLaunchPendingIntent()
         val n = NotificationCompat.Builder(context, if (success) CHANNEL_RESULT else CHANNEL_DOWNLOAD)
             .setSmallIcon(if (success) android.R.drawable.stat_sys_download_done else android.R.drawable.stat_notify_error)
             .setContentTitle(task.title)
             .setContentText(if (success) "下载完成" else (task.errorMessage ?: "下载失败"))
+            .setOngoing(false)
             .setAutoCancel(true)
+            .setProgress(0, 0, false)
             .setOnlyAlertOnce(true)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
             .apply {
                 if (intent != null) setContentIntent(intent)
             }
@@ -124,16 +154,20 @@ class DownloadNotifier(private val context: Context) {
         runCatching { nm.cancel(taskId.hashCode()) }
     }
 
-    fun formatSpeed(bytesPerSec: Long): String {
-        if (bytesPerSec <= 0) return "--"
-        val kb = bytesPerSec / 1024.0
-        return if (kb >= 1024) String.format("%.1f MB/s", kb / 1024) else String.format("%.0f KB/s", kb)
-    }
-
     companion object {
         const val CHANNEL_DOWNLOAD = "clipdown_download"
         const val CHANNEL_RESULT = "clipdown_result"
         const val FOREGROUND_ID = 9001
+
+        fun formatSpeed(bytesPerSec: Long): String {
+            if (bytesPerSec <= 0) return "--"
+            val kb = bytesPerSec / 1024.0
+            return if (kb >= 1024) {
+                String.format(java.util.Locale.US, "%.1f MB/s", kb / 1024)
+            } else {
+                String.format(java.util.Locale.US, "%.0f KB/s", kb)
+            }
+        }
 
         fun formatForegroundTitle(activeCount: Int, completedCount: Int, failedCount: Int): String = when {
             activeCount > 0 -> "剪存下载服务运行中"
