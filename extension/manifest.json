@@ -1,0 +1,39 @@
+{
+  "manifest_version": 3,
+  "name": "ClipDown 跨端助手",
+  "version": "1.0.0",
+  "description": "ClipDown 电脑端扩展：与手机双向同步下载记录、一键共享 PC 网页登录态 Cookie（突破 Instagram / 小红书等风控）、网页媒体快捷嗅探与推送到手机。",
+  "permissions": [
+    "cookies",
+    "storage",
+    "tabs",
+    "activeTab"
+  ],
+  "host_permissions": [
+    "*://*.instagram.com/*",
+    "*://*.xiaohongshu.com/*",
+    "*://*.twitter.com/*",
+    "*://*.x.com/*",
+    "*://*.facebook.com/*",
+    "*://*.bilibili.com/*",
+    "*://*.youtube.com/*",
+    "http://*/*",
+    "https://*/*"
+  ],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background/service-worker.js"
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  }
+}

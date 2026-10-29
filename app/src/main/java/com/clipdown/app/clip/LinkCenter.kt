@@ -16,7 +16,8 @@ enum class LinkSource(val label: String) {
     GATE_CLIP("借道读取"),
     ACCESSIBILITY("无障碍监听"),
     SHARE("系统分享"),
-    MANUAL("手动粘贴")
+    MANUAL("手动粘贴"),
+    PC_SYNC("PC插件同步")
 }
 
 /** 一条被识别出的候选链接 */

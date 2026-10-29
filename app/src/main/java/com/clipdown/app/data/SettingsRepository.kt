@@ -40,6 +40,9 @@ class SettingsRepository(private val context: Context) {
         val ENABLED_PLATFORMS = stringPreferencesKey("enabled_platforms")
         val ACCESSIBILITY_HINT_SHOWN = booleanPreferencesKey("a11y_hint_shown")
         val SEEN_LINKS = stringSetPreferencesKey("seen_links")
+        val SYNC_ENABLED = booleanPreferencesKey("sync_enabled")
+        val SYNC_PORT = intPreferencesKey("sync_port")
+        val SYNC_PIN = stringPreferencesKey("sync_pin")
     }
 
     val floatEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.FLOAT_ENABLED] ?: true }
@@ -58,6 +61,13 @@ class SettingsRepository(private val context: Context) {
 
     /** 已识别过的链接记忆（持久化）：命中者不再自动弹窗，仅用户手动识别时触发 */
     val seenLinks: Flow<Set<String>> = context.settingsDataStore.data.map { it[Keys.SEEN_LINKS] ?: emptySet() }
+    val syncEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.SYNC_ENABLED] ?: false }
+    val syncPort: Flow<Int> = context.settingsDataStore.data.map { it[Keys.SYNC_PORT] ?: 8765 }
+    val syncPin: Flow<String> = context.settingsDataStore.data.map { it[Keys.SYNC_PIN] ?: "" }
+
+    suspend fun setSyncEnabled(value: Boolean) = edit { it[Keys.SYNC_ENABLED] = value }
+    suspend fun setSyncPort(value: Int) = edit { it[Keys.SYNC_PORT] = value.coerceIn(1024, 65535) }
+    suspend fun setSyncPin(value: String) = edit { it[Keys.SYNC_PIN] = value.trim() }
 
     suspend fun setFloatEnabled(value: Boolean) = edit { it[Keys.FLOAT_ENABLED] = value }
     suspend fun setAutoPopup(value: Boolean) = edit { it[Keys.AUTO_POPUP] = value }

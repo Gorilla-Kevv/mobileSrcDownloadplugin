@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClipDown 跨端助手</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- 头部导航与品牌 -->
+    <header class="header">
+      <div class="brand">
+        <img src="../icons/icon48.png" alt="ClipDown" class="logo">
+        <div class="brand-text">
+          <div class="title">ClipDown 跨端助手</div>
+          <div class="subtitle">局域网同步 · 登录态共享 · 媒体嗅探</div>
+        </div>
+      </div>
+      <div id="connection-pill" class="pill pill-offline" title="点击配置连接">
+        <span class="status-dot"></span>
+        <span class="status-label">未连接手机</span>
+      </div>
+    </header>
+
+    <!-- 标签栏导航 -->
+    <nav class="tabs">
+      <button class="tab-btn active" data-tab="tab-cookies">
+        <span class="tab-icon">🍪</span> 登录态共享
+      </button>
+      <button class="tab-btn" data-tab="tab-tasks">
+        <span class="tab-icon">📥</span> 下载记录
+      </button>
+      <button class="tab-btn" data-tab="tab-sniffer">
+        <span class="tab-icon">⚡</span> 快捷嗅探
+      </button>
+      <button class="tab-btn" data-tab="tab-settings">
+        <span class="tab-icon">⚙️</span> 配对设置
+      </button>
+    </nav>
+
+    <!-- 标签内容区 -->
+    <main class="content">
+      <!-- 标签 1：登录态共享 -->
+      <section id="tab-cookies" class="tab-pane active">
+        <div class="notice-card">
+          <div class="notice-icon">🛡️</div>
+          <div class="notice-text">
+            读取电脑 Edge / Chrome 中已登录的 Cookie 并一键灌入手机，<strong>彻底绕过手机端 WebView 风控与 2FA 死循环</strong>！
+          </div>
+        </div>
+
+        <div class="card-list" id="cookie-platform-list">
+          <!-- 动态加载或静态骨架 -->
+          <div class="platform-row" data-platform="instagram">
+            <div class="platform-info">
+              <div class="platform-name">Instagram</div>
+              <div class="platform-desc">Reel 视频、图集与原画质</div>
+            </div>
+            <div class="platform-status">
+              <span class="pill pill-neutral checking">检测中...</span>
+              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="instagram">同步</button>
+            </div>
+          </div>
+
+          <div class="platform-row" data-platform="xiaohongshu">
+            <div class="platform-info">
+              <div class="platform-name">小红书</div>
+              <div class="platform-desc">无水印原图、视频与博主主页</div>
+            </div>
+            <div class="platform-status">
+              <span class="pill pill-neutral checking">检测中...</span>
+              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="xiaohongshu">同步</button>
+            </div>
+          </div>
+
+          <div class="platform-row" data-platform="x">
+            <div class="platform-info">
+              <div class="platform-name">X (Twitter)</div>
+              <div class="platform-desc">高清视频、原图与敏感内容</div>
+            </div>
+            <div class="platform-status">
+              <span class="pill pill-neutral checking">检测中...</span>
+              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="x">同步</button>
+            </div>
+          </div>
+
+          <div class="platform-row" data-platform="facebook">
+            <div class="platform-info">
+              <div class="platform-name">Facebook</div>
+              <div class="platform-desc">高清视频与图集帖</div>
+            </div>
+            <div class="platform-status">
+              <span class="pill pill-neutral checking">检测中...</span>
+              <button class="btn btn-sm btn-sync" data-action="sync-single" data-platform="facebook">同步</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="action-section">
+          <button id="btn-sync-all-cookies" class="btn btn-primary btn-block">
+            ⚡ 一键同步所有 Cookie 到手机
+          </button>
+        </div>
+
+        <div class="offline-tools">
+          <div class="tools-title">离线备用通道（非同一局域网时使用）：</div>
+          <div class="tools-row">
+            <button id="btn-qr-sync" class="btn btn-secondary btn-sm">📱 扫码同步</button>
+            <button id="btn-copy-deeplink" class="btn btn-secondary btn-sm">🔗 复制 DeepLink 协议</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 标签 2：下载记录同步 -->
+      <section id="tab-tasks" class="tab-pane">
+        <div class="tasks-toolbar">
+          <div class="stats-text" id="tasks-stats-text">📱 手机记录: 0 · 🖥️ 电脑记录: 0</div>
+          <div class="toolbar-actions">
+            <button id="btn-pull-tasks" class="btn btn-sm btn-primary" title="从手机拉取下载记录">
+              🔄 双向同步
+            </button>
+          </div>
+        </div>
+
+        <div class="search-bar">
+          <input type="text" id="tasks-search-input" placeholder="🔍 搜索任务标题或平台..." />
+        </div>
+
+        <div class="tasks-list" id="tasks-list-container">
+          <div class="empty-state">
+            <div class="empty-icon">📭</div>
+            <div class="empty-text">暂无同步记录，点击上方「双向同步」即可拉取手机历史任务</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- 标签 3：快捷嗅探 -->
+      <section id="tab-sniffer" class="tab-pane">
+        <div class="sniffer-card">
+          <div class="sniffer-label">当前标签页链接检测：</div>
+          <div class="sniffer-title" id="current-tab-title">读取中...</div>
+          <div class="sniffer-url" id="current-tab-url">...</div>
+          <div class="sniffer-actions">
+            <button id="btn-enqueue-current" class="btn btn-primary btn-block">
+              🚀 推送到手机下载识别中枢
+            </button>
+          </div>
+        </div>
+
+        <div class="manual-enqueue">
+          <div class="sniffer-label">手动发送链接到手机：</div>
+          <div class="input-group">
+            <input type="text" id="manual-url-input" placeholder="粘贴任何受支持的帖子链接..." />
+            <button id="btn-manual-enqueue" class="btn btn-secondary">发送</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- 标签 4：配对设置 -->
+      <section id="tab-settings" class="tab-pane">
+        <div class="form-group">
+          <label for="input-phone-url">手机服务地址 (局域网 IP & 端口)</label>
+          <input type="text" id="input-phone-url" placeholder="例如: http://192.168.1.108:8765" />
+          <div class="input-hint">在手机 ClipDown「设置」→「跨端同步」查看</div>
+        </div>
+
+        <div class="form-group">
+          <label for="input-phone-pin">6 位安全配对码 (PIN)</label>
+          <input type="text" id="input-phone-pin" maxlength="6" placeholder="例如: 839201" />
+          <div class="input-hint">手机屏幕显示的 6 位随机 PIN 码</div>
+        </div>
+
+        <div class="form-actions">
+          <button id="btn-test-save-settings" class="btn btn-primary btn-block">
+            测试连接并保存
+          </button>
+        </div>
+
+        <div id="settings-status-box" class="status-box hidden"></div>
+
+        <div class="guide-box">
+          <div class="guide-title">📖 快速上手说明：</div>
+          <ol class="guide-steps">
+            <li>确保电脑与手机连接至<strong>同一个 Wi-Fi 局域网</strong>；</li>
+            <li>在手机 ClipDown 设置页开启「局域网同步服务」；</li>
+            <li>将手机上显示的「服务地址」与「PIN 码」填入上方，点击测试连接。</li>
+          </ol>
+        </div>
+      </section>
+    </main>
+
+    <!-- 底部状态条 -->
+    <footer class="footer">
+      <span id="footer-status">就绪</span>
+      <span class="version">v1.0.0</span>
+    </footer>
+
+    <!-- 弹窗：二维码扫码导入 -->
+    <div id="modal-qr" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">📱 离线扫码同步 Cookie</span>
+          <button id="btn-close-qr" class="btn-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div class="qr-select-group">
+            <label>选择同步平台：</label>
+            <select id="qr-platform-select">
+              <option value="instagram">Instagram</option>
+              <option value="xiaohongshu">小红书</option>
+              <option value="x">X (Twitter)</option>
+              <option value="facebook">Facebook</option>
+            </select>
+          </div>
+          <div id="qrcode-container" class="qrcode-wrapper"></div>
+          <div class="qr-hint">使用手机微信、相机或浏览器扫描二维码获取 Cookie 同步链接</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../lib/qrcode.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

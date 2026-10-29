@@ -58,7 +58,10 @@ import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
 import com.clipdown.app.ui.components.WebLoginDialog
+import androidx.compose.ui.text.font.FontFamily
+import com.clipdown.app.sync.SyncManager
 import com.clipdown.app.ui.components.BookmarkletGuideDialog
+import com.clipdown.app.ui.components.SyncPairingDialog
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.update.UpdateSection
 import com.clipdown.parser.core.ParserEngine
@@ -92,6 +95,11 @@ fun SettingsScreen() {
     var hasOverlayPermission by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
     var activeLoginPlatform by remember { mutableStateOf<Platform?>(null) }
     var showBookmarkletPlatform by remember { mutableStateOf<Platform?>(null) }
+    val isSyncServerRunning by SyncManager.isServerRunning.collectAsStateWithLifecycle()
+    val syncIp by SyncManager.localIp.collectAsStateWithLifecycle()
+    val syncPort by SyncManager.port.collectAsStateWithLifecycle()
+    val syncPin by SyncManager.pairingPin.collectAsStateWithLifecycle()
+    var showSyncDialog by remember { mutableStateOf(false) }
     var cookieRefreshToken by remember { mutableStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -250,6 +258,80 @@ fun SettingsScreen() {
                             colors = CheckboxDefaults.colors(checkedColor = MaterialTheme.colorScheme.primary)
                         )
                         Text(p.displayName, style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            }
+        }
+
+        item {
+            AppCard(shape = RectangleShape) {
+                CardHeader(
+                    title = "🖥️ 电脑端插件与跨端同步 (Edge / Chrome)",
+                    subtitle = "共享登录态免风控 · 下载记录双向同步",
+                    trailing = {
+                        StatusPill(
+                            text = if (isSyncServerRunning) "服务运行中" else "未开启",
+                            tone = if (isSyncServerRunning) Tone.Success else Tone.Neutral,
+                            shape = RectangleShape
+                        )
+                    }
+                )
+                VSpace(AppTheme.spacing.xs)
+                Text(
+                    "在 Edge / Chrome 浏览器安装 ClipDown 助手插件，可将电脑上已登录的 Instagram / 小红书等 Cookie 瞬间灌入手机，彻底解决手机端风控与 2FA 死循环；同时可双向同步下载记录。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                VSpace(AppTheme.spacing.sm)
+
+                SettingSwitchRow(
+                    title = "启用局域网同步服务",
+                    desc = if (isSyncServerRunning) "地址: http://${syncIp ?: "127.0.0.1"}:$syncPort · PIN: $syncPin" else "开启后电脑端插件可直连",
+                    checked = isSyncServerRunning
+                ) { enabled ->
+                    if (enabled) {
+                        SyncManager.startServer()
+                    } else {
+                        SyncManager.stopServer()
+                    }
+                }
+
+                if (isSyncServerRunning) {
+                    VSpace(AppTheme.spacing.xs)
+                    Hairline()
+                    VSpace(AppTheme.spacing.sm)
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "配对码 PIN: $syncPin",
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        Row {
+                            OutlinedButton(
+                                onClick = {
+                                    SyncManager.regeneratePin()
+                                    Toast.makeText(context, "已重新生成配对码", Toast.LENGTH_SHORT).show()
+                                },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("重置 PIN", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Spacer(Modifier.width(AppTheme.spacing.xs))
+                            Button(
+                                onClick = { showSyncDialog = true },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(32.dp)
+                            ) {
+                                Text("配对指引", style = MaterialTheme.typography.labelSmall)
+                            }
+                        }
                     }
                 }
             }
@@ -498,6 +580,16 @@ fun SettingsScreen() {
                 showBookmarkletPlatform = null
                 cookieRefreshToken++
             }
+        )
+    }
+
+    if (showSyncDialog) {
+        SyncPairingDialog(
+            ip = syncIp,
+            port = syncPort,
+            pin = syncPin,
+            isRunning = isSyncServerRunning,
+            onDismiss = { showSyncDialog = false }
         )
     }
 }

@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 66 已完成**：Instagram 登录死循环与 Cookie 提取双重突破【方案 A：手机浏览器书签脚本 (Bookmarklet) + DeepLink 协议 1 秒回传】+【方案 B：内置 WebView 终极 Stealth 伪装与多窗口 2FA 修复】（已发布正式版 v1.1.25 / versionCode 30）
-- 下一阶段任务：真机走查 v1.1.25（验证手机浏览器书签脚本一键导入与内置浏览器 2FA 登录）
+- 当前正在开发任务：**阶段 67 已完成**：多端协同拓展 · Windows Edge / Chrome 官方扩展插件 + 手机局域网数据中枢（双向同步下载记录 + 共享网页登录态 Cookie + 快捷嗅探推送）（已发布正式版 v1.1.26 / versionCode 31）
+- 下一阶段任务：真机与电脑浏览器端到端走查 v1.1.26（验证插件配对、一键秒传 Cookie、双向同步下载记录与推送下载）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **105 例** + downloader **41 例** + app **10 例**全绿（共 156 例）
+- 测试基线：parser **105 例** + downloader **41 例** + app **14 例**全绿（共 160 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.29 19:55
+- 本次文档更新时间：10.29 23:25
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1381,3 +1381,59 @@
   - Release APK 体积：1.88 MB (1,981,265 字节)，严格维持在 2MB 以内；
   - 成功发布 GitHub Release 正式版 **v1.1.25 (versionCode 30)** 并更新 `update.json` 清单。
 - 本次文档更新时间：10.29 19:55
+
+
+## 阶段 67 多端协同拓展 · Windows Edge / Chrome 官方扩展插件 + 手机局域网数据中枢（双向同步下载记录 + 共享网页登录态 Cookie + 快捷嗅探推送） [计划时间：10.29 23:00 BY Antigravity][完成时间：10.29 23:25 BY Antigravity]
+- 用户反馈与核心诉求：
+  - 用户反馈：“拓展功能，做多端适配，先做windows的，做成edge / chrome 的拓展插件，和移动端同步下载记录（文件不同步，仅同步记录）共享登录态（可以解决需要cookie的问题）”；
+  - 核心痛点：
+    1. 移动端直接查看/提取 Cookie 极其繁琐，且手机 WebView 登录极易遭遇反爬风控与 2FA 死循环；而电脑端浏览器登录非常平稳，如果能将 PC 登录态一键秒传至手机，将彻底根治移动端 Cookie 痛点；
+    2. 多端下载记录碎片化，用户需要随时在电脑端查看手机已下载的历史媒体（仅同步元数据记录，不耗费大量流量传输媒体大文件）；
+    3. 在电脑浏览网页（Instagram / 小红书 / X / Bilibili）时，希望一键将帖子推送到手机下载中枢由手机执行下载落盘。
+- 落地成果：
+  1. **电脑端 Edge / Chrome 官方扩展插件 (`extension/` 完整 Manifest V3 体系)**：
+     - `extension/manifest.json`：声明 Manifest V3 架构，具备 `cookies`、`storage`、`tabs`、`activeTab` 及各平台 host_permissions，全面兼容 Microsoft Edge 88+ 与 Google Chrome 88+；
+     - `extension/background/service-worker.js`：后台服务工作线程，调用 `chrome.cookies.getAll` 安全提取 Instagram (`sessionid`)、小红书 (`web_session`/`a1`)、X (`auth_token`)、Facebook (`c_user`/`xs`) 会话 Cookie；封装与手机局域网的 RESTful HTTP 通信（鉴权 PIN 自动注入、超时控制与异常重试）；
+     - `extension/popup/`：基于【Obsidian Aegis / 黑曜秘境紫夜】规范打造高对比度暗黑视觉 UI（`#09060E` 背景、`#130E1F` 卡片、`#2E2048` 微光边框、`#8B5CF6` 紫晶高亮）：
+       - `[🍪 登录态共享]`：实时检测电脑浏览器中已登录的平台，支持「⚡ 一键同步所有 Cookie 到手机」与单平台一键同步；内置「📱 离线扫码同步」与「🔗 复制 DeepLink 协议」跨网段备用方案；
+       - `[📥 下载记录]`：拉取手机任务历史，本地持久化缓存，支持搜索、平台过滤与查看原帖直链；
+       - `[⚡ 快捷嗅探]`：自动识别当前标签页的帖子/视频，一键「推送到手机下载识别中枢」；支持任意链接手动输入推送；
+       - `[⚙️ 配对设置]`：配置手机局域网 IP 与 6 位安全 PIN 码，一键测试连通性并实时回显手机设备名与连接状态；
+     - `extension/lib/qrcode.min.js`：纯 JS 离线二维码生成引擎，零网络请求生成高清配对/Cookie 导入二维码；
+     - `extension/icons/`：由 256px 紫晶护盾 Logo 渲染生成 16x16, 48x48, 128x128 品牌图标；
+     - `extension/README.md`：详尽的 Edge 与 Chrome 开发者模式 2 步加载指引。
+  2. **Android 手机端嵌入式同步数据中枢 (`com.clipdown.app.sync.*`)**：
+     - `NetworkUtil.kt`：精准遍历并检索本地局域网非回环 IPv4 地址（优先提取 Wi-Fi / AP 接口地址）；
+     - `SyncModels.kt`：状态检测、Cookie 同步、任务批量同步与推送下载的序列化契约；
+     - `SyncServer.kt`：基于标准 `ServerSocket` + Kotlin 协程的高性能纯原生 HTTP 1.1 服务，零外部重型依赖，杜绝包体积膨胀；支持标准 CORS 预检与 6 位动态随机 PIN 码拦截；
+     - `SyncManager.kt`：单例服务控制，持久化配对码与端口，支持重置 PIN；
+     - `TaskRepository.kt`：新增 `saveRecord` 与 `saveRecords` 支持跨端历史记录入库；
+     - `LinkCenter.kt`：新增 `LinkSource.PC_SYNC` 来源标识，电脑推送直达悬浮球与下载引擎；
+     - `SettingsScreen.kt`：新增「🖥️ 电脑端插件与跨端同步」设置卡片与 `SyncPairingDialog` 3 步指引弹窗；
+     - `SyncProtocolTest.kt`：4 例全新单元测试，全量单测增至 160 例全部通过。
+- 改动文件：
+  - `extension/manifest.json` (新建)
+  - `extension/README.md` (新建)
+  - `extension/icons/icon16.png`, `icon48.png`, `icon128.png` (新建)
+  - `extension/lib/qrcode.min.js` (新建)
+  - `extension/background/service-worker.js` (新建)
+  - `extension/popup/popup.html`, `popup.css`, `popup.js` (新建)
+  - `app/src/main/java/com/clipdown/app/sync/NetworkUtil.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/sync/SyncModels.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/sync/SyncServer.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/sync/SyncManager.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/ui/components/SyncPairingDialog.kt` (新建)
+  - `app/src/test/java/com/clipdown/app/sync/SyncProtocolTest.kt` (新建单测)
+  - `app/src/main/java/com/clipdown/app/ClipDownApp.kt`
+  - `app/src/main/java/com/clipdown/app/clip/LinkCenter.kt`
+  - `app/src/main/java/com/clipdown/app/data/SettingsRepository.kt`
+  - `app/src/main/java/com/clipdown/app/ui/settings/SettingsScreen.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/TaskRepository.kt`
+  - `version.properties` (30 → 31, 1.1.25 → 1.1.26)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试与发布：
+  - 全量单元测试 **160 例全绿**（parser 105 例、downloader 41 例、app 14 例）；
+  - `assembleRelease` 成功构建，Release APK 体积 1.90 MB (1,997,649 字节)，严守 2MB 极限红线；
+  - 成功发布 GitHub Release 正式版 **v1.1.26 (versionCode 31)** 并更新 `update.json` 清单。
+- 本次文档更新时间：10.29 23:25

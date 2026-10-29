@@ -72,6 +72,19 @@ class TaskRepository internal constructor(private val db: TaskDatabase) {
         refresh()
     }
 
+    /** 跨端同步保存历史任务元数据记录（仅同步记录，不包含落盘文件） */
+    fun saveRecord(task: TaskEntity) {
+        db.insert(task)
+        refresh()
+    }
+
+    /** 跨端批量同步保存任务元数据记录 */
+    fun saveRecords(list: List<TaskEntity>) {
+        if (list.isEmpty()) return
+        list.forEach { db.insert(it) }
+        refresh()
+    }
+
     companion object {
         @Volatile
         private var instance: TaskRepository? = null
