@@ -1,13 +1,109 @@
 <?xml version="1.0" encoding="utf-8"?>
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
+
+    <!-- 背景幽邃暗紫微光晕轮 -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M40,32h28a6,6 0,0 1,6 6v22a6,6 0,0 1,-6 6H40a6,6 0,0 1,-6 -6V38a6,6 0,0 1,6 -6zM34,72h40v6H34z" />
+        android:pathData="M54,16 A38,38 0 1,0 54,92 A38,38 0 1,0 54,16 Z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:centerX="54"
+                android:centerY="54"
+                android:gradientRadius="38"
+                android:type="radial">
+                <item android:color="#4D7E22CE" android:offset="0.0" />
+                <item android:color="#1A3B0764" android:offset="0.6" />
+                <item android:color="#0009060E" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 隐私护盾外壁：暗夜黑曜紫基底 -->
     <path
-        android:fillColor="#FFFFFFFF"
-        android:pathData="M52,44v20l16,-10z" />
+        android:fillColor="#FF181028"
+        android:strokeWidth="1.5"
+        android:pathData="M54,23 L76,32 C76,55 67,73 54,83 C41,73 32,55 32,32 Z">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="32"
+                android:startY="23"
+                android:endX="76"
+                android:endY="83"
+                android:type="linear">
+                <item android:color="#FFC084FC" android:offset="0.0" />
+                <item android:color="#FFA855F7" android:offset="0.5" />
+                <item android:color="#FF6B21A8" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 隐私护盾内切面（深渊暗黑立体层） -->
+    <path
+        android:fillColor="#FF0F0A1C"
+        android:pathData="M54,27 L72,35 C72,53 64,69 54,78 C44,69 36,53 36,35 Z" />
+
+    <!-- 神秘之眼 / 隐私光眸外弧（Mystic Iris Top & Bottom） -->
+    <path
+        android:pathData="M40,51 C45,43 63,43 68,51 C63,59 45,59 40,51 Z"
+        android:strokeWidth="1.8">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="40"
+                android:startY="51"
+                android:endX="68"
+                android:endY="51"
+                android:type="linear">
+                <item android:color="#FFE879F9" android:offset="0.0" />
+                <item android:color="#FFA855F7" android:offset="0.5" />
+                <item android:color="#FF38BDF8" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 隐秘锁芯与下载光芒箭头（结合隐私与下行能力） -->
+    <!-- 锁梁与中心能量核 -->
+    <path
+        android:pathData="M50,47 A4,4 0 0,1 58,47 L58,51 L50,51 Z"
+        android:strokeColor="#FFC084FC"
+        android:strokeWidth="1.5" />
+
+    <!-- 能量核心钻石晶体 -->
+    <path
+        android:fillColor="#FFF5F3FF"
+        android:pathData="M54,49 L57.5,53.5 L54,58 L50.5,53.5 Z" />
+
+    <!-- 锐利下行流光光束（象征神速私密下载） -->
+    <path
+        android:pathData="M54,58 L54,72 M48,66 L54,72 L60,66"
+        android:strokeWidth="2.4"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:startX="48"
+                android:startY="58"
+                android:endX="60"
+                android:endY="72"
+                android:type="linear">
+                <item android:color="#FFF5F3FF" android:offset="0.0" />
+                <item android:color="#FFC084FC" android:offset="0.5" />
+                <item android:color="#FFA855F7" android:offset="1.0" />
+            </gradient>
+        </aapt:attr>
+    </path>
+
+    <!-- 神秘星芒粒子（点缀在护盾周围） -->
+    <path
+        android:fillColor="#D9C084FC"
+        android:pathData="M54,16 L55,18.5 L57.5,19.5 L55,20.5 L54,23 L53,20.5 L50.5,19.5 L53,18.5 Z" />
+    <path
+        android:fillColor="#80A855F7"
+        android:pathData="M78,48 L79,49.5 L80.5,50 L79,50.5 L78,52 L77,50.5 L75.5,50 L77,49.5 Z" />
+    <path
+        android:fillColor="#80A855F7"
+        android:pathData="M30,48 L31,49.5 L32.5,50 L31,50.5 L30,52 L29,50.5 L27.5,50 L29,49.5 Z" />
 </vector>

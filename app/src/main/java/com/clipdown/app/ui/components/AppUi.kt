@@ -59,8 +59,14 @@ private data class ToneColors(val fg: Color, val bg: Color)
 
 @Composable
 private fun toneOf(tone: Tone): ToneColors = when (tone) {
-    Tone.Neutral -> ToneColors(TextSecondary, NeutralSurfaceAlt)
-    Tone.Brand -> ToneColors(OnBrandContainer, BrandContainer)
+    Tone.Neutral -> ToneColors(
+        MaterialTheme.colorScheme.onSurfaceVariant,
+        MaterialTheme.colorScheme.surfaceVariant
+    )
+    Tone.Brand -> ToneColors(
+        MaterialTheme.colorScheme.onPrimaryContainer,
+        MaterialTheme.colorScheme.primaryContainer
+    )
     Tone.Success -> ToneColors(SuccessFg, SuccessContainer)
     Tone.Warning -> ToneColors(WarningFg, WarningContainer)
     Tone.Danger -> ToneColors(DangerFg, DangerContainer)
@@ -377,7 +383,7 @@ fun GroupLabel(text: String, modifier: Modifier = Modifier) {
         text,
         modifier = modifier.padding(bottom = AppTheme.spacing.sm),
         style = MaterialTheme.typography.labelMedium,
-        color = TextTertiary
+        color = MaterialTheme.colorScheme.onSurfaceVariant
     )
 }
 

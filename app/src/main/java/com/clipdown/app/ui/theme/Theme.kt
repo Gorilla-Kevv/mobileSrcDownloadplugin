@@ -19,9 +19,6 @@ import androidx.compose.ui.unit.sp
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 间距 / 圆角令牌
-//
-// 所有页面只允许使用这套刻度，禁止出现 7dp、13dp 这类"随手值"——
-// 这是让多个屏幕看起来像同一套设计的关键。
 // ─────────────────────────────────────────────────────────────────────────────
 data class Spacing(
     val xs: Dp = 4.dp,
@@ -58,7 +55,7 @@ object AppTheme {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 排版：收敛为 10 个层级、3 个字重，行高统一，避免"同页面字号行高各写各的"
+// 排版：收敛为 10 个层级、3 个字重，行高统一
 // ─────────────────────────────────────────────────────────────────────────────
 private val AppTypography = Typography(
     // 页面主标题
@@ -87,15 +84,15 @@ private val AppShapes = Shapes(
 
 private val LightColors = lightColorScheme(
     primary = Brand600,
-    onPrimary = OnSeedBlue,
-    primaryContainer = BrandContainer,
-    onPrimaryContainer = OnBrandContainer,
-    secondary = Brand700,
-    onSecondary = OnSeedBlue,
-    secondaryContainer = BrandContainer,
-    onSecondaryContainer = OnBrandContainer,
+    onPrimary = Color.White,
+    primaryContainer = NeutralSurfaceAlt,
+    onPrimaryContainer = Brand700,
+    secondary = BrandPrimary,
+    onSecondary = Color.White,
+    secondaryContainer = NeutralSurfaceAlt,
+    onSecondaryContainer = Brand700,
     tertiary = InfoFg,
-    onTertiary = OnSeedBlue,
+    onTertiary = Color.White,
     background = NeutralBg,
     onBackground = TextPrimary,
     surface = NeutralSurface,
@@ -106,20 +103,22 @@ private val LightColors = lightColorScheme(
     outline = NeutralOutlineStrong,
     outlineVariant = NeutralOutline,
     error = DangerFg,
-    onError = OnSeedBlue,
+    onError = Color.White,
     errorContainer = DangerContainer,
     onErrorContainer = DangerFg
 )
 
 private val DarkColors = darkColorScheme(
-    primary = Brand500,
-    onPrimary = Color(0xFF0B1030),
-    primaryContainer = Color(0xFF243070),
-    onPrimaryContainer = Color(0xFFDCE2FF),
+    primary = BrandPrimary,
+    onPrimary = Color(0xFF09060E),
+    primaryContainer = BrandContainer,
+    onPrimaryContainer = OnBrandContainer,
     secondary = Brand500,
-    onSecondary = Color(0xFF0B1030),
-    secondaryContainer = Color(0xFF243070),
-    onSecondaryContainer = Color(0xFFDCE2FF),
+    onSecondary = Color(0xFF09060E),
+    secondaryContainer = BrandContainer,
+    onSecondaryContainer = OnBrandContainer,
+    tertiary = InfoFg,
+    onTertiary = Color(0xFF09060E),
     background = DarkBg,
     onBackground = DarkTextPrimary,
     surface = DarkSurface,
@@ -127,24 +126,24 @@ private val DarkColors = darkColorScheme(
     surfaceVariant = DarkSurfaceAlt,
     onSurfaceVariant = DarkTextSecondary,
     surfaceContainerHighest = DarkSurfaceAlt,
-    outline = DarkOutline,
+    outline = DarkOutlineStrong,
     outlineVariant = DarkOutline,
-    error = Color(0xFFFF8A80),
-    onError = Color(0xFF3A0A08),
-    errorContainer = Color(0xFF5C1A16),
-    onErrorContainer = Color(0xFFFFDAD6)
+    error = DangerFg,
+    onError = Color(0xFF09060E),
+    errorContainer = DangerContainer,
+    onErrorContainer = DangerFg
 )
 
 /**
- * 应用主题。
+ * 应用主题：【神秘 · 紫色 · 黑暗 · 隐私】
  *
- * 默认**浅色优先**：悬浮气泡与弹窗沿用深色磨砂玻璃观感，主界面走浅色，
- * 强行跟随系统深色会让弹窗里的浅色块与页面深色底混搭（历史遗留），故保持浅色为默认；
- * 深色方案已备好，需要时把 [darkTheme] 默认值改为 `isSystemInDarkTheme()` 即可。
+ * 默认**全沉浸暗黑秘夜优先**（darkTheme = true）：
+ * 告别平庸蓝灰，全面沉浸至极夜玄黑底色与黑曜紫晶卡片层级，
+ * 无论应用界面还是悬浮窗磨砂玻璃，均呈现浑然一体的高级隐私与神秘科技感。
  */
 @Composable
 fun ClipDownTheme(
-    darkTheme: Boolean = false,
+    darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
     CompositionLocalProvider(

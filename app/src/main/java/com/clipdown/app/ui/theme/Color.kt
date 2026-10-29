@@ -3,56 +3,58 @@ package com.clipdown.app.ui.theme
 import androidx.compose.ui.graphics.Color
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 色彩令牌
+// 色彩令牌：【神秘 · 紫色 · 黑暗 · 隐私】（Obsidian Aegis / 秘境黑紫·隐秘私域）
 //
-// 命名规则：<语义><色阶>。页面只允许引用令牌，不再写裸 Color(0xFF...)，
-// 保证同一语义在不同页面永远是同一个颜色（这是"排版整齐"的底层前提）。
+// 命名规则：<语义><色阶>。页面只允许引用令牌，保证视觉语言的高度统一与纯粹沉浸。
 // ─────────────────────────────────────────────────────────────────────────────
 
-// 品牌色：靛蓝。600 为主行动色，容器色用于选中态底、标签底
-val Brand600 = Color(0xFF3D5AFE)
-val Brand700 = Color(0xFF2A41D6)
-val Brand500 = Color(0xFF6178FF)
-val BrandContainer = Color(0xFFE9EDFF)
-val OnBrandContainer = Color(0xFF23308F)
+// 品牌核心色：神秘霓虹幻紫 / 秘境紫晶（Mystic Violet & Neon Amethyst）
+val Brand600 = Color(0xFF9333EA)
+val Brand700 = Color(0xFF7E22CE)
+val Brand500 = Color(0xFFC084FC)
+val BrandPrimary = Color(0xFFA855F7)
+val BrandContainer = Color(0xFF26123D)
+val OnBrandContainer = Color(0xFFF3E8FF)
+val BrandGlow = Color(0x66A855F7)
 
-// 中性色阶（浅色主题）
-val NeutralBg = Color(0xFFF4F6FB)          // 页面底
-val NeutralSurface = Color(0xFFFFFFFF)     // 卡片底
-val NeutralSurfaceAlt = Color(0xFFF7F8FC)  // 次级块底（输入框、缩略图占位）
-val NeutralOutline = Color(0xFFE4E7F0)     // 1dp 描边（卡片分界）
-val NeutralOutlineStrong = Color(0xFFD2D7E5)
-val TextPrimary = Color(0xFF141824)
-val TextSecondary = Color(0xFF5A6072)
-val TextTertiary = Color(0xFF8A90A2)
+// 暗黑隐私色阶（主主题：Obsidian Vault 极夜玄黑与黑曜紫晶）
+val DarkBg = Color(0xFF09060E)             // 极夜玄黑（OLED 深度暗黑底色）
+val DarkSurface = Color(0xFF130E1F)        // 黑曜紫晶卡片底色
+val DarkSurfaceAlt = Color(0xFF1C142B)     // 次级交互块底（输入框、占位块、展开区）
+val DarkOutline = Color(0xFF2E2048)        // 发丝微光描边（幽静卡片分界）
+val DarkOutlineStrong = Color(0xFF4C3575)  // 高亮状态描边
+val DarkTextPrimary = Color(0xFFF5F3FF)    // 星芒亮白（极高对比度，WCAG AAA）
+val DarkTextSecondary = Color(0xFFB8AEC8)  // 雾霭淡紫灰（舒适次要文本）
+val DarkTextTertiary = Color(0xFF786E8A)   // 深渊静默灰（辅助标注）
 
-// 中性色阶（深色主题）
-val DarkBg = Color(0xFF0E1220)
-val DarkSurface = Color(0xFF171C2E)
-val DarkSurfaceAlt = Color(0xFF1F2537)
-val DarkOutline = Color(0xFF2A3145)
-val DarkTextPrimary = Color(0xFFEDEFF6)
-val DarkTextSecondary = Color(0xFFA6ADC0)
-val DarkTextTertiary = Color(0xFF7B839A)
+// 浅色兼容色阶（淡雅紫薰衣草调）
+val NeutralBg = Color(0xFFF7F5FC)
+val NeutralSurface = Color(0xFFFFFFFF)
+val NeutralSurfaceAlt = Color(0xFFF1ECFA)
+val NeutralOutline = Color(0xFFE5DCF5)
+val NeutralOutlineStrong = Color(0xFFD0C2EB)
+val TextPrimary = Color(0xFF1E1333)
+val TextSecondary = Color(0xFF63567D)
+val TextTertiary = Color(0xFF9485AF)
 
-// 语义色（含容器色，用于 pill / 提示块）
-val SuccessFg = Color(0xFF15803D)
-val SuccessContainer = Color(0xFFE6F6EC)
-val WarningFg = Color(0xFFB45309)
-val WarningContainer = Color(0xFFFDF3E3)
-val DangerFg = Color(0xFFB42318)
-val DangerContainer = Color(0xFFFDECEA)
-val InfoFg = Color(0xFF1D4ED8)
-val InfoContainer = Color(0xFFE8EEFF)
+// 语义色调（专为暗黑紫调精调，避免传统高纯度刺眼饱和度）
+val SuccessFg = Color(0xFF34D399)          // 幽光翡翠绿
+val SuccessContainer = Color(0xFF102820)
+val WarningFg = Color(0xFFFBBF24)          // 暗夜琥珀金
+val WarningContainer = Color(0xFF2C1F0A)
+val DangerFg = Color(0xFFF87171)           // 绯红炽焰
+val DangerContainer = Color(0xFF2E0F14)
+val InfoFg = Color(0xFF818CF8)             // 星芒电光蓝紫
+val InfoContainer = Color(0xFF171A38)
 
-// ── 兼容旧引用的别名（悬浮窗等历史代码仍在使用） ─────────────────────────────
-/** 主色：靛蓝，用于强调按钮与选中态 */
-val SeedBlue = Brand600
+// ── 兼容旧引用的别名 ─────────────────────────────────────────────────────────
+val SeedBlue = BrandPrimary
 val OnSeedBlue = Color(0xFFFFFFFF)
 
-/** 毛玻璃基调色：低饱和度深蓝灰，配合高透明度形成磨砂玻璃观感 */
-val GlassBase = Color(0xFF101426)
-val GlassBaseLight = Color(0xFFE8ECFA)
+/** 毛玻璃基调色：磨砂深紫夜底，带紫光透射感 */
+val GlassBase = Color(0xFF0D0818)
+val GlassBaseLight = Color(0xFFF1ECFA)
+val GlassBorder = Color(0x33A855F7)
 
 val SuccessGreen = SuccessFg
 val WarningAmber = WarningFg

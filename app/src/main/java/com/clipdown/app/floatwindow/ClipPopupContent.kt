@@ -129,7 +129,7 @@ fun GlassCard(
     Surface(
         modifier = modifier
             .clip(RoundedCornerShape(18.dp))
-            .border(1.dp, Color.White.copy(alpha = 0.10f), RoundedCornerShape(18.dp)),
+            .border(1.dp, Color(0xFFA855F7).copy(alpha = 0.28f), RoundedCornerShape(18.dp)),
         shape = RoundedCornerShape(18.dp),
         color = GlassBase,
         content = content
@@ -398,7 +398,7 @@ private fun ProfileBody(
                 modifier = Modifier
                     .size(40.dp)
                     .clip(RoundedCornerShape(12.dp))
-                    .background(Color.White.copy(alpha = 0.10f)),
+                    .background(Color(0xFFA855F7).copy(alpha = 0.28f)),
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
@@ -512,7 +512,7 @@ private fun FailedBody(
 
 @Composable
 private fun QualityChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val bg = if (selected) SeedBlue.copy(alpha = 0.92f) else Color.White.copy(alpha = 0.10f)
+    val bg = if (selected) SeedBlue.copy(alpha = 0.92f) else Color(0xFFA855F7).copy(alpha = 0.28f)
     val fg = if (selected) Color.White else Color.White.copy(alpha = 0.78f)
     Box(
         modifier = Modifier

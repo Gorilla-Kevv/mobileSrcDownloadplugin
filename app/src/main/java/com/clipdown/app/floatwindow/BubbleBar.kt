@@ -94,7 +94,7 @@ internal fun BarBody(
             .width(BAR_WIDTH_DP.dp)
             .clip(shape)
             .background(GlassBase)
-            .border(1.dp, Color.White.copy(alpha = 0.10f), shape)
+            .border(1.dp, Color(0xFFA855F7).copy(alpha = 0.30f), shape)
             .padding(start = 6.dp, end = 6.dp, top = if (barOnTop) 8.dp else bubblePad, bottom = if (barOnTop) bubblePad else 8.dp)
     ) {
         when (state) {

@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 64 已完成**：通知栏下载进度断续与下载完成后仍显示正在下载中双重根因彻底根除 · 协程采样取消安全 join 杜绝竞态覆写 · 跨渠道通知注销与 ongoing/progress 彻底清除 · TaskDatabase 进度状态终态防护 · 前台服务超时优雅收口与孤儿自愈（已发布正式版 v1.1.23 / versionCode 28）
-- 下一阶段任务：真机走查 v1.1.23（验证通知栏下载时实时展示进度与合并状态，下载完成后立即切换完成或优雅消除，绝无残留）
+- 当前正在开发任务：**阶段 65 已完成**：全套视觉美学体系全面换新【神秘 · 紫色 · 黑暗 · 隐私】· 黑曜秘境暗夜沉浸主题 · 神秘之眼与隐私护盾矢量桌面图标 · 256px 高清紫晶悬浮球 Logo · 全套暗黑紫夜 UI 组件与微光交互（已发布正式版 v1.1.24 / versionCode 29）
+- 下一阶段任务：真机走查 v1.1.24（验证全黑紫沉浸模式、全新桌面与悬浮球图标、高对比度可读性与无痕隐私交互）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
 - 测试基线：parser **105 例** + downloader **41 例** + app **7 例**全绿（共 153 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.29 18:15
+- 本次文档更新时间：10.29 18:35
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1307,6 +1307,48 @@
   - `assembleRelease` 成功构建，Release APK 体积 1.89 MB (1,986,145 字节)，严格保持在 2MB 以内；
   - 成功发布 GitHub Release 正式版 **v1.1.23 (versionCode 28)** 并更新 `update.json` 清单。
 - 本次文档更新时间：10.29 18:15
+
+## 阶段 65 全套视觉美学体系全面换新【神秘 · 紫色 · 黑暗 · 隐私】· 黑曜秘境暗夜沉浸主题 · 神秘之眼与隐私护盾矢量桌面图标 · 256px 高清紫晶悬浮球 Logo · 全套暗黑紫夜 UI 组件与微光交互 [计划时间：10.29 18:25 BY Antigravity][完成时间：10.29 18:35 BY Antigravity]
+- 用户反馈与设计目标：
+  - 用户指令：“图标、ui 全部换一套，风格提示词：神秘、紫色、黑暗、隐私”；
+  - 核心风格定位：**【Obsidian Aegis / 秘境黑紫·隐秘私域】**，告别平庸通用亮蓝，构建极致沉浸、科技感与私密安全感并存的全新视觉世界。
+- 落地成果：
+  1. **应用桌面图标与启动体系重构**：
+     - `ic_launcher_background` 变更为极夜深黑 `#FF09060E`；
+     - `ic_launcher_foreground.xml` 采用专业矢量精绘：融合【隐私护盾外壁 (Aegis Shield)】、【深渊暗黑立体内切面】、【神秘之眼 (Mystic Iris)】、【能量钻石光眸】与【锐利下行流光光束】，辅以周围微闪的暗夜星芒粒子；
+     - `themes.xml` 将冷启动窗口背景置为 `#FF09060E`，状态栏设置为暗色亮字（`windowLightStatusBar = false`），从源头彻底根治启动白光刺眼；
+  2. **悬浮球 Logo 图标全新渲染 (`bubble_logo.png`)**：
+     - 使用 Pillow 渲染高保真抗锯齿 256x256 无损透明深渊黑曜紫盘底座 + 紫晶护盾 + 隐私锁梁 + 放射紫霞光环；
+     - `FloatingWindowService` 中的悬浮球呼吸光环、待机呼吸与下载光环全面升级为神秘炫紫 `HaloPurple (#A855F7)` 与紫霞魅光 `HaloLightPurple (#C084FC)`；
+  3. **色彩令牌体系重塑 (`Color.kt`)**：
+     - 品牌核心色：神秘霓虹幻紫 / 秘境紫晶（`BrandPrimary = #A855F7`, `Brand600 = #9333EA`, `Brand500 = #C084FC`, `BrandContainer = #26123D`）；
+     - 极夜玄黑与暗夜紫晶色阶：`DarkBg = #09060E` (OLED 极致纯黑), `DarkSurface = #130E1F`, `DarkSurfaceAlt = #1C142B`, `DarkOutline = #2E2048`；
+     - 文字排版对比度：主文字 `DarkTextPrimary = #F5F3FF` 达到最高级 WCAG AAA 清晰度；次级文字 `DarkTextSecondary = #B8AEC8`（雾霭紫灰）；
+     - 语义色暗夜调优：`SuccessFg = #34D399`（翡翠微光绿）, `WarningFg = #FBBF24`（暗夜琥珀金）, `DangerFg = #F87171`（绯红炽焰）；
+  4. **全套 UI 组件与主要页面全沉浸适配 (`AppUi.kt`, `Theme.kt`, `AppNav.kt`)**：
+     - `ClipDownTheme` 默认直接开启全沉浸暗黑模式（`darkTheme = true`）；
+     - `AppUi.kt` 的 `toneOf` 与 `GroupLabel` 升级为完全主题自适应，卡片边框采用 1dp `#2E2048` 隐秘微光发丝线；
+     - 底部导航栏、首页解析卡、平台网格瓦片、下载管理页、设置页与悬浮窗全屏弹窗无缝衔接至全新的暗黑秘境紫夜视觉。
+- 改动文件：
+  - `app/src/main/res/values/colors.xml`
+  - `app/src/main/res/values/themes.xml`
+  - `app/src/main/res/drawable/ic_launcher_foreground.xml`
+  - `app/src/main/res/drawable-nodpi/bubble_logo.png`
+  - `app/src/main/java/com/clipdown/app/ui/theme/Color.kt`
+  - `app/src/main/java/com/clipdown/app/ui/theme/Theme.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/AppUi.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/FloatingWindowService.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/ClipPopupContent.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/BubbleBar.kt`
+  - `version.properties` (28 → 29, 1.1.23 → 1.1.24)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试与发布：
+  - 全量单元测试 **153 例全绿**（parser 105 例、downloader 41 例、app 7 例）；
+  - `assembleRelease` 成功构建，Release APK 体积 1.87 MB (1,964,721 字节)，严格保持在 2MB 以内；
+  - 成功发布 GitHub Release 正式版 **v1.1.24 (versionCode 29)** 并更新 `update.json` 清单。
+- 本次文档更新时间：10.29 18:35
+
 
 
 

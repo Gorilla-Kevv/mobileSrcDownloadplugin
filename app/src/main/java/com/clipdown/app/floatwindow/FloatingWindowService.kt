@@ -1300,21 +1300,22 @@ class FloatingWindowService : Service() {
     }
 }
 
-// ---------- 气泡视觉 ----------
+// ---------- 气泡视觉（神秘紫夜与隐秘光环） ----------
 
-private val HaloBlue = Color(0xFF4D9FFF)
+private val HaloPurple = Color(0xFFA855F7)
+private val HaloLightPurple = Color(0xFFC084FC)
 
 /** 气泡头像直径（dp）：光环半径与 logo 尺寸共用同一常量，保证二者始终贴合 */
 private const val BUBBLE_LOGO_SIZE_DP = 52f
 
 /** 相位强调色：描边与光环共用，0.3s 过渡 */
 private fun BubblePhase.accent(): Color = when (this) {
-    BubblePhase.Idle -> Color.White.copy(alpha = 0.35f)
+    BubblePhase.Idle -> Color(0xFFA855F7).copy(alpha = 0.45f)
     BubblePhase.Parsing -> Color(0xFFFFC53D)
     BubblePhase.ParseOk -> Color(0xFF2EB872)
     BubblePhase.ParseFail -> Color(0xFFE5484D)
-    is BubblePhase.Downloading -> HaloBlue
-    BubblePhase.DownloadOk -> Color(0xFFA78BFA)
+    is BubblePhase.Downloading -> HaloPurple
+    BubblePhase.DownloadOk -> HaloLightPurple
     BubblePhase.DownloadFail -> Color(0xFFE5484D)
 }
 
@@ -1446,9 +1447,9 @@ private fun BubbleCircle(
             val arcTopLeft = Offset(center.x - radius, center.y - radius)
             val arcSize = Size(radius * 2f, radius * 2f)
             when (phase) {
-                // 空闲：蓝色呼吸光圈（alpha 呼吸只触发 draw 重绘，无重组/布局开销）
+                // 空闲：神秘紫夜呼吸光圈（alpha 呼吸只触发 draw 重绘，无重组/布局开销）
                 BubblePhase.Idle -> drawCircle(
-                    HaloBlue.copy(alpha = breathe),
+                    HaloPurple.copy(alpha = breathe),
                     radius = radius,
                     style = Stroke(stroke)
                 )
