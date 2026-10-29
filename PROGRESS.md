@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 65 已完成**：全套视觉美学体系全面换新【神秘 · 紫色 · 黑暗 · 隐私】· 黑曜秘境暗夜沉浸主题 · 神秘之眼与隐私护盾矢量桌面图标 · 256px 高清紫晶悬浮球 Logo · 全套暗黑紫夜 UI 组件与微光交互（已发布正式版 v1.1.24 / versionCode 29）
-- 下一阶段任务：真机走查 v1.1.24（验证全黑紫沉浸模式、全新桌面与悬浮球图标、高对比度可读性与无痕隐私交互）
+- 当前正在开发任务：**阶段 66 已完成**：Instagram 登录死循环与 Cookie 提取双重突破【方案 A：手机浏览器书签脚本 (Bookmarklet) + DeepLink 协议 1 秒回传】+【方案 B：内置 WebView 终极 Stealth 伪装与多窗口 2FA 修复】（已发布正式版 v1.1.25 / versionCode 30）
+- 下一阶段任务：真机走查 v1.1.25（验证手机浏览器书签脚本一键导入与内置浏览器 2FA 登录）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **105 例** + downloader **41 例** + app **7 例**全绿（共 153 例）
+- 测试基线：parser **105 例** + downloader **41 例** + app **10 例**全绿（共 156 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.29 18:35
+- 本次文档更新时间：10.29 19:55
 
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
@@ -1349,15 +1349,35 @@
   - 成功发布 GitHub Release 正式版 **v1.1.24 (versionCode 29)** 并更新 `update.json` 清单。
 - 本次文档更新时间：10.29 18:35
 
-
-
-
-
-
-
-
-
-
-
-
-
+## 阶段 66 Instagram 登录死循环与 Cookie 提取双重突破【方案 A：手机浏览器书签脚本 (Bookmarklet) + DeepLink 协议 1 秒回传】+【方案 B：内置 WebView 终极 Stealth 伪装与多窗口 2FA 修复】 [计划时间：10.29 19:35 BY Antigravity][完成时间：10.29 19:55 BY Antigravity]
+- 用户反馈与核心痛点：
+  - 用户反馈：“手机端浏览器根本无法自行查看 cookie，应用内置的浏览器根本没法登录获取 cookie，登录后马上会安全验证，然后就跳回了登录入口，请再想想办法。有没有办法唤起手机默认浏览器进行登录，监控手机浏览器抓取到 cookie 后返回呢”；
+  - 核心痛点：Meta 对 Android 原生 WebView 实行了严苛的指纹风控，导致 2FA 后无限跳回登录页；而移动端系统浏览器（Chrome 等）无法查看 F12，且由于 Android Linux UID 沙箱隔离，应用无法直接跨进程读取 Chrome 的 Cookie。
+- 落地成果：
+  1. **方案 A：手机浏览器书签脚本 (Bookmarklet) + DeepLink 自动回传链路 (`MainActivity.kt`, `AndroidManifest.xml`, `BookmarkletDialog.kt`)**：
+     - 在 `AndroidManifest.xml` 中为 `MainActivity` 注册 `clipdown://cookie` 与 `clipdown://import-cookie` 自定义 URL Scheme；
+     - `MainActivity` 在 `onCreate` 与 `onNewIntent` 挂载 `handleDeepLink`，自动拦截回传的 `platform` 与 `data`，完成 URL 解码、`CookieStore.isValidSessionCookie` 严格校验、持久化写入与 `IgRiskGuard.reset()` 解除风控；
+     - 实现 `BookmarkletUtil.generate(platform)` 生成一键书签脚本，用户在手机 Chrome/Edge/夸克登录 Instagram 后，点击书签自动执行 `location.href = 'clipdown://cookie?platform=instagram&data=' + encodeURIComponent(document.cookie)`，1 秒无缝唤醒 ClipDown 自动保存；
+     - 打造 `BookmarkletGuideDialog` 极简 3 步指引卡片，提供一键复制脚本与一键打开系统浏览器入口。
+  2. **方案 B：内置 WebView 终极 Stealth 伪装与多窗口 2FA 修复 (`WebLoginDialog.kt`)**：
+     - 全面升级 `stealthJs`：彻底消除 `navigator.webdriver`；模拟完整 `window.chrome` 运行态；深度 Polyfill `navigator.userAgentData`（brands、platform、mobile 与 `getHighEntropyValues`），杜绝 Client Hints 与 UA 冲突；掩蔽 WebGL UNMASKED_RENDERER 为高通 Adreno 730 旗舰 GPU；补齐 `navigator.plugins` 与 `permissions.query`；锁定前台活跃可见状态；
+     - 引入 `androidx.webkit.WebViewFeature.DOCUMENT_START_SCRIPT`，在页面任何 JavaScript 执行前先发制人注入防指纹脚本；
+     - 修复 `onCreateWindow`：为 2FA 弹出的 `tempWebView` 完整继承 JavaScript、CookieManager 与 UA 配置，并挂载 `onCloseWindow` 触发 Cookie 强制 Flush 与即时捕获，根治 2FA 验证后弹窗死循环；
+     - 拓展 Cookie 聚合域名至 `accountscenter.facebook.com`、`auth.instagram.com` 等所有 Meta 跨域端点，并在导航生命周期高频执行 `CookieManager.flush()`。
+  3. **设置页与各入口联动 (`SettingsScreen.kt`)**：
+     - 设置页「登录态增强」卡片直接新增「🔗 手机浏览器书签秒提」快捷入口，方便用户随时查看与使用。
+- 改动文件：
+  - `app/src/main/AndroidManifest.xml`
+  - `app/src/main/java/com/clipdown/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/WebLoginDialog.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/BookmarkletDialog.kt` (新建)
+  - `app/src/main/java/com/clipdown/app/ui/settings/SettingsScreen.kt`
+  - `app/src/test/java/com/clipdown/app/ui/components/BookmarkletUtilTest.kt` (新建单测)
+  - `version.properties` (29 → 30, 1.1.24 → 1.1.25)
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试与发布：
+  - 全量单元测试 **156 例全绿**（parser 105 例、downloader 41 例、app 10 例）；
+  - Release APK 体积：1.88 MB (1,981,265 字节)，严格维持在 2MB 以内；
+  - 成功发布 GitHub Release 正式版 **v1.1.25 (versionCode 30)** 并更新 `update.json` 清单。
+- 本次文档更新时间：10.29 19:55

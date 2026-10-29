@@ -61,6 +61,24 @@
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- 外部浏览器书签脚本 (Bookmarklet) 一键回传 Cookie 协议 (clipdown://cookie?platform=...&data=...) -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="clipdown"
+                    android:host="cookie" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="clipdown"
+                    android:host="import-cookie" />
+            </intent-filter>
         </activity>
 
         <!-- 系统分享入口：最可靠的链接获取通道 -->

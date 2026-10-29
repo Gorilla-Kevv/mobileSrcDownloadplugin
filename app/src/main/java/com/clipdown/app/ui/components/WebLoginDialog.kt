@@ -152,6 +152,7 @@ fun WebLoginDialog(
     var mainFrameErrorMessage by remember { mutableStateOf<String?>(null) }
     var loginCaptured by remember { mutableStateOf(false) }
     var showManualPasteDialog by remember { mutableStateOf(false) }
+    var showBookmarkletGuide by remember { mutableStateOf(false) }
 
     fun resetWebViewCache() {
         val cm = CookieManager.getInstance()
@@ -176,6 +177,11 @@ fun WebLoginDialog(
                 "https://instagram.com/",
                 "https://i.instagram.com/",
                 "https://accountscenter.instagram.com/",
+                "https://accountscenter.facebook.com/",
+                "https://www.facebook.com/",
+                "https://m.instagram.com/",
+                "https://api.instagram.com/",
+                "https://auth.instagram.com/",
                 "https://www.instagram.com/accounts/login/",
                 "https://www.instagram.com/challenge/"
             )
@@ -492,6 +498,15 @@ fun WebLoginDialog(
                             ) {
                                 Text("重置缓存", style = MaterialTheme.typography.labelSmall)
                             }
+                            Spacer(Modifier.width(4.dp))
+                            Button(
+                                onClick = { showBookmarkletGuide = true },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(26.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Text("书签秒提(推荐)", style = MaterialTheme.typography.labelSmall)
+                            }
                         } else {
                             Text(
                                 "提示：若遇验证死循环，点「重置缓存」清空被标记的会话；亦可点「粘贴Cookie」",
@@ -513,6 +528,21 @@ fun WebLoginDialog(
                                 )
                                 Spacer(Modifier.width(2.dp))
                                 Text("重置缓存", style = MaterialTheme.typography.labelSmall)
+                            }
+                            Spacer(Modifier.width(4.dp))
+                            OutlinedButton(
+                                onClick = { showBookmarkletGuide = true },
+                                shape = RectangleShape,
+                                modifier = Modifier.height(26.dp),
+                                contentPadding = PaddingValues(horizontal = 6.dp, vertical = 0.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(12.dp)
+                                )
+                                Spacer(Modifier.width(2.dp))
+                                Text("书签秒提", style = MaterialTheme.typography.labelSmall)
                             }
                             Spacer(Modifier.width(4.dp))
                             OutlinedButton(
@@ -566,11 +596,92 @@ fun WebLoginDialog(
                                 }
 
                                 val stealthJs = """
-                                    try {
-                                        Object.defineProperty(navigator, 'webdriver', {get: () => undefined});
-                                        if (!window.chrome) { window.chrome = { runtime: {} }; }
-                                    } catch(e) {}
+                                    (function() {
+                                        try {
+                                            Object.defineProperty(navigator, 'webdriver', {get: () => undefined, configurable: true});
+                                            if (!window.chrome) { window.chrome = {}; }
+                                            window.chrome.runtime = window.chrome.runtime || {};
+                                            window.chrome.loadTimes = window.chrome.loadTimes || function() {};
+                                            window.chrome.csi = window.chrome.csi || function() {};
+                                            window.chrome.app = window.chrome.app || {};
+
+                                            var brands = [
+                                                {brand: 'Chromium', version: '128'},
+                                                {brand: 'Not;A=Brand', version: '24'},
+                                                {brand: 'Google Chrome', version: '128'}
+                                            ];
+                                            var isDesktop = navigator.userAgent.indexOf('Windows') > -1 || navigator.userAgent.indexOf('Macintosh') > -1;
+                                            var uaData = {
+                                                brands: brands,
+                                                mobile: !isDesktop,
+                                                platform: isDesktop ? 'Windows' : 'Android',
+                                                getHighEntropyValues: function(hints) {
+                                                    return Promise.resolve({
+                                                        architecture: isDesktop ? 'x86' : 'arm',
+                                                        bitness: '64',
+                                                        brands: brands,
+                                                        mobile: !isDesktop,
+                                                        model: isDesktop ? '' : 'Pixel 7',
+                                                        platform: isDesktop ? 'Windows' : 'Android',
+                                                        platformVersion: isDesktop ? '10.0.0' : '14.0.0',
+                                                        uaFullVersion: '128.0.6613.127'
+                                                    });
+                                                }
+                                            };
+                                            try {
+                                                Object.defineProperty(navigator, 'userAgentData', {get: () => uaData, configurable: true});
+                                            } catch(e) {}
+
+                                            var patchWebGL = function(proto) {
+                                                if (!proto || !proto.getParameter) return;
+                                                var orig = proto.getParameter;
+                                                proto.getParameter = function(param) {
+                                                    if (param === 37445) return 'Qualcomm';
+                                                    if (param === 37446) return 'Adreno (TM) 730';
+                                                    return orig.apply(this, arguments);
+                                                };
+                                            };
+                                            if (typeof WebGLRenderingContext !== 'undefined') patchWebGL(WebGLRenderingContext.prototype);
+                                            if (typeof WebGL2RenderingContext !== 'undefined') patchWebGL(WebGL2RenderingContext.prototype);
+
+                                            try {
+                                                if (!navigator.plugins || navigator.plugins.length === 0) {
+                                                    var dummyPlugins = [
+                                                        { name: 'Chrome PDF Plugin', filename: 'internal-pdf-viewer', description: 'Portable Document Format' },
+                                                        { name: 'Chrome PDF Viewer', filename: 'mhjfbmdgcfjbbpaeojofohoefgiehjai', description: '' }
+                                                    ];
+                                                    Object.defineProperty(navigator, 'plugins', {get: () => dummyPlugins, configurable: true});
+                                                }
+                                            } catch(e) {}
+
+                                            if (navigator.permissions && navigator.permissions.query) {
+                                                var origQuery = navigator.permissions.query;
+                                                navigator.permissions.query = function(params) {
+                                                    if (params && params.name === 'notifications') {
+                                                        return Promise.resolve({ state: Notification.permission || 'default' });
+                                                    }
+                                                    return origQuery.apply(this, arguments);
+                                                };
+                                            }
+
+                                            try {
+                                                Object.defineProperty(document, 'hidden', {get: () => false, configurable: true});
+                                                Object.defineProperty(document, 'visibilityState', {get: () => 'visible', configurable: true});
+                                            } catch(e) {}
+                                        } catch(err) {}
+                                    })();
                                 """.trimIndent()
+
+                                // 官方标准注入 document_start 脚本（在页面任何 JS 脚本执行之前先发制人注入伪装）
+                                if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
+                                    runCatching {
+                                        androidx.webkit.WebViewCompat.addDocumentStartJavaScript(
+                                            this,
+                                            stealthJs,
+                                            setOf("https://*.instagram.com", "https://*.facebook.com", "https://*.xiaohongshu.com")
+                                        )
+                                    }
+                                }
 
                                 webChromeClient = object : WebChromeClient() {
                                     override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -597,16 +708,39 @@ fun WebLoginDialog(
                                     ): Boolean {
                                         // 拦截 window.open 并在主 WebView 内原窗加载（解决 2FA/Facebook 弹窗流程中断）
                                         val transport = resultMsg?.obj as? WebView.WebViewTransport ?: return false
-                                        val tempWebView = WebView(view!!.context)
-                                        tempWebView.webViewClient = object : WebViewClient() {
-                                            override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
-                                                req?.url?.let { view.loadUrl(it.toString()) }
-                                                return true
+                                        val tempWebView = WebView(view!!.context).apply {
+                                            val childCm = CookieManager.getInstance()
+                                            childCm.setAcceptCookie(true)
+                                            childCm.setAcceptThirdPartyCookies(this, true)
+                                            settings.apply {
+                                                javaScriptEnabled = true
+                                                domStorageEnabled = true
+                                                databaseEnabled = true
+                                                mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                                                userAgentString = view.settings.userAgentString
+                                            }
+                                            webViewClient = object : WebViewClient() {
+                                                override fun shouldOverrideUrlLoading(v: WebView?, req: WebResourceRequest?): Boolean {
+                                                    val u = req?.url?.toString() ?: return false
+                                                    view.loadUrl(u)
+                                                    return true
+                                                }
+
+                                                override fun onPageFinished(v: WebView?, u: String?) {
+                                                    childCm.flush()
+                                                    u?.let { checkAndSaveCookies(it) }
+                                                }
                                             }
                                         }
                                         transport.webView = tempWebView
                                         resultMsg.sendToTarget()
                                         return true
+                                    }
+
+                                    override fun onCloseWindow(window: WebView?) {
+                                        window?.destroy()
+                                        CookieManager.getInstance().flush()
+                                        checkAndSaveCookies(currentUrl)
                                     }
                                 }
 
@@ -648,6 +782,7 @@ fun WebLoginDialog(
                                             currentUrl = it
                                             hasMainFrameError = false
                                             view?.evaluateJavascript(stealthJs, null)
+                                            cm.flush()
                                             checkAndSaveCookies(it)
                                         }
                                     }
@@ -656,6 +791,7 @@ fun WebLoginDialog(
                                         url?.let {
                                             currentUrl = it
                                             view?.evaluateJavascript(stealthJs, null)
+                                            cm.flush()
                                             checkAndSaveCookies(it)
                                         }
                                     }
@@ -664,6 +800,7 @@ fun WebLoginDialog(
                                         url?.let {
                                             currentUrl = it
                                             view?.evaluateJavascript(stealthJs, null)
+                                            cm.flush()
                                             checkAndSaveCookies(it)
                                         }
                                     }
@@ -829,6 +966,13 @@ fun WebLoginDialog(
                     Text("取消")
                 }
             }
+        )
+    }
+
+    if (showBookmarkletGuide) {
+        BookmarkletGuideDialog(
+            platform = platform,
+            onDismiss = { showBookmarkletGuide = false }
         )
     }
 }

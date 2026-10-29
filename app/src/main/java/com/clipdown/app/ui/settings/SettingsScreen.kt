@@ -58,6 +58,7 @@ import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
 import com.clipdown.app.ui.components.WebLoginDialog
+import com.clipdown.app.ui.components.BookmarkletGuideDialog
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.update.UpdateSection
 import com.clipdown.parser.core.ParserEngine
@@ -90,6 +91,7 @@ fun SettingsScreen() {
 
     var hasOverlayPermission by remember { mutableStateOf(FloatingWindowService.hasPermission(context)) }
     var activeLoginPlatform by remember { mutableStateOf<Platform?>(null) }
+    var showBookmarkletPlatform by remember { mutableStateOf<Platform?>(null) }
     var cookieRefreshToken by remember { mutableStateOf(0) }
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
@@ -368,14 +370,22 @@ fun SettingsScreen() {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { showManualEdit = !showManualEdit }
                             .padding(vertical = AppTheme.spacing.xs),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = if (showManualEdit) "▼ 收起手动输入 Cookie" else "▶ 高级选项：手动查看/输入 Cookie",
+                            text = if (showManualEdit) "▼ 收起手动输入" else "▶ 手动查看/输入 Cookie",
                             style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.primary
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.clickable { showManualEdit = !showManualEdit }
+                        )
+                        Text(
+                            text = "🔗 手机浏览器书签秒提",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.secondary,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.clickable { showBookmarkletPlatform = p }
                         )
                     }
 
@@ -477,6 +487,16 @@ fun SettingsScreen() {
             onCookieSaved = {
                 cookieRefreshToken++
                 activeLoginPlatform = null
+            }
+        )
+    }
+
+    showBookmarkletPlatform?.let { platform ->
+        BookmarkletGuideDialog(
+            platform = platform,
+            onDismiss = {
+                showBookmarkletPlatform = null
+                cookieRefreshToken++
             }
         )
     }

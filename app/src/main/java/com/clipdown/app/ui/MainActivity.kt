@@ -27,6 +27,11 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
+import android.widget.Toast
+import com.clipdown.app.data.CookieStore
+import com.clipdown.parser.model.Platform
+import com.clipdown.parser.parsers.IgRiskGuard
+import java.net.URLDecoder
 import com.clipdown.app.clip.ClipboardMonitor
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.floatwindow.FloatingWindowService
@@ -51,6 +56,7 @@ class MainActivity : ComponentActivity() {
             requestNotification.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        handleDeepLink(intent)
         val openParse = intent?.getBooleanExtra(EXTRA_OPEN_PARSE, false) ?: false
         val openProfile = intent?.getBooleanExtra(EXTRA_OPEN_PROFILE, false) ?: false
         // 演示入口：注入主页演示数据并直接打开主页页，用于无网络/无 Cookie 时走查版式
@@ -88,9 +94,61 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLink(intent)
+    }
+
     override fun onPause() {
         ClipboardMonitor.onBackground()
         super.onPause()
+    }
+
+    /**
+     * 处理来自外部浏览器书签脚本 (Bookmarklet) 的 DeepLink Cookie 回传。
+     * 协议格式：clipdown://cookie?platform=instagram&data=<cookie>
+     */
+    private fun handleDeepLink(intent: Intent?) {
+        val uri = intent?.data ?: return
+        if (uri.scheme?.lowercase() != "clipdown") return
+        val host = uri.host?.lowercase() ?: return
+        if (host != "cookie" && host != "import-cookie") return
+
+        val platformStr = uri.getQueryParameter("platform") ?: "instagram"
+        val rawCookie = uri.getQueryParameter("data")
+            ?: uri.getQueryParameter("cookie")
+            ?: return
+
+        val targetPlatform = Platform.entries.firstOrNull {
+            it.id.equals(platformStr, ignoreCase = true) || it.displayName.equals(platformStr, ignoreCase = true)
+        } ?: Platform.INSTAGRAM
+
+        val decodedCookie = runCatching { URLDecoder.decode(rawCookie, "UTF-8") }
+            .getOrDefault(rawCookie)
+            .trim()
+
+        if (CookieStore.isValidSessionCookie(targetPlatform, decodedCookie)) {
+            CookieStore.put(this, targetPlatform, decodedCookie)
+            IgRiskGuard.reset()
+            Toast.makeText(
+                this,
+                "✓ 已通过手机浏览器成功导入 ${targetPlatform.displayName} 登录态！\n已自动解除风控限制，随时可开始解析。",
+                Toast.LENGTH_LONG
+            ).show()
+        } else {
+            val tokenName = when (targetPlatform) {
+                Platform.INSTAGRAM -> "sessionid"
+                Platform.XIAOHONGSHU -> "web_session"
+                Platform.FACEBOOK -> "c_user"
+                else -> "核心鉴权令牌"
+            }
+            Toast.makeText(
+                this,
+                "导入失败：未能检测到有效登录态（缺少 $tokenName）。\n请确认已在手机浏览器中登录账号，再运行书签脚本！",
+                Toast.LENGTH_LONG
+            ).show()
+        }
     }
 
     companion object {
