@@ -327,3 +327,166 @@
   text-align: center;
   padding: 20px 10px;
 }
+
+/* ── Instagram 点赞监控与待下载列表专属样式 ── */
+.clipdown-badge {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  background-color: #EF4444;
+  color: #FFFFFF;
+  font-size: 10.5px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 10px;
+  border: 1.5px solid #0A0614;
+  box-shadow: 0 0 10px rgba(239, 68, 68, 0.75);
+  line-height: 1.2;
+  pointer-events: none;
+  animation: clipdown-badge-pop 0.2s ease;
+}
+
+@keyframes clipdown-badge-pop {
+  from { transform: scale(0.6); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.clipdown-toolbar-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #342252;
+  font-size: 11.5px;
+}
+
+.clipdown-text-btn {
+  background: transparent;
+  border: none;
+  color: #C084FC;
+  font-size: 11.5px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.clipdown-text-btn:hover {
+  color: #FFFFFF;
+  background-color: #261945;
+}
+
+.clipdown-liked-list {
+  max-height: 230px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding-right: 2px;
+}
+
+.clipdown-liked-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.clipdown-liked-list::-webkit-scrollbar-thumb {
+  background: #5B3C8E;
+  border-radius: 4px;
+}
+
+.clipdown-liked-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 9px;
+  background-color: #150E28;
+  border: 1.5px solid #342252;
+  border-radius: 7px;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.clipdown-liked-item:hover {
+  border-color: #7C3AED;
+  background-color: #1A1132;
+}
+
+.clipdown-liked-item.is-downloaded {
+  opacity: 0.65;
+  background-color: #0E091C;
+  border-color: #261945;
+}
+
+.clipdown-post-check {
+  width: 17px;
+  height: 17px;
+  accent-color: #9333EA;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.clipdown-post-thumb {
+  width: 46px;
+  height: 46px;
+  border-radius: 6px;
+  object-fit: cover;
+  border: 1px solid #432E6A;
+  background-color: #0A0614;
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.clipdown-post-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.clipdown-post-author {
+  font-size: 11.5px;
+  font-weight: 800;
+  color: #C084FC;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clipdown-post-title {
+  font-size: 11.5px;
+  color: #FFFFFF;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clipdown-post-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  color: #CBD5E1;
+}
+
+.clipdown-tag-downloaded {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: #241A38;
+  color: #94A3B8;
+  font-weight: 600;
+}
+
+.clipdown-tag-pending {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background-color: rgba(147, 51, 234, 0.3);
+  color: #C084FC;
+  border: 1px solid #7C3AED;
+  font-weight: 700;
+}
+
