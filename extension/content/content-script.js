@@ -157,7 +157,7 @@
     return true;
   });
 
-  // 2. 页面浮动快捷下载按钮注入（优雅不遮挡，符合暗黑紫夜美学）
+  // 2. 页面浮动深度解析与直接下载浮窗面板（右下角即时呈现清晰度，杜绝打扰弹窗）
   function injectFloatingWidget() {
     if (document.getElementById("clipdown-floating-widget")) return;
 
@@ -170,82 +170,298 @@
     widget.innerHTML = `
       <div class="clipdown-float-btn" id="clipdown-float-trigger" title="ClipDown 媒体下载">
         <span class="clipdown-pulse"></span>
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#A855F7" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#C084FC" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 2v12M17 9l-5 5-5-5"/>
           <path d="M20 21H4"/>
         </svg>
       </div>
-      <div class="clipdown-float-menu hidden" id="clipdown-float-menu">
-        <div class="clipdown-menu-header">
-          <span class="clipdown-menu-title">${media.name} 快捷下载</span>
-          <span class="clipdown-menu-close" id="clipdown-menu-close">×</span>
-        </div>
-        <div class="clipdown-menu-actions">
-          <button class="clipdown-menu-btn" id="clipdown-action-pc-download">
-            💻 下载到电脑
-          </button>
-          <button class="clipdown-menu-btn clipdown-btn-secondary" id="clipdown-action-mobile-enqueue">
-            🚀 推送到手机
-          </button>
-        </div>
+      <div class="clipdown-float-panel hidden" id="clipdown-float-panel">
+        <!-- 动态由 loadAndRenderPanel 填充 -->
       </div>
     `;
 
     document.body.appendChild(widget);
 
     const trigger = widget.querySelector("#clipdown-float-trigger");
-    const menu = widget.querySelector("#clipdown-float-menu");
-    const closeBtn = widget.querySelector("#clipdown-menu-close");
+    const panel = widget.querySelector("#clipdown-float-panel");
 
+    let currentMediaData = null;
+    let isFetching = false;
+    let downloadConfig = { downloadSubfolder: "ClipDown", groupByPlatform: true };
+
+    // 获取下载目录配置
+    chrome.runtime.sendMessage({ action: "GET_DOWNLOAD_CONFIG" }, (resp) => {
+      if (resp && resp.success && resp.data) {
+        downloadConfig = resp.data;
+      }
+    });
+
+    // 触发点击展开/收起
     trigger.addEventListener("click", () => {
-      menu.classList.toggle("hidden");
+      const isHidden = panel.classList.contains("hidden");
+      if (isHidden) {
+        panel.classList.remove("hidden");
+        loadAndRenderPanel();
+      } else {
+        panel.classList.add("hidden");
+      }
     });
 
-    closeBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      menu.classList.add("hidden");
+    // 点击外部关闭浮窗
+    document.addEventListener("click", (e) => {
+      if (!widget.contains(e.target)) {
+        panel.classList.add("hidden");
+      }
     });
 
-    // 电脑下载
-    widget.querySelector("#clipdown-action-pc-download").addEventListener("click", () => {
+    // 深度嗅探并渲染完整面板
+    function loadAndRenderPanel(forceRefresh = false) {
+      if (!forceRefresh && currentMediaData) {
+        renderPanelContent(currentMediaData);
+        return;
+      }
+
+      if (isFetching) return;
+      isFetching = true;
+
+      // 渲染加载中骨架
+      panel.innerHTML = `
+        <div class="clipdown-panel-header">
+          <div class="clipdown-badge-row">
+            <span class="clipdown-pill clipdown-pill-brand">${media.name || "解析中"}</span>
+            <span class="clipdown-pill clipdown-pill-sub">正在深度探测</span>
+          </div>
+          <div class="clipdown-header-tools">
+            <button class="clipdown-tool-btn" id="clipdown-btn-close">×</button>
+          </div>
+        </div>
+        <div class="clipdown-loading-box">
+          <div class="clipdown-spinner"></div>
+          <div class="clipdown-loading-text">正在深度解析清晰度与媒体流...</div>
+        </div>
+      `;
+
+      panel.querySelector("#clipdown-btn-close").addEventListener("click", (e) => {
+        e.stopPropagation();
+        panel.classList.add("hidden");
+      });
+
+      const inpageData = sniffPageMedia();
       chrome.runtime.sendMessage({
-        action: "DOWNLOAD_CURRENT_TAB_PC"
-      }, (res) => {
-        if (res && res.success) {
-          const folder = res.data?.folder ? `Downloads/${res.data.folder}` : "Downloads";
-          triggerToast(`✅ 已启动电脑端下载 (保存至 ${folder})`);
+        action: "RESOLVE_MEDIA",
+        url: window.location.href,
+        inpageData
+      }, (resp) => {
+        isFetching = false;
+        if (resp && resp.success && resp.data) {
+          currentMediaData = resp.data;
+          renderPanelContent(currentMediaData);
+        } else if (inpageData) {
+          currentMediaData = inpageData;
+          renderPanelContent(currentMediaData);
         } else {
-          triggerToast("⚠️ 请点击浏览器右上角 ClipDown 助手查看清晰度选项");
+          renderEmptyContent();
         }
       });
-      menu.classList.add("hidden");
-    });
+    }
 
-    // 推送手机
-    widget.querySelector("#clipdown-action-mobile-enqueue").addEventListener("click", () => {
-      chrome.runtime.sendMessage({
-        action: "ENQUEUE_URL",
-        url: window.location.href
-      }, (res) => {
-        if (res && res.success) {
-          triggerToast("🚀 已推送到手机下载中枢！");
-        } else {
-          triggerToast("❌ 推送失败，请检查手机局域网配对");
-        }
+    // 渲染面板内容
+    function renderPanelContent(data) {
+      const platformName = data.platformName || data.name || "媒体下载";
+      const title = (data.title || "ClipDown 媒体").trim();
+      const cover = data.cover || data.thumbnail || (data.images && data.images[0]) || "";
+      const items = data.items || [];
+      const imageCount = items.filter(x => x.type === "image").length;
+      const hasVideo = items.some(x => x.type === "video");
+
+      let typeBadge = "在线媒体";
+      if (hasVideo && imageCount > 0) typeBadge = `视频 + ${imageCount}图`;
+      else if (hasVideo) typeBadge = "🎬 视频媒体";
+      else if (imageCount > 0) typeBadge = `🖼️ ${imageCount}张原图`;
+
+      const subfolder = downloadConfig.downloadSubfolder ? `Downloads/${downloadConfig.downloadSubfolder}` : "Downloads";
+
+      panel.innerHTML = `
+        <div class="clipdown-panel-header">
+          <div class="clipdown-badge-row">
+            <span class="clipdown-pill clipdown-pill-brand">${platformName}</span>
+            <span class="clipdown-pill clipdown-pill-sub">${typeBadge}</span>
+          </div>
+          <div class="clipdown-header-tools">
+            <button class="clipdown-tool-btn" id="clipdown-btn-refresh" title="重新嗅探">🔄</button>
+            <button class="clipdown-tool-btn" id="clipdown-btn-close" title="关闭">×</button>
+          </div>
+        </div>
+
+        <div class="clipdown-media-row">
+          ${cover ? `<img src="${cover}" class="clipdown-media-cover" alt="Cover" />` : ""}
+          <div class="clipdown-media-title" title="${title}">${title}</div>
+        </div>
+
+        <div class="clipdown-streams-list" id="clipdown-streams-list">
+          ${items.length > 0 ? items.map((item, idx) => `
+            <div class="clipdown-stream-item">
+              <span class="clipdown-stream-label" title="${item.label}">${item.label}</span>
+              <button class="clipdown-dl-btn" data-idx="${idx}">💻 下载</button>
+            </div>
+          `).join("") : `
+            <div class="clipdown-empty-text">未直接探测到音视频直链，支持推送到手机下载</div>
+          `}
+        </div>
+
+        <div class="clipdown-panel-actions">
+          ${imageCount > 1 ? `
+            <button class="clipdown-action-btn clipdown-btn-batch" id="clipdown-batch-btn">
+              📦 一键下载全部 ${imageCount} 张原图
+            </button>
+          ` : ""}
+          <button class="clipdown-action-btn clipdown-btn-mobile" id="clipdown-mobile-btn">
+            🚀 推送到手机下载
+          </button>
+        </div>
+
+        <div class="clipdown-panel-footer">
+          <span class="clipdown-footer-path">📂 存至: <strong>${subfolder}</strong></span>
+        </div>
+      `;
+
+      // 绑定关闭
+      panel.querySelector("#clipdown-btn-close").addEventListener("click", (e) => {
+        e.stopPropagation();
+        panel.classList.add("hidden");
       });
-      menu.classList.add("hidden");
-    });
-  }
 
-  function triggerToast(text) {
-    const t = document.createElement("div");
-    t.className = "clipdown-toast";
-    t.textContent = text;
-    document.body.appendChild(t);
-    setTimeout(() => {
-      t.classList.add("fade-out");
-      setTimeout(() => t.remove(), 400);
-    }, 2500);
+      // 绑定刷新
+      panel.querySelector("#clipdown-btn-refresh").addEventListener("click", (e) => {
+        e.stopPropagation();
+        loadAndRenderPanel(true);
+      });
+
+      // 绑定各清晰度/分项下载按钮（完全不跳 alert / toast，就地静默变绿反馈）
+      panel.querySelectorAll(".clipdown-dl-btn").forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const idx = parseInt(btn.dataset.idx, 10);
+          const item = items[idx];
+          if (!item) return;
+
+          const rawTitle = title.substring(0, 40).replace(/[\\/:*?"<>|]/g, "_");
+          const filename = `${rawTitle}.${item.ext || "mp4"}`;
+
+          // 视觉反馈：变绿已开始，绝不跳任何打扰弹窗
+          const origText = btn.textContent;
+          btn.textContent = "✓ 已开始";
+          btn.classList.add("clipdown-btn-success");
+
+          chrome.runtime.sendMessage({
+            action: "DOWNLOAD_MEDIA_PC",
+            url: item.url,
+            filename,
+            platform: data.platform
+          });
+
+          setTimeout(() => {
+            btn.textContent = origText;
+            btn.classList.remove("clipdown-btn-success");
+          }, 1800);
+        });
+      });
+
+      // 批量图集下载按钮
+      const batchBtn = panel.querySelector("#clipdown-batch-btn");
+      if (batchBtn) {
+        batchBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const images = items.filter(x => x.type === "image");
+          if (images.length === 0) return;
+
+          const origText = batchBtn.textContent;
+          batchBtn.textContent = "⏳ 正在启动批量下载...";
+          batchBtn.classList.add("clipdown-btn-success");
+
+          chrome.runtime.sendMessage({
+            action: "DOWNLOAD_BATCH_PC",
+            items: images,
+            baseTitle: title.substring(0, 40).replace(/[\\/:*?"<>|]/g, "_"),
+            platform: data.platform
+          }, (res) => {
+            batchBtn.textContent = `✓ 全部 ${images.length} 张原图已开始下载`;
+            setTimeout(() => {
+              batchBtn.textContent = origText;
+              batchBtn.classList.remove("clipdown-btn-success");
+            }, 2000);
+          });
+        });
+      }
+
+      // 推送到手机按钮
+      const mobileBtn = panel.querySelector("#clipdown-mobile-btn");
+      if (mobileBtn) {
+        mobileBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          const origText = mobileBtn.textContent;
+          mobileBtn.textContent = "正在推送...";
+
+          chrome.runtime.sendMessage({
+            action: "ENQUEUE_URL",
+            url: window.location.href
+          }, (res) => {
+            if (res && res.success) {
+              mobileBtn.textContent = "✓ 已推送到手机！";
+              mobileBtn.classList.add("clipdown-btn-success");
+            } else {
+              mobileBtn.textContent = "❌ 推送失败(请查配对)";
+            }
+            setTimeout(() => {
+              mobileBtn.textContent = origText;
+              mobileBtn.classList.remove("clipdown-btn-success");
+            }, 2000);
+          });
+        });
+      }
+    }
+
+    function renderEmptyContent() {
+      panel.innerHTML = `
+        <div class="clipdown-panel-header">
+          <div class="clipdown-badge-row">
+            <span class="clipdown-pill clipdown-pill-brand">${media.name || "当前页"}</span>
+            <span class="clipdown-pill clipdown-pill-sub">通用网页</span>
+          </div>
+          <div class="clipdown-header-tools">
+            <button class="clipdown-tool-btn" id="clipdown-btn-close">×</button>
+          </div>
+        </div>
+        <div class="clipdown-empty-text">未在当前页面嗅探到直接下载流，可点击下方按钮推送到手机端深度解析</div>
+        <div class="clipdown-panel-actions">
+          <button class="clipdown-action-btn clipdown-btn-mobile" id="clipdown-mobile-btn">
+            🚀 推送到手机下载
+          </button>
+        </div>
+      `;
+
+      panel.querySelector("#clipdown-btn-close").addEventListener("click", (e) => {
+        e.stopPropagation();
+        panel.classList.add("hidden");
+      });
+
+      const mobileBtn = panel.querySelector("#clipdown-mobile-btn");
+      if (mobileBtn) {
+        mobileBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          chrome.runtime.sendMessage({
+            action: "ENQUEUE_URL",
+            url: window.location.href
+          });
+          mobileBtn.textContent = "✓ 已推送到手机！";
+          mobileBtn.classList.add("clipdown-btn-success");
+          setTimeout(() => {
+            mobileBtn.textContent = "🚀 推送到手机下载";
+            mobileBtn.classList.remove("clipdown-btn-success");
+          }, 2000);
+        });
+      }
+    }
   }
 
   // 延迟注入防白屏干扰

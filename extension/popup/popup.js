@@ -167,12 +167,18 @@ document.addEventListener("DOMContentLoaded", async () => {
   // 复制浏览器默认下载设置 URL
   btnOpenEdgeSettings.addEventListener("click", () => {
     navigator.clipboard.writeText("edge://settings/downloads");
-    alert("已复制 Edge 下载设置地址：\nedge://settings/downloads\n请粘贴至浏览器新标签页打开，即可将默认下载盘符修改为 D盘或 E盘！");
+    btnOpenEdgeSettings.textContent = "✓ 已复制 Edge 地址";
+    setTimeout(() => {
+      btnOpenEdgeSettings.textContent = "复制 Edge 下载设置网址";
+    }, 1800);
   });
 
   btnOpenChromeSettings.addEventListener("click", () => {
     navigator.clipboard.writeText("chrome://settings/downloads");
-    alert("已复制 Chrome 下载设置地址：\nchrome://settings/downloads\n请粘贴至浏览器新标签页打开，即可将默认下载盘符修改为 D盘或 E盘！");
+    btnOpenChromeSettings.textContent = "✓ 已复制 Chrome 地址";
+    setTimeout(() => {
+      btnOpenChromeSettings.textContent = "复制 Chrome 下载设置网址";
+    }, 1800);
   });
 
   // 初始化检查
@@ -258,11 +264,17 @@ document.addEventListener("DOMContentLoaded", async () => {
         </div>
       `).join("");
 
-      // 绑定单项下载与复制
+      // 绑定单项下载与复制（静默无感反馈，杜绝打扰弹窗）
       document.querySelectorAll(".btn-item-dl").forEach(btn => {
         btn.addEventListener("click", () => {
           const idx = parseInt(btn.dataset.idx, 10);
           const item = media.items[idx];
+          btn.textContent = "✓ 已开始";
+          btn.style.backgroundColor = "#059669";
+          setTimeout(() => {
+            btn.textContent = "下载";
+            btn.style.backgroundColor = "";
+          }, 1800);
           downloadSingleItem(item, media.platform);
         });
       });
@@ -270,7 +282,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       document.querySelectorAll(".btn-item-copy").forEach(btn => {
         btn.addEventListener("click", () => {
           navigator.clipboard.writeText(btn.dataset.url);
-          alert("已复制媒体直链！");
+          btn.textContent = "✓ 已复制";
+          setTimeout(() => {
+            btn.textContent = "复制";
+          }, 1800);
         });
       });
     } else {
@@ -340,13 +355,18 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     btnBatchDownloadImages.disabled = false;
-    btnBatchDownloadImages.textContent = `📦 批量下载全部 ${images.length} 张原图`;
-
     if (res && res.success) {
-      const folderMsg = res.folder ? `Downloads/${res.folder}` : "Downloads (根目录)";
-      alert(`🎉 成功启动下载全部 ${res.count} 张高清原图！\n文件保存在: ${folderMsg}`);
+      btnBatchDownloadImages.textContent = `✓ 全部 ${images.length} 张原图已开始下载`;
+      btnBatchDownloadImages.style.backgroundColor = "#059669";
+      setTimeout(() => {
+        btnBatchDownloadImages.textContent = `📦 批量下载全部 ${images.length} 张原图`;
+        btnBatchDownloadImages.style.backgroundColor = "";
+      }, 2000);
     } else {
-      alert("下载遇到问题，请重试");
+      btnBatchDownloadImages.textContent = `❌ 批量下载失败`;
+      setTimeout(() => {
+        btnBatchDownloadImages.textContent = `📦 批量下载全部 ${images.length} 张原图`;
+      }, 2000);
     }
   }
 
@@ -366,20 +386,25 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
 
       if (res && res.success) {
-        if (res.data?.saveAs) {
-          alert(`📂 请在弹出的 Windows 保存窗口中选择任意磁盘与保存文件夹！\n建议文件名: ${filename}`);
-        } else {
-          const folderMsg = res.data?.folder ? `Downloads/${res.data.folder}` : "Downloads (根目录)";
-          alert(`✅ 已在电脑端开始下载: ${filename}\n保存于: ${folderMsg}`);
-        }
+        btnPcDownloadPrimary.textContent = "✓ 已开始下载";
+        btnPcDownloadPrimary.style.backgroundColor = "#059669";
+        setTimeout(() => {
+          btnPcDownloadPrimary.style.backgroundColor = "";
+          updateDownloadPreview();
+        }, 1800);
       } else {
-        alert(`❌ 下载失败: ${res ? res.error : "未知错误"}`);
+        btnPcDownloadPrimary.textContent = `❌ 下载受阻: ${res ? res.error : "未知错误"}`;
+        setTimeout(() => {
+          updateDownloadPreview();
+        }, 2200);
       }
     } catch (e) {
-      alert(`❌ 下载异常: ${e.message}`);
+      btnPcDownloadPrimary.textContent = `❌ 下载异常: ${e.message}`;
+      setTimeout(() => {
+        updateDownloadPreview();
+      }, 2200);
     } finally {
       btnPcDownloadPrimary.disabled = false;
-      updateDownloadPreview();
     }
   }
 
@@ -397,15 +422,25 @@ document.addEventListener("DOMContentLoaded", async () => {
         url: tab.url
       });
       if (res && res.success) {
-        alert("🚀 已成功推送到手机！手机悬浮球与下载引擎已自动启动识别与下载。");
+        btnPushToMobile.textContent = "✓ 已推送到手机！";
+        btnPushToMobile.style.backgroundColor = "#059669";
+        setTimeout(() => {
+          btnPushToMobile.textContent = "🚀 推送到手机下载";
+          btnPushToMobile.style.backgroundColor = "";
+        }, 1800);
       } else {
-        alert(`❌ 推送失败: ${res ? res.error : "请先在「配对设置」连接手机"}`);
+        btnPushToMobile.textContent = "❌ 推送失败(请检查配对)";
+        setTimeout(() => {
+          btnPushToMobile.textContent = "🚀 推送到手机下载";
+        }, 2000);
       }
     } catch (e) {
-      alert(`❌ 推送异常: ${e.message}`);
+      btnPushToMobile.textContent = `❌ 推送异常: ${e.message}`;
+      setTimeout(() => {
+        btnPushToMobile.textContent = "🚀 推送到手机下载";
+      }, 2000);
     } finally {
       btnPushToMobile.disabled = false;
-      btnPushToMobile.textContent = "🚀 推送到手机下载";
     }
   });
 
@@ -413,12 +448,17 @@ document.addEventListener("DOMContentLoaded", async () => {
   btnCopyMediaUrl.addEventListener("click", () => {
     if (currentResolvedMedia?.items?.[0]?.url) {
       navigator.clipboard.writeText(currentResolvedMedia.items[0].url);
-      alert("✅ 已复制媒体直链！");
+      btnCopyMediaUrl.textContent = "✓ 已复制直链";
+      setTimeout(() => {
+        btnCopyMediaUrl.textContent = "📋 复制直链";
+      }, 1800);
     } else {
-      const [tab] = chrome.tabs.query({ active: true, currentWindow: true });
       if (mediaUrlText.textContent) {
         navigator.clipboard.writeText(mediaUrlText.textContent);
-        alert("✅ 已复制当前网页链接！");
+        btnCopyMediaUrl.textContent = "✓ 已复制网页链接";
+        setTimeout(() => {
+          btnCopyMediaUrl.textContent = "📋 复制直链";
+        }, 1800);
       }
     }
   });
