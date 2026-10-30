@@ -36,6 +36,81 @@ const PLATFORMS = {
   }
 };
 
+// 缓存每个 tab 正在播放的 YouTube googlevideo 真实流
+const tabYouTubeStreams = new Map();
+
+chrome.tabs.onRemoved?.addListener((tabId) => {
+  tabYouTubeStreams.delete(tabId);
+});
+chrome.tabs.onUpdated?.addListener((tabId, changeInfo) => {
+  if (changeInfo.url) {
+    tabYouTubeStreams.delete(tabId);
+  }
+});
+
+// 通过 webRequest 监听真实播放中的 googlevideo.com/videoplayback 直链
+try {
+  if (chrome.webRequest && chrome.webRequest.onBeforeRequest) {
+    chrome.webRequest.onBeforeRequest.addListener(
+      (details) => {
+        const url = details.url;
+        if (!url || !url.includes("googlevideo.com/videoplayback")) return;
+
+        try {
+          const urlObj = new URL(url);
+          const itag = urlObj.searchParams.get("itag");
+          const mime = urlObj.searchParams.get("mime") || "";
+          const docid = urlObj.searchParams.get("id") || urlObj.searchParams.get("docid") || "";
+
+          // 移除分片 range 与缓冲参数，恢复完整可落盘直链
+          urlObj.searchParams.delete("range");
+          urlObj.searchParams.delete("rn");
+          urlObj.searchParams.delete("rbuf");
+          const fullStreamUrl = urlObj.toString();
+
+          const tabId = details.tabId;
+          if (tabId && tabId > 0) {
+            if (!tabYouTubeStreams.has(tabId)) {
+              tabYouTubeStreams.set(tabId, { videoId: docid, streams: new Map() });
+            }
+            const tabData = tabYouTubeStreams.get(tabId);
+            if (docid && tabData.videoId && tabData.videoId !== docid) {
+              tabData.streams.clear();
+              tabData.videoId = docid;
+            }
+
+            let quality = "标清视频 (MP4)";
+            let ext = "mp4";
+            let type = "video";
+
+            if (itag === "22") { quality = "超清视频 (720p MP4)"; ext = "mp4"; type = "video"; }
+            else if (itag === "18") { quality = "标清视频 (360p MP4)"; ext = "mp4"; type = "video"; }
+            else if (itag === "137") { quality = "原画视频 (1080p MP4)"; ext = "mp4"; type = "video"; }
+            else if (itag === "136") { quality = "高清视频 (720p MP4)"; ext = "mp4"; type = "video"; }
+            else if (itag === "135") { quality = "标清视频 (480p MP4)"; ext = "mp4"; type = "video"; }
+            else if (itag === "134") { quality = "标清视频 (360p MP4)"; ext = "mp4"; type = "video"; }
+            else if (itag === "140") { quality = "纯音频 (128kbps M4A)"; ext = "m4a"; type = "audio"; }
+            else if (itag === "251") { quality = "高码率音频 (Opus)"; ext = "webm"; type = "audio"; }
+            else if (mime.startsWith("audio/")) { quality = "纯音频流"; ext = "m4a"; type = "audio"; }
+            else if (mime.startsWith("video/")) { quality = "视频媒体流 (MP4)"; ext = "mp4"; type = "video"; }
+
+            tabData.streams.set(itag || fullStreamUrl, {
+              url: fullStreamUrl,
+              itag,
+              label: quality,
+              ext,
+              type
+            });
+          }
+        } catch (_) {}
+      },
+      { urls: ["*://*.googlevideo.com/videoplayback*"] }
+    );
+  }
+} catch (e) {
+  console.warn("webRequest listener registration failed:", e);
+}
+
 // 提取指定域名的 Cookie 字符串
 async function getCookiesForDomains(domains) {
   const cookieMap = new Map();
@@ -90,7 +165,9 @@ function sanitizePhoneUrl(rawUrl) {
   // 替换全角冒号、全角句号
   url = url.replace(/：/g, ":").replace(/。/g, ".");
   // 移除所有内部空白字符（包括空格、制表符、零宽字符）
-  url = url.replace(/\s+/g, "");
+  url = url.replace(/[\s\u200B-\u200D\uFEFF]+/g, "");
+  // 修复常见的 ": 8765" 或 "198 :8765" 冒号前后残留空格
+  url = url.replace(/\s*:\s*/g, ":");
   // 自动补全 http://
   if (!/^https?:\/\//i.test(url)) {
     url = "http://" + url;
@@ -142,13 +219,15 @@ async function fetchFromPhone(endpoint, options = {}) {
 
     return await resp.json();
   } catch (err) {
-    let errStr = err.message || (err.name ? `${err.name}` : String(err));
-    if (err.name === "TimeoutError") {
+    let errStr = err?.message || (err?.name ? `${err.name}` : String(err));
+    if (err?.name === "TimeoutError" || String(err).includes("TimeoutError") || errStr.includes("aborted")) {
       errStr = "请求超时：手机未开启局域网同步服务，或电脑与手机不在同一 Wi-Fi";
     } else if (errStr.includes("Failed to fetch") || errStr.includes("NetworkError")) {
       errStr = "连接失败：请确认手机 ClipDown 已开启同步、IP 地址正确且处于同一局域网";
     } else if (errStr.includes("Failed to parse URL")) {
       errStr = `服务地址格式有误: ${url}`;
+    } else if (errStr === "[object DOMException]") {
+      errStr = "请求被中止或超时，请检查手机 ClipDown 服务是否启动";
     }
     throw new Error(errStr);
   }
@@ -435,8 +514,174 @@ async function resolveInstagramPost(shortcode, inpageItems = []) {
   return { items: inpageItems };
 }
 
+// Piped 高可用公共实例矩阵 (用于免 Key 稳定提取 YouTube 直播与视频流)
+const PIPED_INSTANCES = [
+  "https://api.piped.private.coffee",
+  "https://pipedapi.tokhmi.xyz",
+  "https://pipedapi.reallyaweso.me",
+  "https://pipedapi.adminforge.de"
+];
+
+function extractYouTubeVideoId(url) {
+  if (!url) return null;
+  const s = String(url);
+  const m = s.match(/(?:v=|\/shorts\/|\/embed\/|\/live\/|youtu\.be\/|\/v\/)([a-zA-Z0-9_-]{6,15})/);
+  if (m) return m[1];
+  return null;
+}
+
+async function resolveYouTubeVideo(targetUrl, inpageData, senderTabId = null) {
+  const videoId = extractYouTubeVideoId(targetUrl) || inpageData?.id;
+  const rawTitle = inpageData?.title ? inpageData.title.replace(/ - YouTube$/, "").trim() : "";
+  const title = rawTitle || "YouTube_Video";
+  const author = inpageData?.author || "YouTube";
+  const cover = videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : (inpageData?.thumbnail || null);
+
+  const items = [];
+  const seenUrls = new Set();
+
+  function addItem(item) {
+    if (!item || !item.url || seenUrls.has(item.url)) return;
+    seenUrls.add(item.url);
+    items.push(item);
+  }
+
+  // 1. 优先读取由 webRequest 拦截到的当前页面真实播放流 (100% 原生无损、免外部依赖)
+  if (senderTabId && tabYouTubeStreams.has(senderTabId)) {
+    const tabData = tabYouTubeStreams.get(senderTabId);
+    if (tabData && tabData.streams) {
+      for (const stream of tabData.streams.values()) {
+        addItem({
+          url: stream.url,
+          type: stream.type,
+          label: `${stream.label} (原生播放流)`,
+          ext: stream.ext
+        });
+      }
+    }
+  }
+
+  // 2. 轮询 Piped API 实例矩阵提取可用音视频直接下载流
+  if (videoId) {
+    for (const base of PIPED_INSTANCES) {
+      try {
+        const resp = await fetch(`${base}/streams/${videoId}`, {
+          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(5000)
+        });
+        if (resp.ok) {
+          const data = await resp.json();
+          const videoStreams = data.videoStreams || [];
+          const audioStreams = data.audioStreams || [];
+
+          videoStreams.forEach((v) => {
+            if (!v.url) return;
+            const q = v.quality || "默认画质";
+            const ext = v.format === "MPEG_4" || v.mimeType?.includes("mp4") ? "mp4" : (v.format?.toLowerCase() || "mp4");
+            const isFullAudioVideo = !v.videoOnly;
+            addItem({
+              url: v.url,
+              type: "video",
+              label: `${q} ${ext.toUpperCase()}${isFullAudioVideo ? ' (音画合一)' : ''}`,
+              ext
+            });
+          });
+
+          audioStreams.slice(0, 2).forEach((a) => {
+            if (!a.url) return;
+            const q = a.quality || "标准";
+            const ext = a.mimeType?.includes("mp4") || a.format?.includes("m4a") ? "m4a" : "mp3";
+            addItem({
+              url: a.url,
+              type: "audio",
+              label: `纯音频原声 (${q} ${ext.toUpperCase()})`,
+              ext
+            });
+          });
+
+          if (items.some(x => x.type === "video")) {
+            break;
+          }
+        }
+      } catch (err) {
+        console.warn(`Piped instance ${base} request failed:`, err.message);
+      }
+    }
+  }
+
+  // 3. 检查用户是否配置了自建 Cobalt / 远端解析服务
+  try {
+    const store = await chrome.storage.local.get(["custom_remote_api", "custom_remote_jwt"]);
+    const customApi = (store.custom_remote_api || "").trim();
+    if (customApi) {
+      const headers = { "Accept": "application/json", "Content-Type": "application/json" };
+      if (store.custom_remote_jwt) {
+        headers["Authorization"] = `Bearer ${store.custom_remote_jwt.trim()}`;
+      }
+      const cobResp = await fetch(customApi, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ url: targetUrl, videoQuality: "1080" }),
+        signal: AbortSignal.timeout(6000)
+      });
+      if (cobResp.ok) {
+        const cJson = await cobResp.json();
+        if (cJson.url) {
+          addItem({
+            url: cJson.url,
+            type: "video",
+            label: "超清视频 (1080p MP4 - 自建服务)",
+            ext: "mp4"
+          });
+        }
+      }
+    }
+  } catch (err) {
+    console.warn("Custom remote API fetch failed:", err);
+  }
+
+  // 4. 检查页面上报的 inpageData 视频流
+  if (inpageData && inpageData.videos && inpageData.videos.length > 0) {
+    inpageData.videos.forEach((v, idx) => {
+      addItem({
+        url: v,
+        type: "video",
+        label: `页面直出视频 ${idx + 1} (MP4)`,
+        ext: "mp4"
+      });
+    });
+  }
+
+  // 5. 极致保底：4K 与高清封面原图 100% 保证可下载
+  if (cover) {
+    addItem({
+      url: cover,
+      type: "image",
+      label: "4K 视频封面原图 (JPG)",
+      ext: "jpg"
+    });
+  }
+  if (videoId) {
+    addItem({
+      url: `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`,
+      type: "image",
+      label: "高清视频封面 (JPG)",
+      ext: "jpg"
+    });
+  }
+
+  return {
+    platform: "youtube",
+    platformName: "YouTube",
+    title,
+    author,
+    cover,
+    items
+  };
+}
+
 // ── 四大主流平台专属深度解析器 ──────────────────────────────────────────────
-async function resolveMediaForPlatform(targetUrl, inpageData) {
+async function resolveMediaForPlatform(targetUrl, inpageData, senderTabId = null) {
   const url = targetUrl.toLowerCase();
 
   // 1. X (Twitter)
@@ -482,75 +727,7 @@ async function resolveMediaForPlatform(targetUrl, inpageData) {
 
   // 2. YouTube
   if (url.includes("youtube.com") || url.includes("youtu.be")) {
-    let videoId = null;
-    if (url.includes("youtu.be")) {
-      videoId = targetUrl.split("youtu.be/")[1]?.split("?")[0];
-    } else if (url.includes("/shorts/")) {
-      videoId = targetUrl.split("/shorts/")[1]?.split("?")[0];
-    } else {
-      const m = targetUrl.match(/[?&]v=([^&]+)/);
-      videoId = m ? m[1] : null;
-    }
-
-    const title = inpageData?.title || "YouTube_Video";
-    const cover = videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : null;
-
-    // 尝试调用 cobalt tools 解析 1080p MP4
-    const items = [];
-    try {
-      const cobResp = await fetch("https://api.cobalt.tools", {
-        method: "POST",
-        headers: {
-          "Accept": "application/json",
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          url: targetUrl,
-          videoQuality: "1080"
-        }),
-        signal: AbortSignal.timeout(6000)
-      });
-      if (cobResp.ok) {
-        const cJson = await cobResp.json();
-        if (cJson.url) {
-          items.push({
-            url: cJson.url,
-            type: "video",
-            label: "高清视频 (1080p MP4)",
-            ext: "mp4"
-          });
-        }
-      }
-    } catch (_) {}
-
-    // 音频提取通道
-    try {
-      const audioResp = await fetch("https://api.cobalt.tools", {
-        method: "POST",
-        headers: { "Accept": "application/json", "Content-Type": "application/json" },
-        body: JSON.stringify({ url: targetUrl, downloadMode: "audio" }),
-        signal: AbortSignal.timeout(4000)
-      });
-      if (audioResp.ok) {
-        const aJson = await audioResp.json();
-        if (aJson.url) {
-          items.push({
-            url: aJson.url,
-            type: "audio",
-            label: "纯音频 (MP3)",
-            ext: "mp3"
-          });
-        }
-      }
-    } catch (_) {}
-
-    return {
-      platform: "youtube",
-      platformName: "YouTube",
-      title,
-      cover,
-      items
-    };
+    return await resolveYouTubeVideo(targetUrl, inpageData, senderTabId);
   }
 
   // 3. Instagram 专属深度图集与视频解析
@@ -650,7 +827,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 
         case "RESOLVE_MEDIA": {
           const { url, inpageData } = msg;
-          const media = await resolveMediaForPlatform(url, inpageData);
+          const media = await resolveMediaForPlatform(url, inpageData, sender.tab?.id);
           sendResponse({ success: true, data: media });
           break;
         }
@@ -698,7 +875,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         case "DOWNLOAD_CURRENT_TAB_PC": {
           const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
           if (!tab || !tab.url) throw new Error("未检测到当前网页标签");
-          const media = await resolveMediaForPlatform(tab.url, msg.inpageData);
+          const media = await resolveMediaForPlatform(tab.url, msg.inpageData, tab.id);
           if (!media || !media.items || media.items.length === 0) {
             throw new Error("当前网页未检测到可直接下载的媒体流");
           }
@@ -795,8 +972,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           sendResponse({ success: false, error: "未知操作" });
       }
     } catch (err) {
-      console.error("Action error:", msg.action, err);
-      sendResponse({ success: false, error: err.message || String(err) });
+      const errMsg = err?.message || (err?.name ? `${err.name}` : String(err));
+      // 网络探活与常规业务失败（如手机未开启局域网同步、网络超时等）使用 warn，避免触发 Chromium 扩展后台致命红标错误
+      if (msg.action === "TEST_CONNECTION" || msg.action === "PULL_TASKS" || msg.action === "RESOLVE_MEDIA") {
+        console.warn(`[ClipDown] ${msg.action} probe notice:`, errMsg);
+      } else {
+        console.error("Action error:", msg.action, err);
+      }
+      sendResponse({ success: false, error: errMsg });
     }
   })();
   return true;

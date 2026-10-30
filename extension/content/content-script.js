@@ -57,6 +57,9 @@
     if (IS_XIAOHONGSHU) {
       return path.includes("/user/profile/");
     }
+    if (IS_YOUTUBE) {
+      return path.includes("/@") || path.includes("/channel/") || path.includes("/c/") || path.includes("/playlist") || path.includes("/videos");
+    }
     return false;
   }
 
@@ -419,6 +422,33 @@
           }
         }
       });
+    } else if (IS_YOUTUBE) {
+      document.querySelectorAll('ytd-rich-item-renderer, ytd-video-renderer, ytd-grid-video-renderer, ytd-compact-video-renderer, ytd-reel-item-renderer').forEach(el => {
+        const link = el.querySelector('a#video-title-link, a#thumbnail, a[href*="/watch?v="], a[href*="/shorts/"]');
+        if (!link) return;
+        const href = link.getAttribute("href") || "";
+        const videoId = href.includes("/shorts/")
+          ? href.split("/shorts/")[1]?.split(/[?&]/)[0]
+          : href.match(/[?&]v=([^&]+)/)?.[1];
+        if (videoId && !seenCodes.has(videoId)) {
+          seenCodes.add(videoId);
+          const title = el.querySelector("#video-title, #video-title-link")?.textContent?.trim() || `YouTube 视频 (${videoId})`;
+          const author = el.querySelector("#channel-name, ytd-channel-name, #owner")?.textContent?.trim() || "YouTube";
+          const cover = `https://i.ytimg.com/vi/${videoId}/hqdefault.jpg`;
+          harvested.push({
+            platform: "youtube",
+            shortcode: videoId,
+            url: href.startsWith("http") ? href : `https://www.youtube.com${href}`,
+            title,
+            author,
+            cover,
+            items: [
+              { url: cover, type: "image", label: "视频封面 (JPG)", ext: "jpg" }
+            ],
+            isVideo: true
+          });
+        }
+      });
     }
 
     return harvested;
@@ -517,22 +547,34 @@
     if (IS_YOUTUBE) {
       let videoId = null;
       if (HOST.includes("youtu.be")) {
-        videoId = window.location.pathname.substring(1);
+        videoId = window.location.pathname.substring(1).split(/[?&#]/)[0];
       } else if (window.location.pathname.includes("/shorts/")) {
-        videoId = window.location.pathname.split("/shorts/")[1]?.split("/")[0] || null;
+        videoId = window.location.pathname.split("/shorts/")[1]?.split(/[?&#/]/)[0] || null;
       } else {
         const params = new URLSearchParams(window.location.search);
         videoId = params.get("v");
       }
 
+      const ytTitle = document.querySelector("h1.ytd-watch-metadata, #title h1, h2.title, ytd-reel-video-renderer #title")?.textContent?.trim()
+        || document.title.replace(/ - YouTube$/, "").trim();
+      const ytAuthor = document.querySelector("#channel-name a, #owner #text a, ytd-channel-name a")?.textContent?.trim() || "YouTube";
+
+      const videos = [];
+      document.querySelectorAll("video").forEach(v => {
+        if (v.src && !v.src.startsWith("blob:") && !videos.includes(v.src)) {
+          videos.push(v.src);
+        }
+      });
+
       return {
         platform: "youtube",
         name: "YouTube",
         id: videoId,
-        title: document.title.replace(/ - YouTube$/, ""),
+        title: ytTitle || "YouTube 视频",
+        author: ytAuthor,
         url: window.location.href,
         thumbnail: videoId ? `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg` : null,
-        videos: [],
+        videos,
         images: []
       };
     }
@@ -842,6 +884,184 @@
         });
 
         coverWrap.appendChild(btn);
+      });
+    }
+
+    // 4. YouTube 专属下载通道 (播放页操作栏 + Shorts 侧边栏 + 首页/搜索/频道瀑布流卡片)
+    if (IS_YOUTUBE) {
+      // 4.1 播放详情页操作栏按钮 (Watch Page Action Bar)
+      if (window.location.pathname === "/watch") {
+        const actionsHost = document.querySelector("#actions #top-level-buttons-computed, ytd-watch-metadata #actions");
+        if (actionsHost && !actionsHost.querySelector(".clipdown-yt-action-btn")) {
+          const ytBtn = document.createElement("button");
+          ytBtn.className = "clipdown-yt-action-btn";
+          ytBtn.title = "ClipDown 电脑直接下载 YouTube 视频";
+          ytBtn.innerHTML = `
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v13M17 10l-5 5-5-5"/>
+              <path d="M20 21H4"/>
+            </svg>
+            <span>ClipDown 下载</span>
+          `;
+          ytBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const origHtml = ytBtn.innerHTML;
+            ytBtn.innerHTML = `<span class="clipdown-inline-spinner"></span> 正在抓取流...`;
+            ytBtn.disabled = true;
+            try {
+              const inpageData = sniffPageMedia();
+              const res = await new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_CURRENT_TAB_PC",
+                  inpageData
+                }, resolve);
+              });
+              if (res && res.success) {
+                ytBtn.innerHTML = `✓ 已开始下载`;
+                ytBtn.classList.add("success");
+              } else {
+                ytBtn.innerHTML = `❌ ${res?.error || "下载失败"}`;
+              }
+            } catch (err) {
+              ytBtn.innerHTML = `❌ 下载异常`;
+            }
+            setTimeout(() => {
+              ytBtn.disabled = false;
+              ytBtn.classList.remove("success");
+              ytBtn.innerHTML = origHtml;
+            }, 3000);
+          });
+          actionsHost.prepend(ytBtn);
+        }
+      }
+
+      // 4.2 YouTube Shorts 右侧操作栏下载按钮
+      if (window.location.pathname.includes("/shorts/")) {
+        const shortsActions = document.querySelector("ytd-reel-player-overlay-renderer #actions, ytd-reel-video-renderer #actions");
+        if (shortsActions && !shortsActions.querySelector(".clipdown-shorts-dl-btn")) {
+          const sBtn = document.createElement("button");
+          sBtn.className = "clipdown-shorts-dl-btn";
+          sBtn.title = "ClipDown 一键下载此 Shorts 视频";
+          sBtn.innerHTML = `
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v13M17 10l-5 5-5-5"/>
+              <path d="M20 21H4"/>
+            </svg>
+            <span style="font-size:11px; margin-top:2px;">下载</span>
+          `;
+          sBtn.addEventListener("click", async (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            sBtn.style.opacity = "0.6";
+            try {
+              const inpageData = sniffPageMedia();
+              const res = await new Promise(resolve => {
+                chrome.runtime.sendMessage({
+                  action: "DOWNLOAD_CURRENT_TAB_PC",
+                  inpageData
+                }, resolve);
+              });
+              if (res && res.success) {
+                const span = sBtn.querySelector("span");
+                if (span) span.textContent = "已开始";
+              }
+            } catch (_) {}
+            setTimeout(() => {
+              sBtn.style.opacity = "1";
+              const span = sBtn.querySelector("span");
+              if (span) span.textContent = "下载";
+            }, 2500);
+          });
+          shortsActions.appendChild(sBtn);
+        }
+      }
+
+      // 4.3 首页 / 搜索 / 频道瀑布流视频卡片右下角按钮
+      document.querySelectorAll(`
+        ytd-rich-item-renderer:not([data-clipdown-injected]),
+        ytd-video-renderer:not([data-clipdown-injected]),
+        ytd-grid-video-renderer:not([data-clipdown-injected]),
+        ytd-compact-video-renderer:not([data-clipdown-injected]),
+        ytd-reel-item-renderer:not([data-clipdown-injected])
+      `).forEach(card => {
+        card.setAttribute("data-clipdown-injected", "true");
+        const thumbWrap = card.querySelector("#thumbnail, ytd-thumbnail, .thumbnail-container");
+        if (!thumbWrap) return;
+
+        const compStyle = window.getComputedStyle(thumbWrap);
+        if (compStyle.position === "static") {
+          thumbWrap.style.position = "relative";
+        }
+
+        const btn = document.createElement("div");
+        btn.className = "clipdown-card-dl-btn";
+        btn.title = "ClipDown 一键下载此视频";
+        btn.innerHTML = `
+          <span class="clipdown-card-dl-icon">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v13M17 10l-5 5-5-5"/>
+              <path d="M20 21H4"/>
+            </svg>
+          </span>
+          <span class="clipdown-card-dl-label">下载</span>
+        `;
+
+        btn.addEventListener("click", async (e) => {
+          e.stopPropagation();
+          e.preventDefault();
+
+          const link = card.querySelector('a#video-title-link, a#thumbnail, a[href*="/watch?v="], a[href*="/shorts/"]');
+          if (!link) return;
+          const href = link.getAttribute("href") || "";
+          const targetUrl = href.startsWith("http") ? href : `https://www.youtube.com${href}`;
+          const title = card.querySelector("#video-title, #video-title-link")?.textContent?.trim() || "YouTube_Video";
+
+          const origContent = btn.innerHTML;
+          btn.classList.add("loading");
+          btn.innerHTML = `<span class="clipdown-inline-spinner"></span> 解析中...`;
+
+          try {
+            const res = await new Promise(resolve => {
+              chrome.runtime.sendMessage({
+                action: "RESOLVE_MEDIA",
+                url: targetUrl,
+                inpageData: { title, url: targetUrl }
+              }, resolve);
+            });
+
+            if (res && res.success && res.data && res.data.items && res.data.items.length > 0) {
+              const bestVideo = res.data.items.find(x => x.type === "video") || res.data.items[0];
+              const ext = bestVideo.ext || "mp4";
+              const safeTitle = title.substring(0, 40).replace(/[\\/:*?"<>|]/g, "_");
+
+              btn.innerHTML = `⏳ 正在下载...`;
+              chrome.runtime.sendMessage({
+                action: "DOWNLOAD_MEDIA_PC",
+                url: bestVideo.url,
+                filename: `${safeTitle}.${ext}`,
+                platform: "youtube"
+              });
+
+              btn.classList.remove("loading");
+              btn.classList.add("success");
+              btn.innerHTML = `✓ 已下载`;
+            } else {
+              btn.classList.remove("loading");
+              btn.innerHTML = `❌ 未发现视频流`;
+            }
+          } catch (err) {
+            btn.classList.remove("loading");
+            btn.innerHTML = `❌ 下载失败`;
+          }
+
+          setTimeout(() => {
+            btn.classList.remove("success", "loading");
+            btn.innerHTML = origContent;
+          }, 3000);
+        });
+
+        thumbWrap.appendChild(btn);
       });
     }
   }

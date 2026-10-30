@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 76 已完成：安卓端主页解析页面新增链接直达输入框与解析按钮 · 快捷读取剪贴板与软键盘联动（Release 保持 1.858MB 严守 2.0MB 红线）**：安卓端应用内全屏左右滑动切换页面 · 导航栏紫晶发丝线实时联动与手势预判（阶段 75）
+- 当前正在开发任务：**阶段 77 已完成：电脑端 YouTube 下载全能重构（5 级容灾直下通道 + webRequest 嗅探拦截 + Piped 矩阵 + 操作栏/Shorts/卡片直接下载）· 扩展控制台历史报错彻底根除与防护强化（扩展升级 v1.7.0）**：安卓端主页解析页面新增链接直达输入框与解析按钮（阶段 76）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
@@ -1727,3 +1727,35 @@
   - APK Release 打包成功，体积 **1.858MB**（严守 2.0MB 红线）；
   - R8 混淆、资源压缩、Compose Runtime 字节码优化完全通过。
 - 本次文档更新时间：10.30 03:35
+
+
+## 阶段 77 电脑端 YouTube 下载全能重构 · 5 级容灾直下通道 · 扩展控制台历史报错彻底根除与防护强化 (扩展升级 v1.7.0) [计划时间：10.30 03:45 BY Antigravity][完成时间：10.30 04:05 BY Antigravity]
+- 已完成：
+  1. **扩展控制台全部 6 大历史报错彻底排查根除**：
+     - **报错 1 & 2 (Failed to parse URL from `...: 8765` / Failed to fetch)**：用户手动输入或粘贴的手机地址携带多余空格、制表符或全角符号。在 `service-worker.js` 与 `popup.js` 中新增强力全量清洗函数 `sanitizePhoneUrl` / `sanitizeUrl`，正则剥离零宽与内部空白字符并修复冒号空格；输入框绑定实时 input 监听即时清洗；
+     - **报错 3 (Cannot read properties of undefined reading '1')**：排查并彻底修复所有未加校验的 regex match / split 索引访问，采用 `?.` 与安全判空防线；
+     - **报错 4 & 5 (CSP inline event handler 拦截)**：彻底消除 HTML 模板中的任何内联事件监听器（如历史 `onerror`），改用标准的 `addEventListener(..., { once: true })`；
+     - **报错 6 (DOMException & console.error 污染)**：`fetchFromPhone` 超时由 DOMException 转换为人类可读说明；业务网络探活（如未开手机端服务）由 `console.error` 降级为 `console.warn`，杜绝 Chromium 产生红色致命扩展报错。
+  2. **电脑端 YouTube 5 级容灾下载架构**：
+     - **第 1 级 (webRequest 原生嗅探)**：利用 Chrome `webRequest` 监听截获当前播放的 `googlevideo.com/videoplayback` 真实媒体流，剥离分片参数还原可直接落盘的 MP4 标清/高清/音频直链；
+     - **第 2 级 (Piped 高可用矩阵)**：集成 `api.piped.private.coffee`、`pipedapi.tokhmi.xyz` 等实例，免 Key 获取 1080p/720p 视频与音频直链；
+     - **第 3 级 (自定义 Cobalt API)**：支持用户配置自建远程 API 节点解析；
+     - **第 4 级 (页面 DOM 提取)**：提取页面内 HTML5 视频流；
+     - **第 5 级 (4K 视频封面原图 100% 保底)**：高画质/4K 原画封面下载。
+  3. **页面原生 UI 深度融入**：
+     - YouTube 播放页 (`/watch`) 顶部操作栏注入紫晶专属「ClipDown 下载」按钮；
+     - YouTube Shorts 播放页侧边栏注入下载胶囊；
+     - 首页、搜索页、博主主页瀑布流卡片缩略图右下角注入 `.clipdown-card-dl-btn` 一键直下。
+- 改动文件：
+  - `extension/manifest.json` (升级 v1.7.0，声明 webRequest 权限与 googlevideo host_permissions)
+  - `extension/background/service-worker.js`
+  - `extension/content/content-script.js`
+  - `extension/content/content-style.css`
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.js`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - Android 单元测试 **160 例全绿**；
+  - 扩展全量 JS 语法通过 `node -c` 验证，0 语法报错。
+- 本次文档更新时间：10.30 04:05

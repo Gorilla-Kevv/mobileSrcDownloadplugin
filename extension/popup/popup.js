@@ -751,7 +751,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   // ── 局域网配对数据清洗与协议解析核心 ───────────────────────────────────────
   function sanitizeUrl(raw) {
     if (!raw) return "";
-    let u = String(raw).trim().replace(/：/g, ":").replace(/。/g, ".").replace(/\s+/g, "");
+    let u = String(raw).trim().replace(/：/g, ":").replace(/。/g, ".");
+    u = u.replace(/[\s\u200B-\u200D\uFEFF]+/g, "").replace(/\s*:\s*/g, ":");
     if (u && !/^https?:\/\//i.test(u)) {
       u = "http://" + u;
     }
@@ -798,11 +799,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     const ipMatch = text.match(/((?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)\.(?:25[0-5]|2[0-4]\d|[01]?\d\d?)(?:\s*[:：]\s*\d{2,5})?)/);
     const pinMatch = text.match(/\b(\d{6})\b/);
 
-    if (ipMatch) {
-      let raw = ipMatch[1].replace(/\s+/g, "").replace(/：/g, ":");
+    if (ipMatch && ipMatch[1]) {
+      let raw = ipMatch[1].replace(/[\s\u200B-\u200D\uFEFF]+/g, "").replace(/：/g, ":").replace(/\s*:\s*/g, ":");
       if (!raw.includes(":")) raw += ":8765";
       const cleanUrl = sanitizeUrl(raw);
-      const pin = pinMatch ? pinMatch[1] : "";
+      const pin = (pinMatch && pinMatch[1]) ? pinMatch[1] : "";
       return { url: cleanUrl, pin };
     }
 
@@ -849,7 +850,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         return;
       }
     }
-    const sanitized = val.replace(/\s+/g, "").replace(/：/g, ":");
+    const sanitized = val.replace(/[\s\u200B-\u200D\uFEFF]+/g, "").replace(/：/g, ":").replace(/\s*:\s*/g, ":");
     if (sanitized !== val) {
       inputPhoneUrl.value = sanitized;
     }
@@ -1053,7 +1054,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         subnets.add("10.252.146"); // 校园网/办公网用户当前网段
 
         let priorityList = [];
-        if (match) {
+        if (match && match[1]) {
           const lastOctet = parseInt(currVal.match(/\.(\d+)(?::|$)/)?.[1] || "100", 10);
           for (let diff = 0; diff <= 20; diff++) {
             if (lastOctet + diff <= 254) priorityList.push(`${match[1]}.${lastOctet + diff}`);
