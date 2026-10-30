@@ -24,12 +24,16 @@ import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
@@ -37,6 +41,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -56,10 +62,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
+import com.clipdown.app.clip.ClipboardMonitor
 import com.clipdown.app.ui.components.AppCard
 import com.clipdown.app.ui.components.AppChip
 import com.clipdown.app.ui.components.EmptyState
@@ -70,7 +79,10 @@ import com.clipdown.app.ui.components.StatusPill
 import com.clipdown.app.ui.components.Tone
 import com.clipdown.app.ui.components.VSpace
 import com.clipdown.app.ui.theme.AppTheme
+import com.clipdown.parser.core.LinkKind
 import com.clipdown.parser.core.ParserEngine
+import com.clipdown.parser.core.UrlUtil
+import com.clipdown.parser.model.ParseException
 import com.clipdown.parser.model.PostKind
 import com.clipdown.parser.model.ProfilePost
 import kotlinx.coroutines.Dispatchers
@@ -95,9 +107,39 @@ import kotlinx.coroutines.withContext
 fun ProfileScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val keyboardController = LocalSoftwareKeyboardController.current
     val sessions = ProfileCenter.sessions
     val active = ProfileCenter.active
     var detail by remember { mutableStateOf<ProfilePost?>(null) }
+
+    var input by remember { mutableStateOf("") }
+    var isParsing by remember { mutableStateOf(false) }
+    var inputError by remember { mutableStateOf<String?>(null) }
+
+    val doParse: (String) -> Unit = { rawText ->
+        val url = UrlUtil.extractFirst(rawText)
+        if (url.isNullOrBlank()) {
+            inputError = "未在输入中找到可识别的链接，请检查粘贴内容"
+        } else {
+            inputError = null
+            isParsing = true
+            scope.launch {
+                try {
+                    val kind = withContext(Dispatchers.IO) { ParserEngine.linkKind(url) }
+                    if (kind == LinkKind.POST) {
+                        inputError = "检测到这是单篇作品链接而非博主主页，请前往「首页」进行单篇解析与下载"
+                    } else {
+                        ProfileCenter.open(url, force = true)
+                        input = ""
+                    }
+                } catch (e: Exception) {
+                    inputError = (e as? ParseException)?.message ?: e.message ?: "主页解析失败"
+                } finally {
+                    isParsing = false
+                }
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -154,6 +196,103 @@ fun ProfileScreen() {
         containerColor = MaterialTheme.colorScheme.background
     ) { padding ->
         Column(Modifier.fillMaxSize().padding(padding)) {
+            // 主页链接直达输入与解析卡片
+            AppCard(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = AppTheme.spacing.screen, vertical = AppTheme.spacing.xs)
+            ) {
+                OutlinedTextField(
+                    value = input,
+                    onValueChange = {
+                        input = it
+                        inputError = null
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = {
+                        Text(
+                            "输入或粘贴博主主页 / 点赞页链接",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(
+                            Icons.Default.Person,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    trailingIcon = {
+                        if (input.isNotBlank()) {
+                            IconButton(onClick = { input = ""; inputError = null }) {
+                                Icon(
+                                    Icons.Default.Close,
+                                    contentDescription = "清空",
+                                    modifier = Modifier.size(18.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            if (input.isNotBlank() && !isParsing) {
+                                keyboardController?.hide()
+                                doParse(input)
+                            }
+                        }
+                    ),
+                    shape = RoundedCornerShape(AppTheme.radius.control),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant,
+                        focusedBorderColor = MaterialTheme.colorScheme.primary,
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant
+                    )
+                )
+
+                VSpace(AppTheme.spacing.sm)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(AppTheme.spacing.sm)
+                ) {
+                    SecondaryButton(
+                        text = "读取剪贴板",
+                        icon = Icons.Default.ContentPaste,
+                        modifier = Modifier.weight(1f),
+                        onClick = {
+                            keyboardController?.hide()
+                            val text = ClipboardMonitor.readAndSubmitForce()
+                            if (!text.isNullOrBlank()) {
+                                input = text
+                                doParse(text)
+                            } else {
+                                inputError = "剪贴板为空或当前无读取权限，请手动粘贴"
+                            }
+                        }
+                    )
+                    PrimaryButton(
+                        text = if (isParsing) "解析中…" else "解析主页",
+                        icon = Icons.Default.Search,
+                        modifier = Modifier.weight(1f),
+                        enabled = input.isNotBlank() && !isParsing,
+                        onClick = {
+                            keyboardController?.hide()
+                            doParse(input)
+                        }
+                    )
+                }
+
+                if (inputError != null) {
+                    VSpace(AppTheme.spacing.xs)
+                    NoticeBar(inputError!!, Tone.Danger)
+                }
+            }
+
             if (sessions.isNotEmpty()) {
                 ProfileTabStrip(
                     sessions = sessions,
@@ -168,8 +307,8 @@ fun ProfileScreen() {
                     null -> AppCard(Modifier.padding(AppTheme.spacing.screen)) {
                         EmptyState(
                             title = "还没有主页标签",
-                            desc = "复制博主主页链接后点悬浮气泡，或到首页粘贴解析；" +
-                                "每个主页会作为一个标签保留在这里，可随时切换",
+                            desc = "在上方输入博主主页链接点「解析主页」，" +
+                                "或复制链接后点悬浮气泡；每个主页会作为一个标签保留在这里，可随时切换",
                             icon = Icons.Default.Person
                         )
                     }

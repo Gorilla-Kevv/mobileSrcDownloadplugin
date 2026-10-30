@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 75 已完成：安卓端应用内全屏左右滑动切换页面 · 导航栏紫晶发丝线实时联动与手势预判（Release 保持 1.858MB 严守 2.0MB 红线）**：瀑布流单帖卡片右下角直接下载按钮 + Instagram 多图图集完整解析 + 智能点赞监控双轨修复（扩展升级至 v1.6.0）
+- 当前正在开发任务：**阶段 76 已完成：安卓端主页解析页面新增链接直达输入框与解析按钮 · 快捷读取剪贴板与软键盘联动（Release 保持 1.858MB 严守 2.0MB 红线）**：安卓端应用内全屏左右滑动切换页面 · 导航栏紫晶发丝线实时联动与手势预判（阶段 75）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
@@ -1706,3 +1706,24 @@
   - APK Release 打包成功，体积仅 **1.858MB**（严守 2.0MB 红线，实测较上阶段再降 ~47KB）；
   - R8 混淆、资源压缩、Compose Runtime 字节码优化完全通过。
 - 本次文档更新时间：10.30 03:00
+
+
+## 阶段 76 安卓端主页解析页面新增链接直达输入框与解析按钮 · 快捷读取剪贴板与软键盘联动 [计划时间：10.30 03:15 BY Antigravity][完成时间：10.30 03:35 BY Antigravity]
+- 已完成：
+  1. **主页直达解析卡片 (`ProfileScreen.kt`)**：
+     - 在主页解析页面顶部增加 Obsidian Aegis 暗黑玄紫风格的直达输入与解析卡片 (`AppCard`)；
+     - 嵌入全宽 `OutlinedTextField`，配置暗夜面板背景与紫夜高亮聚焦边框，支持单行滚动、一键清空按钮 (`Icons.Default.Close`) 与博主头像图标前缀；
+     - 双按钮组合：左侧提供「读取剪贴板」(`SecondaryButton`, `Icons.Default.ContentPaste`) 一键读取并触发解析；右侧提供「解析主页」(`PrimaryButton`, `Icons.Default.Search`)，解析中动态切换为「解析中…」与禁用态防连击。
+  2. **智能链接抽取、形态鉴别与多标签开页**：
+     - 输入支持整段分享文案，自动调用 `UrlUtil.extractFirst` 提取核心 URL；
+     - 集成 `ParserEngine.linkKind(url)` 鉴别链接类型：若用户误输入单篇作品链接，以 `NoticeBar` 柔和提示用户前往首页解析；若为主页/点赞页链接，调用 `ProfileCenter.open(url, force = true)` 立即建立新标签页并并发解析；
+     - 软键盘联动：配置 `ImeAction.Search` 与 `LocalSoftwareKeyboardController.current?.hide()`，软键盘点击搜索或点击按钮时自动收起键盘。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/profile/ProfileScreen.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - Android 单元测试 **160 例全绿**（parser 105 例 + downloader 41 例 + app 14 例）；
+  - APK Release 打包成功，体积 **1.858MB**（严守 2.0MB 红线）；
+  - R8 混淆、资源压缩、Compose Runtime 字节码优化完全通过。
+- 本次文档更新时间：10.30 03:35
