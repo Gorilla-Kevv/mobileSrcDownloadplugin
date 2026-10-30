@@ -1,11 +1,11 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 77 已完成：电脑端 YouTube 下载全能重构（5 级容灾直下通道 + webRequest 嗅探拦截 + Piped 矩阵 + 操作栏/Shorts/卡片直接下载）· 扩展控制台历史报错彻底根除与防护强化（扩展升级 v1.7.0）**：安卓端主页解析页面新增链接直达输入框与解析按钮（阶段 76）
+- 当前正在开发任务：**阶段 78 已完成：小红书实况图（LivePhoto）与多图笔记完整解析修复 · 动图与高清原图全量提取与双端体验优化**：电脑端 YouTube 下载全能重构与历史报错防护（阶段 77）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **105 例** + downloader **41 例** + app **14 例**全绿（共 160 例）
+- 测试基线：parser **106 例** + downloader **41 例** + app **14 例**全绿（共 161 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
 - 本次文档更新时间：10.30 02:15
@@ -1759,3 +1759,29 @@
   - Android 单元测试 **160 例全绿**；
   - 扩展全量 JS 语法通过 `node -c` 验证，0 语法报错。
 - 本次文档更新时间：10.30 04:05
+
+
+## 阶段 78 小红书实况图（LivePhoto）与多图笔记完整解析修复 · 动图与高清原图全量提取与双端图集体验优化 [计划时间：10.30 04:15 BY Antigravity][完成时间：10.30 04:45 BY Antigravity]
+- 已完成：
+  1. **小红书实况图（LivePhoto）多图解析深度根因排查与修复 (`XiaohongshuParser.kt`)**：
+     - **根因确诊**：针对用户反馈链接（如 `xhslink.cn/o/2LcOfnnTpoQ`），笔记类型为图文帖 `type="normal"`，`imageList` 中包含 5 张图片（第 1 张为普通静态图，第 2~5 张为带有 `stream.h264[].masterUrl` 的 LivePhoto 实况动图）。历史解析逻辑盲扫全页提取 `masterUrl`，把实况图视频误当成「纯视频笔记」的码率备用源，触发了「视频笔记丢弃 imageList 封面帧」的互斥分支，导致 Image 0 及所有静态图被全部丢弃，且只保留了 1 个视频（只识别出中间一张动态图）；
+     - **纯视频与图文/实况图笔记严密分类**：增加 `noteType` 与 `isVideoNote` 精准判定（`type == "video"` 或独立于 `imageList` 的视频对象），彻底区分普通视频帖与图文/实况帖；
+     - **数组分词与双流全量提取**：实现 `splitJsonObjectsInArray` 与 `extractImageListItems`，逐个对象解析 `imageList`，将所有原图（去除裁剪后缀）全量导出为 `MediaKind.IMAGE`，同时将实况图中的 `masterUrl` 提取为 `MediaKind.VIDEO`（质量标记为 `实况动图 N`，保留签名参数防 CDN 403）；
+     - **图集多选模式联动**：多图与实况图混排时准确触发 `isAlbumMultiSelect = true`，安卓端正常弹出图集全量勾选下载面板。
+  2. **电脑端 Chrome / Edge 扩展小红书图集提取增强 (`content-script.js`)**：
+     - 在小红书帖子页面，优先嗅探解析内嵌的 `__INITIAL_STATE__` 中完整 `imageList`，彻底突破 DOM 懒加载只渲染当前滑块图片的限制，一次性提取全部高清原图。
+  3. **单测覆盖与基准全绿**：
+     - 在 `XiaohongshuParserTest.kt` 新增 `图文与实况动图混合笔记 完整提取所有图片与实况视频` 测试用例，断言 5 张原图 + 4 个实况动图视频全量捕获（共 9 项），多选图集模式激活；
+     - 测试基线提升至 **161 例全绿**（parser 106 + downloader 41 + app 14）；
+     - APK Release 打包体积保持 **1.858MB**（严守 2.0MB 红线）。
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/XiaohongshuParser.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/XiaohongshuParserTest.kt`
+  - `extension/content/content-script.js`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - 单元测试 **161 例全绿**；
+  - APK Release 打包成功（1.858MB）；
+  - 扩展语法检查通过。
+- 本次文档更新时间：10.30 04:45

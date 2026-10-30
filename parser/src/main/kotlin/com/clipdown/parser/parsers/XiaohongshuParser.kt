@@ -107,51 +107,96 @@ class XiaohongshuParser : PlatformParser {
         // 以首个 imageList 为中心切出"笔记窗口"，避免把整页推荐流（objectPosition 2/3…）吃进来
         val window = noteWindow(blob)
 
-        val videos = extractVideos(blob)
-        // 视频笔记的 imageList 是封面帧：与 IG 修复 10c 同源，有视频时图片一律丢弃，
-        // 否则 media=[视频, 封面图] → isAlbumMultiSelect=true → 弹图集竖条、跳过自动下载，
-        // 用户最终下到"视频 + 封面图"。图文笔记无 masterUrl，不受影响。
-        val images = if (videos.isEmpty()) extractImages(blob, window) else emptyList()
+        // 判断是否为纯视频笔记：
+        // 1. type == "video"（如 discovery/item/... 移动端或桌面端标记）；
+        // 2. 或者在 noteWindow 作用域内存在单独的 "video":{...} 对象，且该笔记不是 type=="normal" 的图文帖。
+        // （小红书图文/实况图笔记 type 为 "normal"，其内仅在 imageList[].stream 中包含 LivePhoto 动图短视频，绝非纯视频帖）
+        val noteType = HtmlUtil.jsonField(window, "type").firstOrNull()
+            ?: HtmlUtil.jsonField(blob, "type").firstOrNull()
+        val isVideoNote = noteType == "video" || (blob.contains("\"video\":{") && noteType != "normal")
+
+        val items = if (!isVideoNote) extractImageListItems(blob, window) else emptyList()
+        val fallbackImages = if (!isVideoNote && items.isEmpty()) extractImages(blob, window) else emptyList()
+        val videos = if (isVideoNote) extractVideos(blob) else emptyList()
 
         val title = HtmlUtil.meta(html, "og:title")?.substringBefore(" - 小红书")?.takeIf { it.isNotBlank() }
             ?: HtmlUtil.jsonField(window, "displayTitle").firstOrNull()?.takeIf { it.isNotBlank() }
             ?: HtmlUtil.jsonField(window, "title").firstOrNull()?.takeIf { it.isNotBlank() }
         val author = authorFromWindow(window)
             ?: HtmlUtil.jsonField(blob, "nickname").firstOrNull()?.takeIf { it.isNotBlank() }
-        val cover = HtmlUtil.meta(html, "og:image") ?: images.firstOrNull()
+        val cover = HtmlUtil.meta(html, "og:image")
+            ?: items.firstOrNull()?.imageUrl
+            ?: fallbackImages.firstOrNull()
         val desc = HtmlUtil.meta(html, "og:description")
             ?: HtmlUtil.jsonField(blob, "desc").firstOrNull()
 
         val media = buildList {
-            videos.forEachIndexed { i, v ->
-                add(
-                    MediaItem(
-                        id = "xhs-v-${v.hashCode().toString(16)}",
-                        url = v,
-                        kind = MediaKind.VIDEO,
-                        quality = if (i == 0) "原画质" else "备用源 ${i + 1}",
-                        rank = 100 - i,
-                        container = "mp4",
-                        mimeType = "video/mp4",
-                        headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
-                        fileNameHint = title
+            if (isVideoNote) {
+                videos.forEachIndexed { i, v ->
+                    add(
+                        MediaItem(
+                            id = "xhs-v-${v.hashCode().toString(16)}",
+                            url = v,
+                            kind = MediaKind.VIDEO,
+                            quality = if (i == 0) "原画质" else "备用源 ${i + 1}",
+                            rank = 100 - i,
+                            container = "mp4",
+                            mimeType = "video/mp4",
+                            headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
+                            fileNameHint = title
+                        )
                     )
-                )
-            }
-            images.forEachIndexed { i, u ->
-                add(
-                    MediaItem(
-                        id = "xhs-i-${u.hashCode().toString(16)}",
-                        url = u,
-                        kind = MediaKind.IMAGE,
-                        quality = if (videos.isEmpty()) "原图 ${i + 1}" else "封面 ${i + 1}",
-                        rank = 90 - i,
-                        container = guessExt(u),
-                        mimeType = "image/*",
-                        headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
-                        fileNameHint = title?.let { "${it}_${i + 1}" }
+                }
+            } else if (items.isNotEmpty()) {
+                val totalImages = items.size
+                items.forEachIndexed { i, it ->
+                    // 1. 无水印原图
+                    add(
+                        MediaItem(
+                            id = "xhs-i-${it.imageUrl.hashCode().toString(16)}",
+                            url = it.imageUrl,
+                            kind = MediaKind.IMAGE,
+                            quality = if (totalImages == 1) "原图" else "原图 ${i + 1}",
+                            rank = 90 - i,
+                            container = guessExt(it.imageUrl),
+                            mimeType = "image/*",
+                            headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
+                            fileNameHint = if (totalImages == 1) title else title?.let { t -> "${t}_${i + 1}" }
+                        )
                     )
-                )
+                    // 2. 实况动图短视频（若该图片为 LivePhoto 动态图片）
+                    it.liveVideoUrl?.let { liveUrl ->
+                        add(
+                            MediaItem(
+                                id = "xhs-lv-${liveUrl.hashCode().toString(16)}",
+                                url = liveUrl,
+                                kind = MediaKind.VIDEO,
+                                quality = if (totalImages == 1) "实况动图" else "实况动图 ${i + 1}",
+                                rank = 85 - i,
+                                container = "mp4",
+                                mimeType = "video/mp4",
+                                headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
+                                fileNameHint = if (totalImages == 1) title?.let { t -> "${t}_live" } else title?.let { t -> "${t}_${i + 1}_live" }
+                            )
+                        )
+                    }
+                }
+            } else {
+                fallbackImages.forEachIndexed { i, u ->
+                    add(
+                        MediaItem(
+                            id = "xhs-i-${u.hashCode().toString(16)}",
+                            url = u,
+                            kind = MediaKind.IMAGE,
+                            quality = "原图 ${i + 1}",
+                            rank = 90 - i,
+                            container = guessExt(u),
+                            mimeType = "image/*",
+                            headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
+                            fileNameHint = title?.let { "${it}_${i + 1}" }
+                        )
+                    )
+                }
             }
         }
 
@@ -173,7 +218,8 @@ class XiaohongshuParser : PlatformParser {
             author = author,
             cover = cover,
             source = ParseSource.LOCAL,
-            warning = if (videos.isEmpty() && images.size <= 1) "仅获取到封面图，完整图集需要登录态" else null
+            warning = if (!isVideoNote && items.size <= 1 && fallbackImages.size <= 1 && HtmlUtil.meta(html, "og:description")?.contains("登录", true) == true)
+                "仅获取到封面图，完整图集需要登录态" else null
         ).copy(description = desc)
     }
 
@@ -311,4 +357,83 @@ class XiaohongshuParser : PlatformParser {
         ctx.log(id, "WAF 预热(${warm.code})：收集 ${seeds.size} 项种子 Cookie")
         return headers + ("Cookie" to merged)
     }
+
+    data class XhsItem(
+        val imageUrl: String,
+        val liveVideoUrl: String? = null
+    )
+
+    /**
+     * 从 imageList 数组切片中提取每个图片节点（含高画质图片直链及 LivePhoto 实况动图视频）
+     */
+    private fun extractImageListItems(blob: String, window: String): List<XhsItem> {
+        val slice = imageListSlice(window) ?: imageListSlice(blob) ?: return emptyList()
+        val objs = splitJsonObjectsInArray(slice)
+        if (objs.isEmpty()) return emptyList()
+
+        val items = mutableListOf<XhsItem>()
+        val seenFileIds = mutableSetOf<String>()
+
+        for (obj in objs) {
+            val fileId = HtmlUtil.jsonField(obj, "fileId").firstOrNull() ?: ""
+            // 提取图片直链：优先级 urlDefault > url > urlPre > infoList 中的 URL
+            val rawImgUrl = HtmlUtil.jsonField(obj, "urlDefault").firstOrNull()
+                ?: HtmlUtil.jsonField(obj, "url").firstOrNull()
+                ?: HtmlUtil.jsonField(obj, "urlPre").firstOrNull()
+                ?: Regex("""https?://sns-webpic[a-z0-9\-.]*\.xhscdn\.com/[^"'\s\\]+""").find(obj)?.value
+
+            if (rawImgUrl.isNullOrBlank() || !rawImgUrl.startsWith("http")) continue
+
+            val cleanImgUrl = rawImgUrl.substringBefore("?")
+            val fid = fileId.ifBlank { imageFileId(cleanImgUrl) }
+            if (fid.isNotBlank() && !seenFileIds.add(fid)) {
+                continue
+            }
+
+            // 提取实况图动图视频（LivePhoto）
+            val liveVideoUrl = if (obj.contains("\"livePhoto\":true") || obj.contains("\"stream\":{") || obj.contains("\"masterUrl\"")) {
+                HtmlUtil.jsonField(obj, "masterUrl").firstOrNull()?.takeIf { it.startsWith("http") }
+            } else null
+
+            items.add(XhsItem(imageUrl = cleanImgUrl, liveVideoUrl = liveVideoUrl))
+        }
+
+        return items
+    }
+
+    /**
+     * 将 JSON 数组字符串（形如 `[{...}, {...}]`）切分成内部每个顶层 JSON 对象的字符串列表。
+     */
+    private fun splitJsonObjectsInArray(arrayJson: String): List<String> {
+        val openIdx = arrayJson.indexOf('[')
+        if (openIdx < 0) return emptyList()
+        val objs = mutableListOf<String>()
+        var depth = 0
+        var inStr = false
+        var escaped = false
+        var objStart = -1
+
+        for (p in (openIdx + 1) until arrayJson.length) {
+            val c = arrayJson[p]
+            when {
+                escaped -> escaped = false
+                c == '\\' && inStr -> escaped = true
+                c == '"' -> inStr = !inStr
+                !inStr && c == '{' -> {
+                    if (depth == 0) objStart = p
+                    depth++
+                }
+                !inStr && c == '}' -> {
+                    depth--
+                    if (depth == 0 && objStart >= 0) {
+                        objs.add(arrayJson.substring(objStart, p + 1))
+                        objStart = -1
+                    }
+                }
+                !inStr && depth == 0 && c == ']' -> break
+            }
+        }
+        return objs
+    }
+
 }

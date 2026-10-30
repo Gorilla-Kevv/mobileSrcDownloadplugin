@@ -317,4 +317,42 @@ class XiaohongshuParserTest {
         assertEquals(2, videos.size)
         assertTrue(videos.all { it.url.startsWith("https://sns-video") })
     }
+
+    /**
+     * 实况动图（LivePhoto）混合笔记（如用户分享链接 `xhslink.cn/o/2LcOfnnTpoQ`）：
+     * type 为 "normal"，imageList 包含 5 张图（第 1 张静态图，第 2~5 张带 stream.h264 实况视频）。
+     * 必须提取全部 5 张原图 + 4 个实况动图视频，且判为多选图集（isAlbumMultiSelect = true）。
+     */
+    @Test
+    fun `图文与实况动图混合笔记 完整提取所有图片与实况视频`() {
+        val state = """
+            window.__INITIAL_STATE__={"note":{"noteDetailMap":{"n1":{"note":{"type":"normal",
+            "title":"实况图精选","user":{"nickName":"拍照达人"},
+            "imageList":[
+            {"fileId":"img0","livePhoto":false,"urlDefault":"http://sns-webpic.xhscdn.com/img0!nd_dft_wlteh_webp_3"},
+            {"fileId":"img1","livePhoto":true,"urlDefault":"http://sns-webpic.xhscdn.com/img1!nd_dft_wlteh_webp_3","stream":{"h264":[{"masterUrl":"http://sns-video-v3.xhscdn.com/live1.mp4"}]}},
+            {"fileId":"img2","livePhoto":true,"urlDefault":"http://sns-webpic.xhscdn.com/img2!nd_dft_wlteh_webp_3","stream":{"h264":[{"masterUrl":"http://sns-video-v3.xhscdn.com/live2.mp4"}]}},
+            {"fileId":"img3","livePhoto":true,"urlDefault":"http://sns-webpic.xhscdn.com/img3!nd_dft_wlteh_webp_3","stream":{"h264":[{"masterUrl":"http://sns-video-v3.xhscdn.com/live3.mp4"}]}},
+            {"fileId":"img4","livePhoto":true,"urlDefault":"http://sns-webpic.xhscdn.com/img4!nd_dft_wlteh_webp_3","stream":{"h264":[{"masterUrl":"http://sns-video-v3.xhscdn.com/live4.mp4"}]}}
+            ]}}}}}
+        """.trimIndent()
+        val html = "<html><head><title> - 小红书</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/discovery/item/6a8c382d0000000033010f28?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        val liveVideos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals("应提取全部 5 张原图", 5, images.size)
+        assertEquals("应提取 4 个实况动图视频", 4, liveVideos.size)
+        assertEquals("共 9 个媒体项", 9, result.media.size)
+        assertTrue("多图图集必须触发多选图集模式", result.isAlbumMultiSelect)
+        assertEquals("实况图精选", result.title)
+        assertEquals("拍照达人", result.author)
+    }
 }

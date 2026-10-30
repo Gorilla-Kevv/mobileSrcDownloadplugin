@@ -527,6 +527,26 @@
       });
 
       const images = [];
+      // 1. 优先从页内 __INITIAL_STATE__ 深度抽取完整原图列表
+      try {
+        const scripts = document.querySelectorAll("script");
+        for (const s of scripts) {
+          if (s.textContent.includes("__INITIAL_STATE__") && s.textContent.includes("imageList")) {
+            const m = s.textContent.match(/"imageList"\s*:\s*(\[.*?\])/);
+            if (m) {
+              const re = /"(?:urlDefault|url)"\s*:\s*"([^"]+)"/g;
+              let sm;
+              while ((sm = re.exec(m[1])) !== null) {
+                const u = sm[1].replace(/\\u002F/g, "/").replace(/!.*$/, "").split("?")[0];
+                if (u && !images.includes(u)) images.push(u);
+              }
+            }
+            break;
+          }
+        }
+      } catch (_) {}
+
+      // 2. DOM 兜底
       document.querySelectorAll('img[src*="sns-webpic"]').forEach(img => {
         let src = img.src;
         src = src.replace(/![a-zA-Z0-9_-]+$/, "");
