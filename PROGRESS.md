@@ -1,7 +1,7 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 74 已完成：瀑布流单帖卡片右下角直接下载按钮 + Instagram 多图图集完整解析 + 智能点赞监控双轨修复（扩展升级至 v1.6.0）：X 瀑布流点赞监控与一键下载 + 双端全页面/博主主页/点赞页深度资源批量下载（扩展升级至 v1.5.0）**：局域网配对全面支持扫码与免输秒连 · 扩展报错根除 · 跨端体验全面升级（扩展升级 v1.4.0）
+- 当前正在开发任务：**阶段 75 已完成：安卓端应用内全屏左右滑动切换页面 · 导航栏紫晶发丝线实时联动与手势预判（Release 保持 1.858MB 严守 2.0MB 红线）**：瀑布流单帖卡片右下角直接下载按钮 + Instagram 多图图集完整解析 + 智能点赞监控双轨修复（扩展升级至 v1.6.0）
 - 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
@@ -9,7 +9,6 @@
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
 - 本次文档更新时间：10.30 02:15
-
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：
@@ -1680,3 +1679,30 @@
   - APK Release 保持 **1.905MB**（严守 2.0MB 红线）；
   - 扩展全量 JS 语法验证通过，0 语法报错。
 - 本次文档更新时间：10.30 02:15
+
+
+## 阶段 75 安卓端应用内全屏左右滑动切换页面 · 导航栏紫晶发丝线实时联动与手势预判 [计划时间：10.30 02:30 BY Antigravity][完成时间：10.30 03:00 BY Antigravity]
+- 已完成：
+  1. **全屏流畅左右手势滑动架构 (`HorizontalPager`)**：
+     - 重构 `app/src/main/java/com/clipdown/app/ui/nav/AppNav.kt`，以 Compose Foundation 原生 `HorizontalPager` 取代传统静态切换的 `NavHost`；
+     - 四大主屏幕（0: 首页/HomeScreen, 1: 主页解析/ProfileScreen, 2: 下载记录/DownloadsScreen, 3: 设置/SettingsScreen）全面支持无级横向滑动手势；
+     - 配置 `beyondViewportPageCount = 3`，保持 4 个页面全部在组合内存中保活常驻，横向滑动零重绘、零网络重扫、无白屏卡顿，各页面滚动位置与输入框状态无损保留。
+  2. **双向手势联动与紫晶荧光轨道指示胶囊**：
+     - 在底部导航栏上方精密设计发丝线导轨与 38dp 渐变紫晶胶囊 (`listOf(Brand500, BrandPrimary, Brand600)`)；
+     - 采用 `graphicsLayer { translationX = centerPx - (size.width / 2f) }` 基于 RenderThread 执行，手势拖动时随 `(currentPage + currentPageOffsetFraction)` 实时 1:1 连续平滑跟手位移，完全不触发重组布局开销，保证高刷 120Hz 丝滑体验；
+     - 底部标签项选中态基于 `pagerState.targetPage == index` 灵敏预判——只要用户滑动越过中线 50% 或执行快弹（fling），目标选项瞬间高亮；
+     - 配合弹性物理弹簧微动效 (`Spring.DampingRatioMediumBouncy`)，图标在选中时产生细腻的 1.15x 缩放回弹。
+  3. **细致体验交互兜底与触觉反馈**：
+     - **系统物理返回键平滑回退**：集成 `BackHandler(enabled = pagerState.currentPage != 0)`，当用户处于主页解析、下载记录或设置页面时，按下物理/手势返回键会平滑滚动回首页，避免误退应用；
+     - **点击底栏平滑翻页**：点击任意底栏标签项触发 `animateScrollToPage(durationMillis = 320, FastOutSlowInEasing)`，杜绝生硬跳变；
+     - **外部入口与气泡无缝联动**：支持 `openProfile` 及首页卡片跳转主页/下载页（`scrollToPage(1)` / `scrollToPage(2)`）；
+     - **细腻触觉反馈**：通过 `LocalHapticFeedback` 在滑动过界预判与标签点击时触发 `TextHandleMove` 轻度微震反馈。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/nav/AppNav.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - Android 单元测试 **160 例全绿**（parser 105 例 + downloader 41 例 + app 14 例）；
+  - APK Release 打包成功，体积仅 **1.858MB**（严守 2.0MB 红线，实测较上阶段再降 ~47KB）；
+  - R8 混淆、资源压缩、Compose Runtime 字节码优化完全通过。
+- 本次文档更新时间：10.30 03:00
