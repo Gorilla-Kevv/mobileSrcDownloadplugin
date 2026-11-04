@@ -115,9 +115,13 @@ class XiaohongshuParser : PlatformParser {
             ?: HtmlUtil.jsonField(blob, "type").firstOrNull()
         val isVideoNote = noteType == "video" || (blob.contains("\"video\":{") && noteType != "normal")
 
-        val items = if (!isVideoNote) extractImageListItems(blob, window) else emptyList()
-        val fallbackImages = if (!isVideoNote && items.isEmpty()) extractImages(blob, window) else emptyList()
-        val videos = if (isVideoNote) extractVideos(blob) else emptyList()
+        val items = extractImageListItems(blob, window)
+        val fallbackImages = if (items.isEmpty()) extractImages(blob, window) else emptyList()
+        val videos = extractVideos(blob)
+
+        // 判断是否为纯单视频笔记（有主视频且图片列表只有不超过1张封面图）：
+        // 若同时存在主视频和多张图片，则属于图文+视频混合笔记，全面提取出全部图片与视频
+        val isPureVideoNote = videos.isNotEmpty() && items.size <= 1 && fallbackImages.size <= 1
 
         val title = HtmlUtil.meta(html, "og:title")?.substringBefore(" - 小红书")?.takeIf { it.isNotBlank() }
             ?: HtmlUtil.jsonField(window, "displayTitle").firstOrNull()?.takeIf { it.isNotBlank() }
@@ -131,7 +135,8 @@ class XiaohongshuParser : PlatformParser {
             ?: HtmlUtil.jsonField(blob, "desc").firstOrNull()
 
         val media = buildList {
-            if (isVideoNote) {
+            // 1. 视频资源（优先放置）
+            if (videos.isNotEmpty()) {
                 videos.forEachIndexed { i, v ->
                     add(
                         MediaItem(
@@ -147,55 +152,60 @@ class XiaohongshuParser : PlatformParser {
                         )
                     )
                 }
-            } else if (items.isNotEmpty()) {
-                val totalImages = items.size
-                items.forEachIndexed { i, it ->
-                    // 1. 无水印原图
-                    add(
-                        MediaItem(
-                            id = "xhs-i-${it.imageUrl.hashCode().toString(16)}",
-                            url = it.imageUrl,
-                            kind = MediaKind.IMAGE,
-                            quality = if (totalImages == 1) "原图" else "原图 ${i + 1}",
-                            rank = 90 - i,
-                            container = guessExt(it.imageUrl),
-                            mimeType = "image/*",
-                            headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
-                            fileNameHint = if (totalImages == 1) title else title?.let { t -> "${t}_${i + 1}" }
-                        )
-                    )
-                    // 2. 实况动图短视频（若该图片为 LivePhoto 动态图片）
-                    it.liveVideoUrl?.let { liveUrl ->
+            }
+
+            // 2. 图片资源（若非纯单视频封面时，完整保留所有图片与 LivePhoto 实况动图）
+            if (!isPureVideoNote) {
+                if (items.isNotEmpty()) {
+                    val totalImages = items.size
+                    items.forEachIndexed { i, it ->
+                        // 1. 无水印原图
                         add(
                             MediaItem(
-                                id = "xhs-lv-${liveUrl.hashCode().toString(16)}",
-                                url = liveUrl,
-                                kind = MediaKind.VIDEO,
-                                quality = if (totalImages == 1) "实况动图" else "实况动图 ${i + 1}",
-                                rank = 85 - i,
-                                container = "mp4",
-                                mimeType = "video/mp4",
+                                id = "xhs-i-${it.imageUrl.hashCode().toString(16)}",
+                                url = it.imageUrl,
+                                kind = MediaKind.IMAGE,
+                                quality = if (totalImages == 1) "原图" else "原图 ${i + 1}",
+                                rank = 90 - i,
+                                container = guessExt(it.imageUrl),
+                                mimeType = "image/*",
                                 headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
-                                fileNameHint = if (totalImages == 1) title?.let { t -> "${t}_live" } else title?.let { t -> "${t}_${i + 1}_live" }
+                                fileNameHint = if (totalImages == 1) title else title?.let { t -> "${t}_${i + 1}" }
+                            )
+                        )
+                        // 2. 实况动图短视频（若该图片为 LivePhoto 动态图片）
+                        it.liveVideoUrl?.let { liveUrl ->
+                            add(
+                                MediaItem(
+                                    id = "xhs-lv-${liveUrl.hashCode().toString(16)}",
+                                    url = liveUrl,
+                                    kind = MediaKind.VIDEO,
+                                    quality = if (totalImages == 1) "实况动图" else "实况动图 ${i + 1}",
+                                    rank = 85 - i,
+                                    container = "mp4",
+                                    mimeType = "video/mp4",
+                                    headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
+                                    fileNameHint = if (totalImages == 1) title?.let { t -> "${t}_live" } else title?.let { t -> "${t}_${i + 1}_live" }
+                                )
+                            )
+                        }
+                    }
+                } else if (fallbackImages.isNotEmpty()) {
+                    fallbackImages.forEachIndexed { i, u ->
+                        add(
+                            MediaItem(
+                                id = "xhs-i-${u.hashCode().toString(16)}",
+                                url = u,
+                                kind = MediaKind.IMAGE,
+                                quality = "原图 ${i + 1}",
+                                rank = 90 - i,
+                                container = guessExt(u),
+                                mimeType = "image/*",
+                                headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
+                                fileNameHint = title?.let { "${it}_${i + 1}" }
                             )
                         )
                     }
-                }
-            } else {
-                fallbackImages.forEachIndexed { i, u ->
-                    add(
-                        MediaItem(
-                            id = "xhs-i-${u.hashCode().toString(16)}",
-                            url = u,
-                            kind = MediaKind.IMAGE,
-                            quality = "原图 ${i + 1}",
-                            rank = 90 - i,
-                            container = guessExt(u),
-                            mimeType = "image/*",
-                            headers = mapOf("Referer" to "https://www.xiaohongshu.com/"),
-                            fileNameHint = title?.let { "${it}_${i + 1}" }
-                        )
-                    )
                 }
             }
         }
@@ -218,20 +228,45 @@ class XiaohongshuParser : PlatformParser {
             author = author,
             cover = cover,
             source = ParseSource.LOCAL,
-            warning = if (!isVideoNote && items.size <= 1 && fallbackImages.size <= 1 && HtmlUtil.meta(html, "og:description")?.contains("登录", true) == true)
+            warning = if (!isPureVideoNote && items.size <= 1 && fallbackImages.size <= 1 && HtmlUtil.meta(html, "og:description")?.contains("登录", true) == true)
                 "仅获取到封面图，完整图集需要登录态" else null
         ).copy(description = desc)
     }
 
     private fun extractVideos(blob: String): List<String> {
+        val slice = videoSlice(blob) ?: if (!blob.contains("\"imageList\"")) blob else return emptyList()
         val out = linkedSetOf<String>()
-        HtmlUtil.jsonField(blob, "masterUrl").forEach { out.add(it) }
-        HtmlUtil.jsonField(blob, "backupUrls").forEach { raw ->
+        HtmlUtil.jsonField(slice, "masterUrl").forEach { out.add(it) }
+        HtmlUtil.jsonField(slice, "backupUrls").forEach { raw ->
             raw.trim('[', ']').split(',').forEach { out.add(it.trim().trim('"')) }
         }
-        Regex("""(https://sns-video[a-z0-9\-.]*\.xhscdn\.com/[^"'\s\\]+?\.mp4)""")
-            .findAll(blob).forEach { out.add(it.groupValues[1]) }
+        Regex("""(https?://sns-video[a-z0-9\-.]*\.xhscdn\.com/[^"'\s\\]+?\.mp4)""")
+            .findAll(slice).forEach { out.add(it.groupValues[1]) }
         return out.filter { it.startsWith("http") }.distinct()
+    }
+
+    /** 提取 "video":{...} 对象切片，防止把 imageList 中的实况图 (LivePhoto) 动图视频扫进来 */
+    private fun videoSlice(text: String): String? {
+        val m = Regex(""""video"\s*:\s*\{""").find(text) ?: return null
+        val open = text.indexOf('{', m.range.first)
+        if (open < 0) return null
+        var depth = 0
+        var inStr = false
+        var escaped = false
+        for (p in open until text.length) {
+            val c = text[p]
+            when {
+                escaped -> escaped = false
+                c == '\\' && inStr -> escaped = true
+                c == '"' -> inStr = !inStr
+                !inStr && c == '{' -> depth++
+                !inStr && c == '}' -> {
+                    depth--
+                    if (depth == 0) return text.substring(open, p + 1)
+                }
+            }
+        }
+        return null
     }
 
     /**

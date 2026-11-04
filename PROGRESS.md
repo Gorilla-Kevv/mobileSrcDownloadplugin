@@ -1,14 +1,14 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 78 已完成：小红书实况图（LivePhoto）与多图笔记完整解析修复 · 动图与高清原图全量提取与双端体验优化**：电脑端 YouTube 下载全能重构与历史报错防护（阶段 77）
-- 下一阶段任务：走查 X、Ins、YouTube、小红书在 Edge / Chrome 上的直接下载与图集批量保存
+- 当前正在开发任务：**阶段 79 已完成：播放器交互升级（手势防吞噬/长按2倍速/横向拖拽Seek） · 悬浮球贴边与双击长按交互重构 · 历史记录圆角UI改造 · 下载去重与长期已解析历史持久化 · 小红书图视混排全量提取**
+- 下一阶段任务：多端端到端走查与新特性真机体验
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
 - 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证
-- 测试基线：parser **106 例** + downloader **41 例** + app **14 例**全绿（共 161 例）
+- 测试基线：parser **107 例** + downloader **41 例** + app **14 例**全绿（共 162 例）
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：10.30 02:15
+- 本次文档更新时间：11.04 12:50
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：
@@ -1785,3 +1785,48 @@
   - APK Release 打包成功（1.858MB）；
   - 扩展语法检查通过。
 - 本次文档更新时间：10.30 04:45
+
+
+## 阶段 79 播放器交互升级（手势防吞噬/长按2倍速/横向拖拽Seek） · 悬浮球贴边与双击长按交互重构 · 历史记录圆角UI改造 · 下载去重与长期已解析历史持久化 · 小红书图视混排全量提取 [计划时间：11.04 11:30 BY Antigravity][完成时间：11.04 12:55 BY Antigravity]
+- 已完成：
+  1. **内置全屏媒体/视频播放器交互深度升级 (`MediaViewerDialog.kt`)**：
+     - **修复点击控制条消失后再次点击无响应 Bug**：在 `AndroidView(VideoView)` 之上层叠透明手势交互代理层，彻底阻断底层 `SurfaceView` 对 Compose 触摸事件的盲目吞噬，实现任意时刻单击瞬时显隐控制条；
+     - **长按 2.0x 倍速播放**：长按触发 `mediaPlayer.playbackParams.speed = 2.0f`，顶部悬浮展示 `2.0X ⏩ 倍速播放中` 胶囊 HUD，手指抬起平滑无缝恢复 1.0x 正常速度；
+     - **屏幕左右横向拖拽调节进度 (Seek)**：屏幕任意区域横向滑动手势联动动态计算拖动目标秒数，居中展示实时时间与差值 HUD（如 `+15s [ 01:23 / 03:45 ]`），松手触发底层硬解跳转；
+     - **手势互斥与滑动翻页隔离**：拖拽或倍速期间联动 `HorizontalPager(userScrollEnabled = !isInteractingWithVideo)`，彻底防止 Seek 触发误翻页。
+  2. **桌面悬浮球贴边与手势交互重构 (`FloatingWindowService.kt`)**：
+     - **贴边微小间隙彻底根除**：修正 64dp 触摸外壳与 52dp 核心 Logo 之间 6dp 的内边距差值 (`visualMarginX`)，贴边吸附与左右滑动边界 clamp 到 `-visualMarginX` 与 `screenWidth - barW + visualMarginX`，视觉上实现 0 间隙完全贴合手机物理边框；
+     - **手势行为重塑**：长按悬浮球直达 App 主界面 (`MainActivity`)；双击悬浮球展开详细面板 (`openBubblePanel()`)；保留拖拽吸边与单击快捷交互。
+  3. **历史记录与下载管理页全面升级柔和圆角 UI (`DownloadsScreen.kt`)**：
+     - 彻底弃用生硬的四方形直角线框与 `RectangleShape`；
+     - 卡片统一采用 `RoundedCornerShape(14.dp)`，媒体缩略图与封面采用 `RoundedCornerShape(10.dp)`，状态胶囊与画廊缩略图采用 `RoundedCornerShape(8.dp)`，操作按钮与路径展示块采用 `RoundedCornerShape(8.dp)`，进度条采用 `RoundedCornerShape(2.dp)`；
+     - 删除确认弹窗升级为柔和的 `RoundedCornerShape(20.dp)`。
+  4. **重复下载根除与双通道并发防护 (`DownloadController.kt`, `LinkCenter.kt`, `FloatingWindowService.kt`)**：
+     - **下载引擎主动去重**：在 `DownloadController.enqueue` 增加活跃任务防重校验，对于相同 `cleanUrl` 且处于 `DOWNLOADING/PENDING/MERGING` 状态或 15 秒内刚刚完成的任务直接复用已有任务 ID，杜绝重复创建；
+     - **剪贴板链路防抖去重**：在 `LinkCenter.submitUrl` 增加 1000ms 重复 URL 拦截，彻底化解无障碍服务与借道 Activity 之间并发触发导致的双重解析与双重入队；
+     - 悬浮球自动下载增加 10s 冷却队列。
+  5. **已解析链接历史永久存储与提示 (`TaskDatabase.kt`, `HomeScreen.kt`)**：
+     - 升级数据库版本至 `DB_VERSION = 3`，在 SQLite 数据库中引入永久 `seen_links (url, normalized_url, created_at)` 数据表与索引；
+     - 首页解析前与悬浮窗自动识别前，直接检索 `isLinkSeen`，凡解析过的链接（即使数天前）均准确提示「已解析过该链接，是否再次下载？」，避免多余重复网络消耗。
+  6. **小红书视频与多图混合笔记完整提取 (`XiaohongshuParser.kt`)**：
+     - 精准隔离顶部笔记视频对象切片与 LivePhoto 实况图视频流切片；
+     - 对同时包含主视频与多张图片的混合笔记（如视频+配图说明帖），打破互斥丢弃逻辑，实现主视频、图片与实况图全量提取进 `media` 列表；
+     - 补充单元测试用例 `视频与多张图片混合笔记 同时提取视频和全部图片`。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/components/MediaViewerDialog.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/FloatingWindowService.kt`
+  - `app/src/main/java/com/clipdown/app/ui/downloads/DownloadsScreen.kt`
+  - `app/src/main/java/com/clipdown/app/clip/LinkCenter.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadController.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/db/TaskDatabase.kt`
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/XiaohongshuParser.kt`
+  - `parser/src/main/kotlin/com/clipdown/parser/core/UrlUtil.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/XiaohongshuParserTest.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - 单元测试 **162 例全绿**（parser 107 例 + downloader 41 例 + app 14 例）；
+  - `:app:assembleDebug` 打包构建全通，产物完整；
+  - 增量编译无任何警告或错误。
+- 本次文档更新时间：11.04 12:55

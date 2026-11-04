@@ -66,13 +66,14 @@ object LinkCenter {
         force: Boolean = false
     ): DetectedLink? {
         val previous = _last.value
-        if (!force && previous != null &&
-            previous.url == url &&
-            System.currentTimeMillis() - previous.detectedAtMillis < DEDUP_WINDOW_MS
-        ) {
-            return null
+        val now = System.currentTimeMillis()
+        if (previous != null && previous.url == url) {
+            val elapsed = now - previous.detectedAtMillis
+            if (!force && elapsed < DEDUP_WINDOW_MS) return null
+            // 阶段 79：即使 force=true（例如无障碍与借道 Activity 瞬间并发），1秒内也绝对禁止重复发射同一个 URL，彻底杜绝双触发
+            if (force && elapsed < 1_000L) return null
         }
-        val link = DetectedLink(url, platform, source, rawText)
+        val link = DetectedLink(url, platform, source, rawText, detectedAtMillis = now)
         _last.value = link
         _detected.tryEmit(link)
         return link

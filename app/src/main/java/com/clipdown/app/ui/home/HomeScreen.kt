@@ -160,15 +160,29 @@ fun HomeScreen(
             val hasCompleted = DownloadController.repository().tasks.value.any {
                 (it.sourceUrl == link.url || it.url == link.url) && it.status == DownloadStatus.COMPLETED
             }
-            isDuplicateParse = link.url in seenBefore || hasCompleted
-            app?.settings?.markLinkSeen(link.url)
+            val dbSeen = withContext(Dispatchers.IO) {
+                runCatching { DownloadController.database().isLinkSeen(link.url) }.getOrDefault(false)
+            }
+            isDuplicateParse = link.url in seenBefore || hasCompleted || dbSeen
 
             parsing = true
             error = null
             result = withContext(Dispatchers.IO) { ParserEngine.parseSafe(link.url).getOrNull() }
             parsing = false
             selected = result?.takeIf { it.isAlbumMultiSelect }?.media?.indices?.toSet() ?: setOf(0)
-            if (result == null) error = "解析失败，可稍后重试或在设置中配置远端解析服务"
+            if (result != null) {
+                withContext(Dispatchers.IO) {
+                    val seenAfter = DownloadController.database().isLinkSeen(link.url, result?.sourceUrl)
+                    DownloadController.database().markLinkSeen(link.url, result?.sourceUrl)
+                    if (seenAfter) isDuplicateParse = true
+                }
+                app?.settings?.markLinkSeen(link.url)
+                if (isDuplicateParse) {
+                    Toast.makeText(context, "该链接此前已解析过", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                error = "解析失败，可稍后重试或在设置中配置远端解析服务"
+            }
         }
     }
 
@@ -196,8 +210,10 @@ fun HomeScreen(
             val hasCompleted = DownloadController.repository().tasks.value.any {
                 (it.sourceUrl == url || it.url == url) && it.status == DownloadStatus.COMPLETED
             }
-            isDuplicateParse = url in seenBefore || hasCompleted
-            app?.settings?.markLinkSeen(url)
+            val dbSeen = withContext(Dispatchers.IO) {
+                runCatching { DownloadController.database().isLinkSeen(url) }.getOrDefault(false)
+            }
+            isDuplicateParse = url in seenBefore || hasCompleted || dbSeen
 
             parsing = true
             error = null
@@ -210,6 +226,15 @@ fun HomeScreen(
                 result = parsed
                 selected = if (parsed.isAlbumMultiSelect) parsed.media.indices.toSet() else setOf(0)
                 LinkCenter.publishResult(parsed)
+                withContext(Dispatchers.IO) {
+                    val seenAfter = DownloadController.database().isLinkSeen(url, parsed.sourceUrl)
+                    DownloadController.database().markLinkSeen(url, parsed.sourceUrl)
+                    if (seenAfter) isDuplicateParse = true
+                }
+                app?.settings?.markLinkSeen(url)
+                if (isDuplicateParse) {
+                    Toast.makeText(context, "该链接此前已解析过", Toast.LENGTH_SHORT).show()
+                }
             } else {
                 val e = r.exceptionOrNull()
                 error = (e as? ParseException)?.message ?: e?.message ?: "解析失败"

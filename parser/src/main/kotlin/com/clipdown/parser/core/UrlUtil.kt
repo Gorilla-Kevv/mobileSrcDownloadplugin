@@ -29,7 +29,8 @@ object UrlUtil {
         "ref", "ref_src", "ref_url", "s", "t", "si", "feature", "src", "share_id",
         "share_from", "share_medium", "share_plat", "share_source", "share_tag", "share_times",
         "spm_id_from", "from_spmid", "vd_source", "unique_k", "_r", "chksm", "scene",
-        "entry", "source", "apptime", "gid", "tt_from", "iid", "region", "mid", "ug"
+        "entry", "source", "apptime", "gid", "tt_from", "iid", "region", "mid", "ug",
+        "xsec_source", "share_token", "b_id", "from_source", "share_type"
     )
 
     /** 从任意文本中召回第一个候选链接 */

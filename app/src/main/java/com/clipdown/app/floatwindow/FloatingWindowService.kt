@@ -173,6 +173,9 @@ class FloatingWindowService : Service() {
     /** 重复下载提示的短时抑制（5s），避免剪贴板扫描循环内高频连弹 */
     private val promptSuppressedUrls = HashMap<String, Long>()
 
+    /** 10秒内针对同一 URL/媒体的自动下载抑制，彻底杜绝短时间内重复下载2次同一个视频 */
+    private val recentAutoDownloads = HashMap<String, Long>()
+
     /** 自动下载失败退避（IG 风控保险丝）：连续失败达阈值后暂停自动下载一段时间 */
     private var consecutiveFailures = 0
     private var autoDownloadSuspendedUntil = 0L
@@ -307,8 +310,11 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             val (x, y) = lastPosition
-            this.x = if (x >= 0) x else resources.displayMetrics.widthPixels - 140
-            this.y = if (y >= 0) y else resources.displayMetrics.heightPixels / 3
+            val dm = resources.displayMetrics
+            val visualMarginX = ((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()
+            val maxX = dm.widthPixels - (64 * dm.density).toInt() + visualMarginX
+            this.x = if (x != -1) x else maxX
+            this.y = if (y != -1) y else dm.heightPixels / 3
         }
         bubbleParams = params
         bubblePos = params.x to params.y
@@ -319,7 +325,7 @@ class FloatingWindowService : Service() {
         var startTouchY = 0f
         var moved = false
         var gestureInBubble = false
-        /** 长按已触发：本次手势只用于呼出面板，抬手/拖拽都不再走点击语义 */
+        /** 长按已触发：本次手势只用于进入App，抬手/拖拽都不再走点击语义 */
         var longPressed = false
         val bubblePartH = (64 * resources.displayMetrics.density).toInt()
 
@@ -335,13 +341,16 @@ class FloatingWindowService : Service() {
                 startTouchY = event.rawY
                 moved = false
                 longPressed = false
-                // 长按 = 呼出多功能面板：按住不动到阈值即打开（拖拽或提前抬手都会取消）
+                // 阶段 79 交互改进：长按进入 app
                 longPressJob?.cancel()
                 longPressJob = scope.launch {
                     delay(LONG_PRESS_MS)
                     if (moved) return@launch
                     longPressed = true
-                    openBubblePanel()
+                    startActivity(
+                        Intent(this@FloatingWindowService, com.clipdown.app.ui.MainActivity::class.java)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                    )
                 }
                 return@setOnTouchListener true
             }
@@ -368,6 +377,21 @@ class FloatingWindowService : Service() {
                         return@setOnTouchListener true
                     }
                     if (moved) {
+                        val dm = resources.displayMetrics
+                        val visualMarginX = ((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()
+                        val minX = -visualMarginX
+                        val maxX = dm.widthPixels - (64 * dm.density).toInt() + visualMarginX
+                        val snapThreshold = (40 * dm.density).toInt()
+                        var finalX = bubblePos.first.coerceIn(minX, maxX)
+                        // 贴近边缘自动吸附到 0 间距
+                        if (finalX <= minX + snapThreshold) {
+                            finalX = minX
+                        } else if (finalX >= maxX - snapThreshold) {
+                            finalX = maxX
+                        }
+                        bubblePos = finalX to bubblePos.second
+                        params.x = finalX
+                        runCatching { wm.updateViewLayout(composeView, params) }
                         scope.launch { settings.saveBubblePosition(bubblePos.first, bubblePos.second) }
                         lastPosition = bubblePos
                         return@setOnTouchListener true
@@ -411,7 +435,10 @@ class FloatingWindowService : Service() {
         val overlap = (BAR_OVERLAP_DP * dm.density).toInt()
         val barFull = (400 * dm.density).toInt()
         val barW = (64 * dm.density).toInt()
-        params.x = bubblePos.first.coerceIn(8, (dm.widthPixels - barW - 8).coerceAtLeast(8))
+        val visualMarginX = ((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()
+        val minX = -visualMarginX
+        val maxX = dm.widthPixels - barW + visualMarginX
+        params.x = bubblePos.first.coerceIn(minX, maxX)
         val barOpen = state is PopupUiState.Mini ||
             (state is PopupUiState.Ready && state.multiSelect) ||
             state is PopupUiState.Panel
@@ -503,12 +530,13 @@ class FloatingWindowService : Service() {
         runCatching { stopSelf() }
     }
 
-    /** 双击气泡：直接跳主界面 */
+    /** 阶段 79 交互改版：双击展开详情面板（若已展开则收起） */
     private fun onBubbleDoubleClick() {
-        startActivity(
-            Intent(this, com.clipdown.app.ui.MainActivity::class.java)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        )
+        if (uiState.value is PopupUiState.Panel) {
+            hidePopup()
+        } else {
+            openBubblePanel()
+        }
     }
 
     /** 切换气泡相位；瞬态相位（revertMs 非空）到点自动回退：并发解析→Parsing、仍有下载→聚合进度环、否则 Idle */
@@ -572,12 +600,15 @@ class FloatingWindowService : Service() {
                 manualRecognize = false
                 recognizeTimeoutJob?.cancel()
 
-                // 识别记忆与已下载历史查重：遇到识别过或已下载过的链接，再次下载需明确提醒用户
+                // 识别记忆与已下载历史查重（结合持久化数据库与下载库）：遇到识别过或已下载过的链接，再次下载需明确提醒用户
                 val seenBefore = settings.seenLinks.first()
                 val hasCompleted = DownloadController.repository().tasks.value.any {
                     (it.sourceUrl == link.url || it.url == link.url) && it.status == DownloadStatus.COMPLETED
                 }
-                val isSeen = link.url in seenBefore || hasCompleted
+                val dbSeen = withContext(Dispatchers.IO) {
+                    runCatching { DownloadController.database().isLinkSeen(link.url) }.getOrDefault(false)
+                }
+                val isSeen = link.url in seenBefore || hasCompleted || dbSeen
 
                 if (isSeen) {
                     // 已识别/已下载过：无论手动点击气泡还是自动触发，均提示用户确认是否再次下载
@@ -592,7 +623,12 @@ class FloatingWindowService : Service() {
                     return@onEach
                 }
 
-                scope.launch { settings.markLinkSeen(link.url) }
+                scope.launch {
+                    settings.markLinkSeen(link.url)
+                    withContext(Dispatchers.IO) {
+                        runCatching { DownloadController.database().markLinkSeen(link.url) }
+                    }
+                }
 
                 if (wasManual) {
                     autoRecognize(link, force = true)
@@ -634,6 +670,9 @@ class FloatingWindowService : Service() {
             if (result.isSuccess) {
                 val parsed = result.getOrThrow()
                 LinkCenter.publishResult(parsed)
+                withContext(Dispatchers.IO) {
+                    runCatching { DownloadController.database().markLinkSeen(link.url, parsed.sourceUrl) }
+                }
                 // 污染取证：识别到"别的视频"时，从这里核对解析产物的每条媒体来源 URL
                 android.util.Log.d(
                     "FloatingWindowService",
@@ -702,6 +741,14 @@ class FloatingWindowService : Service() {
     }
 
     private fun startAutoDownload(link: com.clipdown.app.clip.DetectedLink, parsed: ParseResult, item: MediaItem) {
+        val now = System.currentTimeMillis()
+        val lastDown = recentAutoDownloads[link.url] ?: recentAutoDownloads[item.url] ?: 0L
+        if (now - lastDown < 10_000L) {
+            android.util.Log.d("FloatingWindowService", "10秒内抑制同一媒体/链接重复自动下载: ${item.url}")
+            return
+        }
+        recentAutoDownloads[link.url] = now
+        recentAutoDownloads[item.url] = now
         scope.launch {
             runCatching {
                 val taskId = withContext(Dispatchers.IO) {

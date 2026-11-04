@@ -5,6 +5,7 @@ import android.os.Build
 import com.clipdown.downloader.db.TaskDatabase
 import com.clipdown.downloader.engine.DownloadEngine
 import com.clipdown.downloader.model.DownloadConfig
+import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.downloader.model.TaskKind
 import com.clipdown.parser.core.UrlUtil
@@ -57,6 +58,9 @@ object DownloadController {
 
     fun repository(): TaskRepository = TaskRepository.get()
 
+    fun database(): TaskDatabase = database
+        ?: error("DownloadController 未初始化，请先调用 install(context)")
+
     fun updateConfig(config: DownloadConfig) {
         engine?.updateConfig(config)
     }
@@ -79,6 +83,17 @@ object DownloadController {
         // 入口兜底（修复 9 的第二道防线）：不管解析哪条路径漏了转义，入库 URL 必须干净——
         // 页面转义形态随版本变化，曾出现 video_versions 单层 \/ 残留导致 CDN 403
         val cleanUrl = sanitizeTaskUrl(item.url)
+
+        // 防重复下载（阶段 79）：若完全相同的媒体 URL 已经在队列进行中（或15秒内刚完成），直接复用现有任务，绝不重复下载2次
+        val existingActive = repository().tasks.value.firstOrNull {
+            it.url == cleanUrl && (it.status.isActive || (it.status == DownloadStatus.COMPLETED && System.currentTimeMillis() - it.updatedAt < 15_000L))
+        }
+        if (existingActive != null) {
+            ensureServiceStarted()
+            return existingActive.id
+        }
+
+        database?.markLinkSeen(cleanUrl, sourceUrl)
         val kind = when {
             item.isPlaylist || item.container == "m3u8" ||
                 cleanUrl.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS

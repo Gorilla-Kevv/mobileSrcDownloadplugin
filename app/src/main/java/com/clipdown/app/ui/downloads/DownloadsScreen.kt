@@ -36,6 +36,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
@@ -55,7 +56,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -86,10 +86,10 @@ import kotlinx.coroutines.delay
 import java.io.File
 
 /**
- * 下载管理页（现代直角平面网格风格，全面采用四方形组件，严格杜绝圆角）。
+ * 下载管理页（现代柔和圆角卡片风格，舍弃生硬直角线框）。
  *
  * 核心特性：
- * 1. 严格四方形态：所有卡片、缩略图、状态标签、进度条、操作按钮及确认对话框均统一采用 [RectangleShape]。
+ * 1. 柔和圆角设计：所有卡片、缩略图、状态标签、进度条、操作按钮及确认对话框均统一采用优雅圆角。
  * 2. 真实路径可见与复制：直观展示已下载媒体文件的本地物理路径 / MediaStore 路径，并支持一键快捷复制。
  * 3. 聚合图集展示：相同来源帖子聚合为图集组，支持整体与细分项的路径审查、批量与独立删除、一键预览。
  * 4. 内置沉浸式媒体浏览器：无缝调用全屏图片/视频播放器，带循环播放与手势缩放。
@@ -147,12 +147,11 @@ fun DownloadsScreen() {
 
         if (rows.isEmpty()) {
             item {
-                AppCard(shape = RectangleShape) {
+                AppCard {
                     EmptyState(
                         title = "还没有下载任务",
                         desc = "复制一条链接，点悬浮气泡即可识别下载",
-                        icon = Icons.Default.Download,
-                        shape = RectangleShape
+                        icon = Icons.Default.Download
                     )
                 }
             }
@@ -201,7 +200,7 @@ fun DownloadsScreen() {
     taskPendingDelete?.let { task ->
         val path = task.localPath ?: task.localUri
         AlertDialog(
-            shape = RectangleShape,
+            shape = RoundedCornerShape(20.dp),
             onDismissRequest = { taskPendingDelete = null },
             title = { Text("删除文件确认", style = MaterialTheme.typography.titleMedium) },
             text = {
@@ -226,7 +225,7 @@ fun DownloadsScreen() {
             },
             confirmButton = {
                 TextButton(
-                    shape = RectangleShape,
+                    shape = RoundedCornerShape(8.dp),
                     onClick = {
                         DownloadController.repository().delete(task.id)
                         Toast.makeText(context, "已删除本地文件与记录", Toast.LENGTH_SHORT).show()
@@ -237,17 +236,17 @@ fun DownloadsScreen() {
                 }
             },
             dismissButton = {
-                TextButton(shape = RectangleShape, onClick = { taskPendingDelete = null }) {
+                TextButton(shape = RoundedCornerShape(8.dp), onClick = { taskPendingDelete = null }) {
                     Text("取消")
                 }
             }
         )
     }
 
-    // 整组任务删除确认弹窗（四方形设计）
+    // 整组任务删除确认弹窗（柔和圆角设计）
     albumPendingDelete?.let { tasksToDelete ->
         AlertDialog(
-            shape = RectangleShape,
+            shape = RoundedCornerShape(20.dp),
             onDismissRequest = { albumPendingDelete = null },
             title = { Text("批量删除文件确认", style = MaterialTheme.typography.titleMedium) },
             text = {
@@ -258,7 +257,7 @@ fun DownloadsScreen() {
             },
             confirmButton = {
                 TextButton(
-                    shape = RectangleShape,
+                    shape = RoundedCornerShape(8.dp),
                     onClick = {
                         tasksToDelete.forEach { DownloadController.repository().delete(it.id) }
                         Toast.makeText(context, "已删除全部 ${tasksToDelete.size} 个本地文件与记录", Toast.LENGTH_SHORT).show()
@@ -269,7 +268,7 @@ fun DownloadsScreen() {
                 }
             },
             dismissButton = {
-                TextButton(shape = RectangleShape, onClick = { albumPendingDelete = null }) {
+                TextButton(shape = RoundedCornerShape(8.dp), onClick = { albumPendingDelete = null }) {
                     Text("取消")
                 }
             }
@@ -358,19 +357,18 @@ private fun TaskRow(
     val filePath = task.localPath ?: task.localUri
 
     AppCard(
-        shape = RectangleShape,
+        shape = RoundedCornerShape(14.dp),
         padding = if (compact) AppTheme.spacing.md else AppTheme.spacing.lg
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = if (clickable) Modifier.clickable { onPreview() } else Modifier
         ) {
-            // 左侧媒体预览缩略图（纯直角四边形 + 1dp 细线描边）
+            // 左侧媒体预览缩略图（优雅圆角，舍弃生硬线框）
             Box(
                 modifier = Modifier
                     .size(thumbSize)
-                    .clip(RectangleShape)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -431,8 +429,7 @@ private fun TaskRow(
             Spacer(Modifier.width(AppTheme.spacing.sm))
             StatusPill(
                 text = statusLabel(task.status),
-                tone = statusTone(task.status),
-                shape = RectangleShape
+                tone = statusTone(task.status)
             )
         }
 
@@ -538,21 +535,20 @@ private fun AlbumGroupCard(
         } ?: tasks.firstOrNull { it.localUri != null }?.localUri
     }
 
-    AppCard(shape = RectangleShape) {
+    AppCard(shape = RoundedCornerShape(14.dp)) {
         // 整包头：标题 + 状态胶囊 + 统计
         Row(
             verticalAlignment = Alignment.CenterVertically,
             modifier = if (done > 0) Modifier.clickable { onPreviewAlbum(null) } else Modifier
         ) {
-            // 图集封面（优先使用首个已完成作品，四方形 + 角标）
+            // 图集封面（优先使用首个已完成作品，圆角 + 角标）
             val firstCoverModel = resolveThumbModel(
                 tasks.firstOrNull { it.status == DownloadStatus.COMPLETED } ?: tasks.first()
             )
             Box(
                 modifier = Modifier
                     .size(60.dp)
-                    .clip(RectangleShape)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -577,7 +573,7 @@ private fun AlbumGroupCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .clip(RectangleShape)
+                        .clip(RoundedCornerShape(topStart = 6.dp, bottomEnd = 10.dp))
                         .background(Color.Black.copy(alpha = 0.7f))
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
@@ -617,13 +613,13 @@ private fun AlbumGroupCard(
             }
             Spacer(Modifier.width(AppTheme.spacing.sm))
             when {
-                allDone -> StatusPill("已完成", Tone.Success, shape = RectangleShape)
-                failed > 0 -> StatusPill("$failed 失败", Tone.Danger, shape = RectangleShape)
-                else -> StatusPill("下载中", Tone.Brand, shape = RectangleShape)
+                allDone -> StatusPill("已完成", Tone.Success)
+                failed > 0 -> StatusPill("$failed 失败", Tone.Danger)
+                else -> StatusPill("下载中", Tone.Brand)
             }
         }
 
-        // 下载中展示整体平直进度条
+        // 下载中展示整体进度条
         if (active > 0) {
             VSpace(AppTheme.spacing.md)
             ProgressBar(done.toFloat() / tasks.size)
@@ -642,7 +638,7 @@ private fun AlbumGroupCard(
             )
         }
 
-        // 已完成的图片缩略图横排画廊展示（纯直角四边形，带播放指示与边框）
+        // 已完成的图片缩略图横排画廊展示（柔和圆角卡片，带播放指示）
         if (done > 0) {
             val completedTasks = remember(tasks) { tasks.filter { it.status == DownloadStatus.COMPLETED } }
             VSpace(AppTheme.spacing.sm)
@@ -651,8 +647,7 @@ private fun AlbumGroupCard(
                     Box(
                         modifier = Modifier
                             .size(54.dp)
-                            .clip(RectangleShape)
-                            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
+                            .clip(RoundedCornerShape(8.dp))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable { onPreviewAlbum(t) },
                         contentAlignment = Alignment.Center
@@ -748,10 +743,10 @@ private fun AlbumGroupCard(
     }
 }
 
-// ---------- 四方形基础组件（路径展示条、直角动作按钮、平直进度条） ----------
+// ---------- 圆角基础组件（路径展示条、动作按钮、进度条） ----------
 
 /**
- * 四方形文件路径展示块：等宽字体、单行防溢出、一键复制到剪贴板
+ * 圆角文件路径展示块：等宽字体、单行防溢出、一键复制到剪贴板
  */
 @Composable
 private fun FilePathBlock(
@@ -764,11 +759,10 @@ private fun FilePathBlock(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RectangleShape)
+            .clip(RoundedCornerShape(8.dp))
             .clickable { onCopy() },
-        shape = RectangleShape,
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
     ) {
         Row(
             modifier = Modifier.padding(horizontal = 8.dp, vertical = if (compact) 4.dp else 6.dp),
@@ -804,9 +798,8 @@ private fun FilePathBlock(
             Spacer(Modifier.width(6.dp))
             Box(
                 modifier = Modifier
-                    .clip(RectangleShape)
+                    .clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.surface)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RectangleShape)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -829,7 +822,7 @@ private fun FilePathBlock(
 }
 
 /**
- * 统一直角操作按钮（四边形微带描边，悬停/按下触感利落）
+ * 统一圆角操作按钮（柔和圆角微带描边，悬停/按下触感利落）
  */
 @Composable
 private fun SquareActionButton(
@@ -861,9 +854,9 @@ private fun SquareActionButton(
 
     Surface(
         modifier = modifier
-            .clip(RectangleShape)
+            .clip(RoundedCornerShape(8.dp))
             .clickable(enabled = enabled, onClick = onClick),
-        shape = RectangleShape,
+        shape = RoundedCornerShape(8.dp),
         color = bgColor,
         border = BorderStroke(1.dp, borderColor)
     ) {
@@ -890,19 +883,19 @@ private fun SquareActionButton(
     }
 }
 
-/** 统一进度条：四边平直四方形、4dp 高、品牌色 */
+/** 统一进度条：圆角、4dp 高、品牌色 */
 @Composable
 private fun ProgressBar(fraction: Float) {
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .height(4.dp)
-            .clip(RectangleShape)
+            .clip(RoundedCornerShape(2.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         LinearProgressIndicator(
             progress = { fraction.coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().height(4.dp),
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )

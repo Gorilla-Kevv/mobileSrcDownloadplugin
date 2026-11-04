@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 import com.clipdown.downloader.model.DownloadStatus
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.downloader.model.TaskKind
+import com.clipdown.parser.core.UrlUtil
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -54,12 +55,37 @@ class TaskDatabase(context: Context) :
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC)")
+
+        // 阶段 79：已解析链接长期持久化数据库表（杜绝内存限制或粗暴减半丢弃）
+        db.execSQL(
+            """
+            CREATE TABLE IF NOT EXISTS seen_links (
+                url TEXT PRIMARY KEY,
+                normalized_url TEXT,
+                created_at INTEGER
+            )
+            """.trimIndent()
+        )
+        db.execSQL("CREATE INDEX IF NOT EXISTS idx_seen_normalized ON seen_links(normalized_url)")
     }
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) {
             // v2：来源帖子链接（图集分组 + 下载页"查看来源"）
             db.execSQL("ALTER TABLE tasks ADD COLUMN source_url TEXT")
+        }
+        if (oldVersion < 3) {
+            // v3：长期保存已解析链接表与归一化索引
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS seen_links (
+                    url TEXT PRIMARY KEY,
+                    normalized_url TEXT,
+                    created_at INTEGER
+                )
+                """.trimIndent()
+            )
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_seen_normalized ON seen_links(normalized_url)")
         }
     }
 
@@ -185,9 +211,79 @@ class TaskDatabase(context: Context) :
         )
     }
 
+    /** 长期记录一条已解析/已识别的链接（同时写入原始 URL 与去除追踪参后的归一化 URL） */
+    fun markLinkSeen(url: String, canonicalUrl: String? = null) {
+        if (url.isBlank()) return
+        val now = System.currentTimeMillis()
+        val cv1 = ContentValues().apply {
+            put("url", url)
+            put("normalized_url", UrlUtil.normalize(url))
+            put("created_at", now)
+        }
+        writableDatabase.insertWithOnConflict(SEEN_TABLE, null, cv1, SQLiteDatabase.CONFLICT_REPLACE)
+        if (!canonicalUrl.isNullOrBlank() && canonicalUrl != url) {
+            val cv2 = ContentValues().apply {
+                put("url", canonicalUrl)
+                put("normalized_url", UrlUtil.normalize(canonicalUrl))
+                put("created_at", now)
+            }
+            writableDatabase.insertWithOnConflict(SEEN_TABLE, null, cv2, SQLiteDatabase.CONFLICT_REPLACE)
+        }
+    }
+
+    /** 查询指定链接是否在历史中解析或下载过（长期数据库保存，抗动态追踪参数，绝不丢失） */
+    fun isLinkSeen(url: String, canonicalUrl: String? = null): Boolean {
+        if (url.isBlank()) return false
+        val norm1 = UrlUtil.normalize(url)
+        val norm2 = canonicalUrl?.let { UrlUtil.normalize(it) }
+
+        // 1. 检查 seen_links 持久化历史表
+        val sql = "SELECT 1 FROM $SEEN_TABLE WHERE url = ? OR normalized_url = ?" +
+            if (!canonicalUrl.isNullOrBlank()) " OR url = ? OR normalized_url = ?" else ""
+        val args = if (!canonicalUrl.isNullOrBlank()) {
+            arrayOf(url, norm1, canonicalUrl, norm2 ?: "")
+        } else {
+            arrayOf(url, norm1)
+        }
+        runCatching {
+            readableDatabase.rawQuery(sql, args).use { cursor ->
+                if (cursor.moveToFirst()) return true
+            }
+        }
+
+        // 2. 检查 tasks 表（历史任务中的 source_url 或 url）
+        val taskSql = "SELECT 1 FROM $TABLE WHERE url = ? OR source_url = ?" +
+            if (!canonicalUrl.isNullOrBlank()) " OR url = ? OR source_url = ?" else ""
+        val taskArgs = if (!canonicalUrl.isNullOrBlank()) {
+            arrayOf(url, url, canonicalUrl, canonicalUrl)
+        } else {
+            arrayOf(url, url)
+        }
+        runCatching {
+            readableDatabase.rawQuery(taskSql, taskArgs).use { cursor ->
+                if (cursor.moveToFirst()) return true
+            }
+        }
+
+        return false
+    }
+
+    fun getAllSeenUrls(): Set<String> {
+        val set = mutableSetOf<String>()
+        runCatching {
+            readableDatabase.rawQuery("SELECT url FROM $SEEN_TABLE", null).use { cursor ->
+                while (cursor.moveToNext()) {
+                    set.add(cursor.getString(0))
+                }
+            }
+        }
+        return set
+    }
+
     companion object {
         private const val TABLE = "tasks"
-        private const val DB_VERSION = 2
+        private const val SEEN_TABLE = "seen_links"
+        private const val DB_VERSION = 3
     }
 }
 

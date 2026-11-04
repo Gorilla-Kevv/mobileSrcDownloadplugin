@@ -2,15 +2,19 @@ package com.clipdown.app.ui.components
 
 import android.content.Context
 import android.content.Intent
+import android.media.MediaPlayer
 import android.net.Uri
 import android.widget.VideoView
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.rememberTransformableState
 import androidx.compose.foundation.gestures.transformable
@@ -21,6 +25,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -29,10 +34,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.FastForward
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Repeat
@@ -46,6 +53,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -63,11 +71,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.PointerInputChange
+import androidx.compose.ui.input.pointer.changedToUp
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -78,6 +88,7 @@ import coil.compose.AsyncImage
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.parser.model.MediaItem
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.File
 
 /**
@@ -102,6 +113,7 @@ fun MediaViewerDialog(
 
     var showControls by remember { mutableStateOf(true) }
     var showDeleteConfirm by remember { mutableStateOf(false) }
+    var isInteractingWithVideo by remember { mutableStateOf(false) }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -115,16 +127,11 @@ fun MediaViewerDialog(
                 .fillMaxSize()
                 .background(Color.Black)
         ) {
-            // 媒体滑动视口
+            // 媒体滑动视口（左右拖拽进度或长按2倍速时禁用横向滑动翻页，防止手势冲突）
             HorizontalPager(
                 state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .pointerInput(Unit) {
-                        detectTapGestures(
-                            onTap = { showControls = !showControls }
-                        )
-                    }
+                userScrollEnabled = !isInteractingWithVideo,
+                modifier = Modifier.fillMaxSize()
             ) { page ->
                 val task = tasks.getOrNull(page)
                 if (task != null) {
@@ -133,7 +140,8 @@ fun MediaViewerDialog(
                             task = task,
                             isCurrentPage = pagerState.currentPage == page,
                             showControls = showControls,
-                            onSetShowControls = { showControls = it }
+                            onSetShowControls = { showControls = it },
+                            onInteractingChange = { isInteractingWithVideo = it }
                         )
                     } else {
                         ImageViewerPage(
@@ -279,12 +287,13 @@ fun MediaViewerDialog(
 
     if (showDeleteConfirm) {
         AlertDialog(
-            shape = RectangleShape,
+            shape = RoundedCornerShape(20.dp),
             onDismissRequest = { showDeleteConfirm = false },
             title = { Text("删除本地文件确认") },
             text = { Text("确定要删除「${currentTask.title}」对应的本地媒体文件和下载记录吗？此操作无法撤销。") },
             confirmButton = {
                 TextButton(
+                    shape = RoundedCornerShape(8.dp),
                     onClick = {
                         showDeleteConfirm = false
                         onDeleteTask?.invoke(currentTask)
@@ -294,7 +303,7 @@ fun MediaViewerDialog(
                 }
             },
             dismissButton = {
-                TextButton(onClick = { showDeleteConfirm = false }) {
+                TextButton(shape = RoundedCornerShape(8.dp), onClick = { showDeleteConfirm = false }) {
                     Text("取消")
                 }
             }
@@ -360,29 +369,49 @@ private fun ImageViewerPage(
     }
 }
 
-/** 视频播放：全屏硬件加速解码 + 现代化美观 Compose 播放控制器（手势显隐/进度拖动/时间戳/循环切换/居中操作） */
+/** 视频播放：全屏硬件加速解码 + 现代化美观 Compose 播放控制器（手势显隐/进度拖动/时间戳/循环切换/居中操作/长按2倍速/横向拖拽Seek） */
 @Composable
 private fun VideoPlayerPage(
     task: TaskEntity,
     isCurrentPage: Boolean,
     showControls: Boolean,
-    onSetShowControls: (Boolean) -> Unit
+    onSetShowControls: (Boolean) -> Unit,
+    onInteractingChange: (Boolean) -> Unit = {}
 ) {
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
+    var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPrepared by remember { mutableStateOf(false) }
     var isPlaying by remember { mutableStateOf(true) }
     var isCompleted by remember { mutableStateOf(false) }
     var isLooping by remember { mutableStateOf(true) }
+
+    var isSpeedingUp by remember { mutableStateOf(false) }
+    var isDraggingProgress by remember { mutableStateOf(false) }
+    var dragSeekMs by remember { mutableIntStateOf(0) }
+    var dragStartMs by remember { mutableIntStateOf(0) }
 
     var currentPositionMs by remember { mutableIntStateOf(0) }
     var durationMs by remember { mutableIntStateOf(0) }
     var isSeeking by remember { mutableStateOf(false) }
     var seekPositionMs by remember { mutableIntStateOf(0) }
 
+    fun setPlaybackSpeed(speed: Float) {
+        val mp = mediaPlayerRef ?: return
+        try {
+            val params = mp.playbackParams
+            params.speed = speed
+            mp.playbackParams = params
+        } catch (_: Throwable) {
+        }
+    }
+
     DisposableEffect(task.id) {
         onDispose {
+            setPlaybackSpeed(1.0f)
             videoViewRef?.stopPlayback()
             videoViewRef = null
+            mediaPlayerRef = null
+            onInteractingChange(false)
         }
     }
 
@@ -395,6 +424,9 @@ private fun VideoPlayerPage(
                 isPlaying = true
             }
         } else {
+            setPlaybackSpeed(1.0f)
+            isSpeedingUp = false
+            onInteractingChange(false)
             if (vv.isPlaying) {
                 vv.pause()
                 isPlaying = false
@@ -407,7 +439,7 @@ private fun VideoPlayerPage(
         if (!isCurrentPage) return@LaunchedEffect
         while (isPlaying && isPrepared) {
             val vv = videoViewRef ?: break
-            if (!isSeeking) {
+            if (!isSeeking && !isDraggingProgress) {
                 currentPositionMs = vv.currentPosition.coerceAtLeast(0)
                 if (durationMs <= 0 || durationMs < vv.duration) {
                     durationMs = vv.duration.coerceAtLeast(0)
@@ -418,8 +450,8 @@ private fun VideoPlayerPage(
     }
 
     // 播放中自动收起控制条（3.5 秒无操作自动隐藏）
-    LaunchedEffect(showControls, isPlaying, isSeeking, isCurrentPage) {
-        if (showControls && isPlaying && !isSeeking && isCurrentPage && !isCompleted) {
+    LaunchedEffect(showControls, isPlaying, isSeeking, isDraggingProgress, isSpeedingUp, isCurrentPage) {
+        if (showControls && isPlaying && !isSeeking && !isDraggingProgress && !isSpeedingUp && isCurrentPage && !isCompleted) {
             delay(3500L)
             onSetShowControls(false)
         }
@@ -428,12 +460,7 @@ private fun VideoPlayerPage(
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onSetShowControls(!showControls) }
-                )
-            },
+            .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
         val mediaUri = resolveMediaUri(task)
@@ -443,7 +470,8 @@ private fun VideoPlayerPage(
                     VideoView(ctx).apply {
                         // 不使用陈旧的系统 MediaController，全面采用 Compose 原生现代控件
                         setVideoURI(mediaUri)
-                        setOnPreparedListener { _ ->
+                        setOnPreparedListener { mp ->
+                            mediaPlayerRef = mp
                             isPrepared = true
                             durationMs = duration.coerceAtLeast(0)
                             if (isCurrentPage) {
@@ -453,6 +481,9 @@ private fun VideoPlayerPage(
                             }
                         }
                         setOnCompletionListener {
+                            setPlaybackSpeed(1.0f)
+                            isSpeedingUp = false
+                            onInteractingChange(false)
                             if (isLooping) {
                                 seekTo(0)
                                 start()
@@ -472,6 +503,117 @@ private fun VideoPlayerPage(
                 modifier = Modifier.fillMaxSize()
             )
 
+            // 手势交互透明覆盖层（位于 AndroidView 之上，彻底解决 VideoView 吞噬手势导致点击失效）
+            // 支持：单击切换控制条显隐、长按2倍速播放、屏幕左右拖拽调节进度
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .pointerInput(durationMs) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val startPos = down.position
+                            val initialSeekPos = currentPositionMs
+                            var isDragging = false
+                            var isLongPressing = false
+                            var targetSeek = initialSeekPos
+
+                            try {
+                                val dragOrUp = withTimeoutOrNull(400L) {
+                                    var pointerChange: PointerInputChange? = null
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (change.changedToUp()) {
+                                            pointerChange = change
+                                            break
+                                        }
+                                        val dx = change.position.x - startPos.x
+                                        val dy = change.position.y - startPos.y
+                                        if (kotlin.math.hypot(dx, dy) > 18f) {
+                                            pointerChange = change
+                                            break
+                                        }
+                                    }
+                                    pointerChange
+                                }
+
+                                if (dragOrUp == null) {
+                                    // 400ms 超时且无大位移 -> 触发长按 2 倍速播放！
+                                    if (isPrepared && isPlaying) {
+                                        isLongPressing = true
+                                        isSpeedingUp = true
+                                        onInteractingChange(true)
+                                        setPlaybackSpeed(2.0f)
+                                    }
+
+                                    // 等待手势抬起
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                        if (change.changedToUp()) {
+                                            change.consume()
+                                            break
+                                        }
+                                    }
+                                } else if (dragOrUp.changedToUp()) {
+                                    // 400ms 内抬起无拖动 -> 单击切换控制条显隐
+                                    dragOrUp.consume()
+                                    onSetShowControls(!showControls)
+                                } else {
+                                    // 400ms 内位移超过阈值 -> 判定是否为左右拖拽进度
+                                    val initialDx = dragOrUp.position.x - startPos.x
+                                    val initialDy = dragOrUp.position.y - startPos.y
+                                    if (kotlin.math.abs(initialDx) >= kotlin.math.abs(initialDy)) {
+                                        isDragging = true
+                                        isDraggingProgress = true
+                                        dragStartMs = initialSeekPos
+                                        onInteractingChange(true)
+
+                                        var currentX = dragOrUp.position.x
+                                        val screenW = size.width.toFloat().coerceAtLeast(1f)
+                                        val seekRangeMs = (durationMs.coerceAtLeast(30_000)).coerceAtMost(300_000)
+                                        val deltaMs = ((currentX - startPos.x) / screenW * seekRangeMs).toInt()
+                                        targetSeek = (initialSeekPos + deltaMs).coerceIn(0, durationMs)
+                                        dragSeekMs = targetSeek
+                                        dragOrUp.consume()
+
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            if (change.changedToUp()) {
+                                                change.consume()
+                                                break
+                                            }
+                                            currentX = change.position.x
+                                            val delta = ((currentX - startPos.x) / screenW * seekRangeMs).toInt()
+                                            targetSeek = (initialSeekPos + delta).coerceIn(0, durationMs)
+                                            dragSeekMs = targetSeek
+                                            change.consume()
+                                        }
+                                    }
+                                }
+                            } finally {
+                                if (isLongPressing) {
+                                    setPlaybackSpeed(1.0f)
+                                    isSpeedingUp = false
+                                    onInteractingChange(false)
+                                }
+                                if (isDragging) {
+                                    videoViewRef?.seekTo(targetSeek)
+                                    currentPositionMs = targetSeek
+                                    if (isCompleted) {
+                                        isCompleted = false
+                                        videoViewRef?.start()
+                                        isPlaying = true
+                                    }
+                                    isDraggingProgress = false
+                                    onInteractingChange(false)
+                                }
+                            }
+                        }
+                    }
+            )
+
             // 缓冲转圈
             if (!isPrepared) {
                 CircularProgressIndicator(
@@ -480,9 +622,81 @@ private fun VideoPlayerPage(
                 )
             }
 
+            // 2.0x 倍速播放浮动 HUD
+            AnimatedVisibility(
+                visible = isSpeedingUp,
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(150)),
+                modifier = Modifier
+                    .align(Alignment.TopCenter)
+                    .statusBarsPadding()
+                    .padding(top = 70.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = Color.Black.copy(alpha = 0.75f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.FastForward,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "2.0X ⏩ 倍速播放中",
+                            color = Color.White,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                    }
+                }
+            }
+
+            // 左右拖拽进度浮动 HUD
+            AnimatedVisibility(
+                visible = isDraggingProgress,
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(150)),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = Color.Black.copy(alpha = 0.82f),
+                    border = BorderStroke(1.dp, Color.White.copy(alpha = 0.25f))
+                ) {
+                    Column(
+                        modifier = Modifier.padding(horizontal = 24.dp, vertical = 14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        val deltaSec = (dragSeekMs - dragStartMs) / 1000
+                        val deltaText = if (deltaSec >= 0) "+${deltaSec}s" else "${deltaSec}s"
+                        Text(
+                            text = deltaText,
+                            color = if (deltaSec >= 0) MaterialTheme.colorScheme.primary else Color(0xFFFF5252),
+                            style = MaterialTheme.typography.titleLarge.copy(
+                                fontWeight = FontWeight.Bold
+                            )
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = "${formatMediaTime(dragSeekMs.toLong())} / ${formatMediaTime(durationMs.toLong())}",
+                            color = Color.White,
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    }
+                }
+            }
+
             // 居中操作圆钮（播放/暂停/重播）
             AnimatedVisibility(
-                visible = showControls || !isPlaying || isCompleted,
+                visible = (showControls || !isPlaying || isCompleted) && !isDraggingProgress && !isSpeedingUp,
                 enter = fadeIn(tween(200)),
                 exit = fadeOut(tween(200))
             ) {
@@ -554,7 +768,7 @@ private fun VideoPlayerPage(
                             modifier = Modifier.fillMaxWidth(),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            val displayPosition = if (isSeeking) seekPositionMs else currentPositionMs
+                            val displayPosition = if (isDraggingProgress) dragSeekMs else if (isSeeking) seekPositionMs else currentPositionMs
                             Text(
                                 text = formatMediaTime(displayPosition.toLong()),
                                 color = Color.White,
@@ -564,7 +778,7 @@ private fun VideoPlayerPage(
                             Spacer(Modifier.width(8.dp))
 
                             val maxRange = durationMs.coerceAtLeast(1).toFloat()
-                            val currentSliderValue = (if (isSeeking) seekPositionMs else currentPositionMs)
+                            val currentSliderValue = displayPosition
                                 .coerceIn(0, durationMs.coerceAtLeast(1)).toFloat()
 
                             Slider(

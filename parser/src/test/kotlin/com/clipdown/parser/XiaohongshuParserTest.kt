@@ -355,4 +355,35 @@ class XiaohongshuParserTest {
         assertEquals("实况图精选", result.title)
         assertEquals("拍照达人", result.author)
     }
+
+    @Test
+    fun `视频与多张图片混合笔记 同时提取视频和全部图片`() {
+        val state = """
+            window.__INITIAL_STATE__={"note":{"noteDetailMap":{"n1":{"note":{"type":"video",
+            "title":"混合作品集","user":{"nickName":"全能创作者"},
+            "video":{"media":{"stream":{"h264":[{"masterUrl":"http://sns-video-v4.xhscdn.com/mixed_main.mp4"}]}}},
+            "imageList":[
+            {"fileId":"img_mix_1","urlDefault":"http://sns-webpic.xhscdn.com/img_mix_1!nd_dft_wlteh_webp_3"},
+            {"fileId":"img_mix_2","urlDefault":"http://sns-webpic.xhscdn.com/img_mix_2!nd_dft_wlteh_webp_3"},
+            {"fileId":"img_mix_3","urlDefault":"http://sns-webpic.xhscdn.com/img_mix_3!nd_dft_wlteh_webp_3"}
+            ]}}}}}
+        """.trimIndent()
+        val html = "<html><head><title> - 小红书</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=s;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/discovery/item/6ac05cc4000000001b02d899?type=video&xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals(1, videos.size)
+        assertEquals(3, images.size)
+        assertEquals(4, result.media.size)
+        assertTrue("图文与视频混合笔记必须判为多选图集模式", result.isAlbumMultiSelect)
+        assertEquals("混合作品集", result.title)
+    }
 }
