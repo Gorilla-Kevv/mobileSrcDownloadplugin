@@ -907,8 +907,11 @@
       });
     }
 
-    // 4. YouTube 专属下载通道 (播放页操作栏 + Shorts 侧边栏 + 首页/搜索/频道瀑布流卡片)
+    // 4. YouTube 专属下载通道 (播放详情页操作栏 + Shorts 侧边栏)
+    // 注：YouTube 首页/推荐/频道瀑布流卡片缩略图自带时间角标 (如 0:40)，且并非完整视频下载场景，不在卡片上注入按钮，避免遮挡时间
     if (IS_YOUTUBE) {
+      // 动态清理可能残留在视频卡片缩略图上的下载按钮，确保不遮挡时间显示
+      document.querySelectorAll("ytd-thumbnail .clipdown-card-dl-btn, #thumbnail .clipdown-card-dl-btn, .thumbnail-container .clipdown-card-dl-btn").forEach(btn => btn.remove());
       // 4.1 播放详情页操作栏按钮 (Watch Page Action Bar)
       if (window.location.pathname === "/watch") {
         const actionsHost = document.querySelector("#actions #top-level-buttons-computed, ytd-watch-metadata #actions");
@@ -997,92 +1000,6 @@
         }
       }
 
-      // 4.3 首页 / 搜索 / 频道瀑布流视频卡片右下角按钮
-      document.querySelectorAll(`
-        ytd-rich-item-renderer:not([data-clipdown-injected]),
-        ytd-video-renderer:not([data-clipdown-injected]),
-        ytd-grid-video-renderer:not([data-clipdown-injected]),
-        ytd-compact-video-renderer:not([data-clipdown-injected]),
-        ytd-reel-item-renderer:not([data-clipdown-injected])
-      `).forEach(card => {
-        card.setAttribute("data-clipdown-injected", "true");
-        const thumbWrap = card.querySelector("#thumbnail, ytd-thumbnail, .thumbnail-container");
-        if (!thumbWrap) return;
-
-        const compStyle = window.getComputedStyle(thumbWrap);
-        if (compStyle.position === "static") {
-          thumbWrap.style.position = "relative";
-        }
-
-        const btn = document.createElement("div");
-        btn.className = "clipdown-card-dl-btn";
-        btn.title = "ClipDown 一键下载此视频";
-        btn.innerHTML = `
-          <span class="clipdown-card-dl-icon">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M12 2v13M17 10l-5 5-5-5"/>
-              <path d="M20 21H4"/>
-            </svg>
-          </span>
-          <span class="clipdown-card-dl-label">下载</span>
-        `;
-
-        btn.addEventListener("click", async (e) => {
-          e.stopPropagation();
-          e.preventDefault();
-
-          const link = card.querySelector('a#video-title-link, a#thumbnail, a[href*="/watch?v="], a[href*="/shorts/"]');
-          if (!link) return;
-          const href = link.getAttribute("href") || "";
-          const targetUrl = href.startsWith("http") ? href : `https://www.youtube.com${href}`;
-          const title = card.querySelector("#video-title, #video-title-link")?.textContent?.trim() || "YouTube_Video";
-
-          const origContent = btn.innerHTML;
-          btn.classList.add("loading");
-          btn.innerHTML = `<span class="clipdown-inline-spinner"></span> 解析中...`;
-
-          try {
-            const res = await new Promise(resolve => {
-              chrome.runtime.sendMessage({
-                action: "RESOLVE_MEDIA",
-                url: targetUrl,
-                inpageData: { title, url: targetUrl }
-              }, resolve);
-            });
-
-            if (res && res.success && res.data && res.data.items && res.data.items.length > 0) {
-              const bestVideo = res.data.items.find(x => x.type === "video") || res.data.items[0];
-              const ext = bestVideo.ext || "mp4";
-              const safeTitle = title.substring(0, 40).replace(/[\\/:*?"<>|]/g, "_");
-
-              btn.innerHTML = `⏳ 正在下载...`;
-              chrome.runtime.sendMessage({
-                action: "DOWNLOAD_MEDIA_PC",
-                url: bestVideo.url,
-                filename: `${safeTitle}.${ext}`,
-                platform: "youtube"
-              });
-
-              btn.classList.remove("loading");
-              btn.classList.add("success");
-              btn.innerHTML = `✓ 已下载`;
-            } else {
-              btn.classList.remove("loading");
-              btn.innerHTML = `❌ 未发现视频流`;
-            }
-          } catch (err) {
-            btn.classList.remove("loading");
-            btn.innerHTML = `❌ 下载失败`;
-          }
-
-          setTimeout(() => {
-            btn.classList.remove("success", "loading");
-            btn.innerHTML = origContent;
-          }, 3000);
-        });
-
-        thumbWrap.appendChild(btn);
-      });
     }
   }
 
