@@ -64,6 +64,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -140,6 +141,7 @@ fun MediaViewerDialog(
                             task = task,
                             isCurrentPage = pagerState.currentPage == page,
                             showControls = showControls,
+                            onToggleControls = { showControls = !showControls },
                             onSetShowControls = { showControls = it },
                             onInteractingChange = { isInteractingWithVideo = it }
                         )
@@ -375,9 +377,14 @@ private fun VideoPlayerPage(
     task: TaskEntity,
     isCurrentPage: Boolean,
     showControls: Boolean,
+    onToggleControls: () -> Unit,
     onSetShowControls: (Boolean) -> Unit,
     onInteractingChange: (Boolean) -> Unit = {}
 ) {
+    val currentOnToggleControls by rememberUpdatedState(onToggleControls)
+    val currentOnSetShowControls by rememberUpdatedState(onSetShowControls)
+    val currentOnInteractingChange by rememberUpdatedState(onInteractingChange)
+
     var videoViewRef by remember { mutableStateOf<VideoView?>(null) }
     var mediaPlayerRef by remember { mutableStateOf<MediaPlayer?>(null) }
     var isPrepared by remember { mutableStateOf(false) }
@@ -411,7 +418,7 @@ private fun VideoPlayerPage(
             videoViewRef?.stopPlayback()
             videoViewRef = null
             mediaPlayerRef = null
-            onInteractingChange(false)
+            currentOnInteractingChange(false)
         }
     }
 
@@ -426,7 +433,7 @@ private fun VideoPlayerPage(
         } else {
             setPlaybackSpeed(1.0f)
             isSpeedingUp = false
-            onInteractingChange(false)
+            currentOnInteractingChange(false)
             if (vv.isPlaying) {
                 vv.pause()
                 isPlaying = false
@@ -453,7 +460,7 @@ private fun VideoPlayerPage(
     LaunchedEffect(showControls, isPlaying, isSeeking, isDraggingProgress, isSpeedingUp, isCurrentPage) {
         if (showControls && isPlaying && !isSeeking && !isDraggingProgress && !isSpeedingUp && isCurrentPage && !isCompleted) {
             delay(3500L)
-            onSetShowControls(false)
+            currentOnSetShowControls(false)
         }
     }
 
@@ -483,7 +490,7 @@ private fun VideoPlayerPage(
                         setOnCompletionListener {
                             setPlaybackSpeed(1.0f)
                             isSpeedingUp = false
-                            onInteractingChange(false)
+                            currentOnInteractingChange(false)
                             if (isLooping) {
                                 seekTo(0)
                                 start()
@@ -494,7 +501,7 @@ private fun VideoPlayerPage(
                                 isPlaying = false
                                 isCompleted = true
                                 currentPositionMs = durationMs
-                                onSetShowControls(true)
+                                currentOnSetShowControls(true)
                             }
                         }
                         videoViewRef = this
@@ -508,7 +515,7 @@ private fun VideoPlayerPage(
             Box(
                 modifier = Modifier
                     .fillMaxSize()
-                    .pointerInput(durationMs) {
+                    .pointerInput(task.id) {
                         awaitEachGesture {
                             val down = awaitFirstDown(requireUnconsumed = false)
                             val startPos = down.position
@@ -523,7 +530,7 @@ private fun VideoPlayerPage(
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                        if (change.changedToUp()) {
+                                        if (!change.pressed && change.previousPressed) {
                                             pointerChange = change
                                             break
                                         }
@@ -542,7 +549,7 @@ private fun VideoPlayerPage(
                                     if (isPrepared && isPlaying) {
                                         isLongPressing = true
                                         isSpeedingUp = true
-                                        onInteractingChange(true)
+                                        currentOnInteractingChange(true)
                                         setPlaybackSpeed(2.0f)
                                     }
 
@@ -550,15 +557,15 @@ private fun VideoPlayerPage(
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                        if (change.changedToUp()) {
+                                        if (!change.pressed && change.previousPressed) {
                                             change.consume()
                                             break
                                         }
                                     }
-                                } else if (dragOrUp.changedToUp()) {
-                                    // 400ms 内抬起无拖动 -> 单击切换控制条显隐
+                                } else if (!dragOrUp.pressed && dragOrUp.previousPressed) {
+                                    // 400ms 内抬起无拖动 -> 单击！每次单击无条件切换显隐状态
                                     dragOrUp.consume()
-                                    onSetShowControls(!showControls)
+                                    currentOnToggleControls()
                                 } else {
                                     // 400ms 内位移超过阈值 -> 判定是否为左右拖拽进度
                                     val initialDx = dragOrUp.position.x - startPos.x
@@ -567,7 +574,7 @@ private fun VideoPlayerPage(
                                         isDragging = true
                                         isDraggingProgress = true
                                         dragStartMs = initialSeekPos
-                                        onInteractingChange(true)
+                                        currentOnInteractingChange(true)
 
                                         var currentX = dragOrUp.position.x
                                         val screenW = size.width.toFloat().coerceAtLeast(1f)
@@ -580,7 +587,7 @@ private fun VideoPlayerPage(
                                         while (true) {
                                             val event = awaitPointerEvent()
                                             val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                            if (change.changedToUp()) {
+                                            if (!change.pressed && change.previousPressed) {
                                                 change.consume()
                                                 break
                                             }
@@ -590,13 +597,22 @@ private fun VideoPlayerPage(
                                             dragSeekMs = targetSeek
                                             change.consume()
                                         }
+                                    } else {
+                                        // 垂直滑动或其他，等待手势结束
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            if (!change.pressed && change.previousPressed) {
+                                                break
+                                            }
+                                        }
                                     }
                                 }
                             } finally {
                                 if (isLongPressing) {
                                     setPlaybackSpeed(1.0f)
                                     isSpeedingUp = false
-                                    onInteractingChange(false)
+                                    currentOnInteractingChange(false)
                                 }
                                 if (isDragging) {
                                     videoViewRef?.seekTo(targetSeek)
@@ -607,7 +623,7 @@ private fun VideoPlayerPage(
                                         isPlaying = true
                                     }
                                     isDraggingProgress = false
-                                    onInteractingChange(false)
+                                    currentOnInteractingChange(false)
                                 }
                             }
                         }
