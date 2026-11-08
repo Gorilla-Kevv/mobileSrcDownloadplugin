@@ -1830,3 +1830,40 @@
   - `:app:assembleDebug` 打包构建全通，产物完整；
   - 增量编译无任何警告或错误。
 - 本次文档更新时间：11.04 12:55
+
+
+## 阶段 80 代码评审三项高危修复（小红书已解析去重键 · 倍速 HUD 谎报 · 暂停长按吞点击）[计划时间：11.09 01:10 BY Antigravity][完成时间：11.09 01:16 BY Antigravity]
+- 背景：`/code-review` 双轴评审（v1.1.27...HEAD）在规格轴发现 3 项「看起来实现了、实际有问题」，本轮定点修复。
+- 已完成：
+  1. **小红书「已解析」去重键失效（规格轴 #1，根因级）**：
+     - **根因**：`TRACKING_PARAMS` 刻意保留 `xsec_token`（解析必需），而 `isLinkSeen/markLinkSeen` 都用 `UrlUtil.normalize()` 做比对。同一条笔记被不同人分享、或隔几天再复制一次时 `xsec_token` 已换，归一化结果不同 → 永远匹配不上 → 不弹「已解析」提示。这正是用户第 6 条需求「几天前解析过的再解析一遍不弹提示」的残留症状。
+     - **修法**：`UrlUtil` 新增 `dedupKey()`，与面向请求的 `normalize()` **分工**——前者剥掉会轮换的鉴权/签名参数（`xsec_token/xsec_source/share_token/sign/sig/expires/ts/...`）并收敛到笔记 ID；后者保持原样（`UrlUtilTest` 仍断言 `normalize` 保留 `xsec_token`）。
+     - 小红书三路径形态 `/explore/<id>`、`/discovery/item/<id>`、`/notes/<id>` 统一收敛为 `xhs:note:<id>`，同一篇笔记任何入口都算同一键。
+     - `TaskDatabase` 的 `markLinkSeen` 写 `dedupKey`，`isLinkSeen` 用它比对；同时保留一列 `legacyNormalized` 兼容 v3 早期行（存的是保留 token 的旧形态），避免升级后历史一次性失效。
+  2. **长按 2 倍速 HUD 谎报（规格轴 #4）**：
+     - **根因**：`isSpeedingUp = true` 在 `setPlaybackSpeed(2.0f)` **之前**设置，而该函数是空的 `catch (_: Throwable) {}`。在 `playbackParams` 会抛异常的机型上，用户看到「2.0X ⏩ 倍速播放中」，视频其实仍以 1.0× 播放。
+     - **修法**：`setPlaybackSpeed` 改为返回 `Boolean` 真实生效结果，失败按坑 12 记 `Log.w` 而非静默吞；只有**真正生效后**才点亮 `isSpeedingUp` / 禁用翻页。
+  3. **暂停时长按吞掉点击（规格轴 #5）**：
+     - **根因**：长按分支被 `isPrepared && isPlaying` 门控，条件不成立时（暂停/未就绪）代码仍进入长按等待循环，于是这一次点击既不切换控制条、也不做任何事——被静默吃掉。
+     - **修法**：未进入倍速且检测到**正常抬起**时，按单击处理并 `currentOnToggleControls()`，保证「每次单击都切换显示/消失」这一语义无死角。
+  4. **顺带修掉评审发现的两处相关缺陷**：
+     - `DownloadController.enqueue` 的媒体去重改用 `dedupKey` 比对（原来裸串比对，媒体直链签名轮换时会漏判，仍可能「载 2 次同一个视频」）；有 `sourceUrl` 时额外要求来源一致，避免不同帖子共用 CDN 资源被误合并。
+     - 停止把**媒体 CDN URL** 写入 `seen_links`（原来每个媒体文件都会永久污染一行，且与页面 URL 不同域，对「已解析」提示毫无用处），只记录来源帖子 URL。
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/core/UrlUtil.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/UrlUtilTest.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/db/TaskDatabase.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadController.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/MediaViewerDialog.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - 单元测试 **166 例全绿**（parser 111 例 + downloader 41 例 + app 14 例），新增 4 例锁定去重键行为：
+    `dedupKey 忽略 xsec_token 变化 收敛到笔记 ID`、`dedupKey 统一小红书三种笔记路径形态`、`dedupKey 其他平台的轮换签名参数也应被剥离`、`dedupKey 与 normalize 分工 前者剥后者留`；
+  - `:app:assembleDebug` 打包成功。
+- 风险与遗留（评审中**未**本轮处理，另行排期）：
+  - 标准轴 4 项硬性违规仍在：`SyncPairingDialog.kt` 约 20 处裸色值（多数与 `Color.kt` 令牌完全等价）、`DownloadsScreen.kt` 约 14 处裸圆角值绕开 `AppTheme.radius`、`MediaViewerDialog:698` 裸 `0xFFFF5252`、`AppNav.kt` 裸 dp；
+  - `HANDOFF.md:100`「默认浅色优先」与 `Theme.kt:146` `darkTheme = true` 矛盾仍未收敛；
+  - `popup.html:329` 硬编码扩展版本号，与 `manifest.json` 两处维护；
+  - 三层去重窗口（`LinkCenter` 1s / `recentAutoDownloads` 10s / `DownloadController` 15s）语义重叠，建议后续合并为一个 `SeenLinkGuard`。
+- 本次文档更新时间：11.09 01:16

@@ -402,13 +402,23 @@ private fun VideoPlayerPage(
     var isSeeking by remember { mutableStateOf(false) }
     var seekPositionMs by remember { mutableIntStateOf(0) }
 
-    fun setPlaybackSpeed(speed: Float) {
-        val mp = mediaPlayerRef ?: return
-        try {
+    /**
+     * 设置播放倍速；返回是否**真正生效**。
+     *
+     * `playbackParams` 在部分机型/编码上会抛异常。旧实现把异常静默吞掉后仍然
+     * 点亮「2.0X 倍速播放中」HUD，用户看到的是谎报。现在按真实结果返回，
+     * 失败时记日志且不展示 HUD（见坑 12：失败不要静默吞）。
+     */
+    fun setPlaybackSpeed(speed: Float): Boolean {
+        val mp = mediaPlayerRef ?: return false
+        return try {
             val params = mp.playbackParams
             params.speed = speed
             mp.playbackParams = params
-        } catch (_: Throwable) {
+            true
+        } catch (t: Throwable) {
+            android.util.Log.w("MediaViewerDialog", "设置倍速 ${speed}x 失败", t)
+            false
         }
     }
 
@@ -545,22 +555,32 @@ private fun VideoPlayerPage(
                                 }
 
                                 if (dragOrUp == null) {
-                                    // 400ms 超时且无大位移 -> 触发长按 2 倍速播放！
-                                    if (isPrepared && isPlaying) {
+                                    // 400ms 超时且无大位移 -> 长按。
+                                    // 仅当「已就绪且正在播放」时才进入 2 倍速；否则这是一次
+                                    // 无意义的静止按住，绝不能吞掉点击语义（旧实现会让暂停态
+                                    // 下的单击完全失效）。倍速只在真正生效后才点亮 HUD。
+                                    var speedUpApplied = false
+                                    if (isPrepared && isPlaying && setPlaybackSpeed(2.0f)) {
+                                        speedUpApplied = true
                                         isLongPressing = true
                                         isSpeedingUp = true
                                         currentOnInteractingChange(true)
-                                        setPlaybackSpeed(2.0f)
                                     }
 
                                     // 等待手势抬起
+                                    var released = false
                                     while (true) {
                                         val event = awaitPointerEvent()
                                         val change = event.changes.firstOrNull { it.id == down.id } ?: break
                                         if (!change.pressed && change.previousPressed) {
                                             change.consume()
+                                            released = true
                                             break
                                         }
+                                    }
+                                    // 未进入倍速且正常抬起 -> 按单击处理，保证「每次单击都切换显隐」
+                                    if (!speedUpApplied && released) {
+                                        currentOnToggleControls()
                                     }
                                 } else if (!dragOrUp.pressed && dragOrUp.previousPressed) {
                                     // 400ms 内抬起无拖动 -> 单击！每次单击无条件切换显隐状态

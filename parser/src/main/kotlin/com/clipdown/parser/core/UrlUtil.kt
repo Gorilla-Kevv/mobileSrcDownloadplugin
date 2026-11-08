@@ -33,6 +33,21 @@ object UrlUtil {
         "xsec_source", "share_token", "b_id", "from_source", "share_type"
     )
 
+    /**
+     * 「会轮换」的鉴权/签名参数：**解析链路必须保留**（没有 xsec_token 小红书直接拒绝），
+     * 但**去重链路必须忽略**——同一条笔记被不同人分享、或隔几天再复制一次，
+     * 这些值都会变，带着它们比对会让「已解析过」的提醒永远匹配不上。
+     */
+    private val VOLATILE_PARAMS = setOf(
+        "xsec_token", "xsec_source", "share_token", "sign", "sig", "signature",
+        "expires", "expire", "ts", "timestamp", "auth_key", "token", "nonce"
+    )
+
+    /** 小红书笔记 ID 提取：/explore/<id>、/discovery/item/<id>、/notes/<id> */
+    private val XHS_NOTE_ID = Regex(
+        """/(?:explore|discovery/item|notes)/([0-9a-fA-F]{16,32})"""
+    )
+
     /** 从任意文本中召回第一个候选链接 */
     fun extractFirst(text: String?): String? = extractAll(text).firstOrNull()
 
@@ -75,6 +90,38 @@ object UrlUtil {
         }
         val query = if (kept.isEmpty()) "" else kept.joinToString("&").let { "?$it" }
         return "${uri.scheme}://$host${if (uri.port != -1) ":${uri.port}" else ""}${path.trimEnd('/')}$query"
+    }
+
+    /**
+     * 去重键（dedup key）：用于「已解析过该链接」的长期比对公司判定。
+     *
+     * 与 [normalize] 的区别：
+     * - [normalize] 面向**请求**，必须保留 `xsec_token` 等鉴权参数，否则小红书直接拒绝；
+     * - 本函数面向**记忆**，必须剥掉所有会随分享轮换的鉴权/签名参数，否则同一条笔记
+     *   隔几天再复制一次时 token 已变，比对必然失败 —— 这正是「几天前解析过的链接
+     *   再解析一遍不弹『已解析』提示」的根因。
+     *
+     * 小红书额外收敛到「笔记 ID」：/explore/<id>、/discovery/item/<id>、/notes/<id>
+     * 三个路径形态指向同一篇笔记，统一成 `xhs:note:<id>`。
+     */
+    fun dedupKey(raw: String): String {
+        val base = stripVolatile(normalize(raw))
+        val noteId = XHS_NOTE_ID.find(pathOf(base))?.groupValues?.getOrNull(1)
+        return if (noteId != null) "xhs:note:${noteId.lowercase()}" else base
+    }
+
+    /** 剥掉 query 中所有会轮换的鉴权/签名参数（保留其余业务参数并稳定排序） */
+    private fun stripVolatile(normalized: String): String {
+        val uri = runCatching { URI(normalized) }.getOrNull() ?: return normalized
+        val kept = (uri.query ?: "").split('&')
+            .filter { q ->
+                val name = q.substringBefore('=')
+                name.isNotEmpty() && name !in VOLATILE_PARAMS && name !in TRACKING_PARAMS
+            }
+            .sorted()
+        val query = if (kept.isEmpty()) "" else kept.joinToString("&").let { "?$it" }
+        val host = uri.host ?: return normalized
+        return "${uri.scheme}://$host${if (uri.port != -1) ":${uri.port}" else ""}${(uri.path ?: "").trimEnd('/')}$query"
     }
 
     fun hostOf(url: String): String =

@@ -84,16 +84,26 @@ object DownloadController {
         // 页面转义形态随版本变化，曾出现 video_versions 单层 \/ 残留导致 CDN 403
         val cleanUrl = sanitizeTaskUrl(item.url)
 
-        // 防重复下载（阶段 79）：若完全相同的媒体 URL 已经在队列进行中（或15秒内刚完成），直接复用现有任务，绝不重复下载2次
-        val existingActive = repository().tasks.value.firstOrNull {
-            it.url == cleanUrl && (it.status.isActive || (it.status == DownloadStatus.COMPLETED && System.currentTimeMillis() - it.updatedAt < 15_000L))
+        // 防重复下载（阶段 79）：若同一个媒体已经在队列进行中（或 15 秒内刚完成），直接复用现有任务。
+        // 比对必须用 [UrlUtil.dedupKey] 而不是原始 URL：小红书/X/IG 的媒体直链带轮换签名，
+        // 两次解析同一视频会拿到不同 query，裸串比对会漏判，导致「载 2 次同一个视频」。
+        // 有 sourceUrl 时再要求来源帖子一致，避免不同帖子共用同一 CDN 资源时误合并。
+        val urlKey = UrlUtil.dedupKey(cleanUrl)
+        val existingActive = repository().tasks.value.firstOrNull { t ->
+            UrlUtil.dedupKey(t.url) == urlKey &&
+                (sourceUrl == null || t.sourceUrl == null || t.sourceUrl == sourceUrl) &&
+                (t.status.isActive ||
+                    (t.status == DownloadStatus.COMPLETED && System.currentTimeMillis() - t.updatedAt < 15_000L))
         }
         if (existingActive != null) {
             ensureServiceStarted()
             return existingActive.id
         }
 
-        database?.markLinkSeen(cleanUrl, sourceUrl)
+        // 只记录**来源帖子 URL**进入「已解析链接」表。
+        // 旧实现把媒体直链（cleanUrl）也写进去，会让这张表被每个媒体文件永久污染一行，
+        // 且媒体 URL 与页面 URL 不同域，对"已解析"提示毫无用处。
+        sourceUrl?.takeIf { it.isNotBlank() }?.let { database?.markLinkSeen(it) }
         val kind = when {
             item.isPlaylist || item.container == "m3u8" ||
                 cleanUrl.substringBefore('?').endsWith(".m3u8") -> TaskKind.HLS

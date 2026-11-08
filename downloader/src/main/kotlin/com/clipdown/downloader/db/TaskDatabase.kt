@@ -211,39 +211,54 @@ class TaskDatabase(context: Context) :
         )
     }
 
-    /** 长期记录一条已解析/已识别的链接（同时写入原始 URL 与去除追踪参后的归一化 URL） */
+    /**
+     * 长期记录一条已解析/已识别的链接。
+     *
+     * `url` 列保留原始形态便于人眼核对，`normalized_url` 列存 [UrlUtil.dedupKey]
+     * ——后者会剥掉 `xsec_token` 等随分享轮换的鉴权参数并收敛到笔记 ID，
+     * 这是「几天前解析过的链接再解析一遍仍能弹提示」的关键。
+     */
     fun markLinkSeen(url: String, canonicalUrl: String? = null) {
         if (url.isBlank()) return
         val now = System.currentTimeMillis()
         val cv1 = ContentValues().apply {
             put("url", url)
-            put("normalized_url", UrlUtil.normalize(url))
+            put("normalized_url", UrlUtil.dedupKey(url))
             put("created_at", now)
         }
         writableDatabase.insertWithOnConflict(SEEN_TABLE, null, cv1, SQLiteDatabase.CONFLICT_REPLACE)
         if (!canonicalUrl.isNullOrBlank() && canonicalUrl != url) {
             val cv2 = ContentValues().apply {
                 put("url", canonicalUrl)
-                put("normalized_url", UrlUtil.normalize(canonicalUrl))
+                put("normalized_url", UrlUtil.dedupKey(canonicalUrl))
                 put("created_at", now)
             }
             writableDatabase.insertWithOnConflict(SEEN_TABLE, null, cv2, SQLiteDatabase.CONFLICT_REPLACE)
         }
     }
 
-    /** 查询指定链接是否在历史中解析或下载过（长期数据库保存，抗动态追踪参数，绝不丢失） */
+    /**
+     * 查询指定链接是否在历史中解析或下载过。
+     *
+     * 比对一律走 [UrlUtil.dedupKey]：原始 URL 里的 `xsec_token` 每次分享都会变，
+     * 旧实现用 [UrlUtil.normalize]（保留 token）导致同一条小红书笔记永远匹配不上。
+     */
     fun isLinkSeen(url: String, canonicalUrl: String? = null): Boolean {
         if (url.isBlank()) return false
-        val norm1 = UrlUtil.normalize(url)
-        val norm2 = canonicalUrl?.let { UrlUtil.normalize(it) }
+        val key = UrlUtil.dedupKey(url)
+        val key2 = canonicalUrl?.takeIf { it.isNotBlank() }?.let { UrlUtil.dedupKey(it) }
 
-        // 1. 检查 seen_links 持久化历史表
-        val sql = "SELECT 1 FROM $SEEN_TABLE WHERE url = ? OR normalized_url = ?" +
-            if (!canonicalUrl.isNullOrBlank()) " OR url = ? OR normalized_url = ?" else ""
-        val args = if (!canonicalUrl.isNullOrBlank()) {
-            arrayOf(url, norm1, canonicalUrl, norm2 ?: "")
+        // 1. 检查 seen_links 持久化历史表（normalized_url 列存的就是 dedupKey）
+        //    额外带上 legacyNormalized：v3 早期行写的是「保留 xsec_token 的 normalize 结果」，
+        //    不兼容这一形态会让升级前的历史一次性全部失效。
+        val legacy1 = UrlUtil.normalize(url)
+        val legacy2 = canonicalUrl?.takeIf { it.isNotBlank() }?.let { UrlUtil.normalize(it) }
+        val sql = "SELECT 1 FROM $SEEN_TABLE WHERE url = ? OR normalized_url = ? OR normalized_url = ?" +
+            if (key2 != null) " OR url = ? OR normalized_url = ? OR normalized_url = ?" else ""
+        val args = if (key2 != null) {
+            arrayOf(url, key, legacy1, canonicalUrl ?: "", key2, legacy2 ?: "")
         } else {
-            arrayOf(url, norm1)
+            arrayOf(url, key, legacy1)
         }
         runCatching {
             readableDatabase.rawQuery(sql, args).use { cursor ->
@@ -253,8 +268,8 @@ class TaskDatabase(context: Context) :
 
         // 2. 检查 tasks 表（历史任务中的 source_url 或 url）
         val taskSql = "SELECT 1 FROM $TABLE WHERE url = ? OR source_url = ?" +
-            if (!canonicalUrl.isNullOrBlank()) " OR url = ? OR source_url = ?" else ""
-        val taskArgs = if (!canonicalUrl.isNullOrBlank()) {
+            if (canonicalUrl != null) " OR url = ? OR source_url = ?" else ""
+        val taskArgs = if (canonicalUrl != null) {
             arrayOf(url, url, canonicalUrl, canonicalUrl)
         } else {
             arrayOf(url, url)

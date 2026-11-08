@@ -122,4 +122,51 @@ class UrlUtilTest {
         assertEquals("www.bilibili.com", UrlUtil.hostOf("https://www.bilibili.com/video/BV1xx?x=1"))
         assertEquals("/video/BV1xx", UrlUtil.pathOf("https://www.bilibili.com/video/BV1xx?x=1"))
     }
+
+    // ---- dedupKey：已解析链接长期记忆的比对键 ----
+
+    /**
+     * 用户反馈的真实症状：同一条小红书笔记隔几天再复制一次，xsec_token 已经换了，
+     * 旧实现用 normalize（保留 token）比对 → 永远匹配不上 → 不弹「已解析」提示。
+     * dedupKey 必须收敛到笔记 ID，与 token 无关。
+     */
+    @Test
+    fun `dedupKey 忽略 xsec_token 变化 收敛到笔记 ID`() {
+        val a = UrlUtil.dedupKey(
+            "https://www.xiaohongshu.com/explore/65f0a1b2c3d4e5f60718293a?xsec_token=AAA&xsec_source=pc_share"
+        )
+        val b = UrlUtil.dedupKey(
+            "https://www.xiaohongshu.com/explore/65f0a1b2c3d4e5f60718293a?xsec_token=BBB&xsec_source=app_share"
+        )
+        assertEquals(a, b)
+        assertEquals("xhs:note:65f0a1b2c3d4e5f60718293a", a)
+    }
+
+    /** 三种路径形态指向同一篇笔记时，去重键必须一致 */
+    @Test
+    fun `dedupKey 统一小红书三种笔记路径形态`() {
+        val id = "65f0a1b2c3d4e5f60718293a"
+        val explore = UrlUtil.dedupKey("https://www.xiaohongshu.com/explore/$id?xsec_token=T1")
+        val discovery = UrlUtil.dedupKey("https://www.xiaohongshu.com/discovery/item/$id?xsec_token=T2")
+        val notes = UrlUtil.dedupKey("https://www.xiaohongshu.com/notes/$id?xsec_token=T3")
+        assertEquals(explore, discovery)
+        assertEquals(explore, notes)
+    }
+
+    /** 非小红书链接仍然按「剥掉轮换参数后的完整 URL」比对，且保留业务参数 */
+    @Test
+    fun `dedupKey 其他平台的轮换签名参数也应被剥离`() {
+        val out = UrlUtil.dedupKey("https://x.com/a/status/1?lang=zh-cn&sig=abc123&expires=1700000000")
+        assertTrue("业务参数 lang 应保留: $out", out.contains("lang=zh-cn"))
+        assertTrue("sig 应被剥离: $out", !out.contains("sig="))
+        assertTrue("expires 应被剥离: $out", !out.contains("expires="))
+    }
+
+    /** normalize 仍必须保留 xsec_token —— 解析请求不能受影响（与 dedupKey 分工） */
+    @Test
+    fun `dedupKey 与 normalize 分工 前者剥后者留`() {
+        val url = "https://www.xiaohongshu.com/explore/65f0a1b2c3d4e5f60718293a?xsec_token=KEEP_ME"
+        assertTrue(UrlUtil.normalize(url).contains("xsec_token=KEEP_ME"))
+        assertTrue(!UrlUtil.dedupKey(url).contains("xsec_token"))
+    }
 }
