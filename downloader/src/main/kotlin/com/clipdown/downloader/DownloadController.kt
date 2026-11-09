@@ -93,7 +93,7 @@ object DownloadController {
             UrlUtil.dedupKey(t.url) == urlKey &&
                 (sourceUrl == null || t.sourceUrl == null || t.sourceUrl == sourceUrl) &&
                 (t.status.isActive ||
-                    (t.status == DownloadStatus.COMPLETED && System.currentTimeMillis() - t.updatedAt < 15_000L))
+                    (t.status == DownloadStatus.COMPLETED && System.currentTimeMillis() - t.updatedAt < RECENTLY_COMPLETED_MS))
         }
         if (existingActive != null) {
             ensureServiceStarted()
@@ -174,4 +174,13 @@ object DownloadController {
 
     internal fun guessExt(url: String): String =
         url.substringBefore('?').substringAfterLast('.', "mp4").takeIf { it.length in 2..4 } ?: "mp4"
+
+    /**
+     * 「刚完成」窗口：判重时把这么短时间内完成的任务视为同一请求的重入，
+     * 复用其任务 ID 而不是再下一份。
+     *
+     * 语义与 `app/clip/DedupeWindows.AUTO_DOWNLOAD_MS` 对应，但 `:downloader`
+     * 不能反向依赖 `:app`，故在此独立声明；改一处务必同步另一处。
+     */
+    private const val RECENTLY_COMPLETED_MS = 15_000L
 }

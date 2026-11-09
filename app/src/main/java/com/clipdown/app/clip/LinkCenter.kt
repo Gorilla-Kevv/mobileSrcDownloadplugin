@@ -33,7 +33,7 @@ data class DetectedLink(
  * 链接中枢：所有通道（剪贴板 / 无障碍 / 分享 / 手动）统一汇聚到这里，
  * 再由悬浮窗、主页等订阅方消费。
  *
- * 同时承担去重职责：同一条链接在 [DEDUP_WINDOW_MS] 内只触发一次，
+ * 同时承担去重职责：同一条链接在 [DedupeWindows.LINK_REEMIT_MS] 内只触发一次，
  * 避免用户在 Instagram 里反复复制链接导致弹窗刷屏。
  */
 object LinkCenter {
@@ -69,9 +69,9 @@ object LinkCenter {
         val now = System.currentTimeMillis()
         if (previous != null && previous.url == url) {
             val elapsed = now - previous.detectedAtMillis
-            if (!force && elapsed < DEDUP_WINDOW_MS) return null
-            // 阶段 79：即使 force=true（例如无障碍与借道 Activity 瞬间并发），1秒内也绝对禁止重复发射同一个 URL，彻底杜绝双触发
-            if (force && elapsed < 1_000L) return null
+            if (!force && elapsed < DedupeWindows.LINK_REEMIT_MS) return null
+            // 阶段 79：即使 force=true（例如无障碍与借道 Activity 瞬间并发），也硬拦一个短窗口，彻底杜绝双触发
+            if (force && elapsed < DedupeWindows.LINK_FORCE_REEMIT_MS) return null
         }
         val link = DetectedLink(url, platform, source, rawText, detectedAtMillis = now)
         _last.value = link
@@ -88,6 +88,4 @@ object LinkCenter {
         _last.value = null
         _lastResult.value = null
     }
-
-    const val DEDUP_WINDOW_MS = 15_000L
 }

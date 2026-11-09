@@ -65,6 +65,7 @@ import coil.compose.AsyncImage
 import com.clipdown.app.ClipDownApp
 import com.clipdown.app.clip.ClipboardMonitor
 import com.clipdown.app.clip.LinkCenter
+import com.clipdown.app.clip.SeenLinkGuard
 import com.clipdown.app.floatwindow.FloatingWindowService
 import com.clipdown.app.ui.components.AppCard
 import com.clipdown.app.ui.components.AppChip
@@ -156,14 +157,12 @@ fun HomeScreen(
                 return@LaunchedEffect
             }
             val app = context.applicationContext as? ClipDownApp
-            val seenBefore = app?.settings?.seenLinks?.first() ?: emptySet()
-            val hasCompleted = DownloadController.repository().tasks.value.any {
-                (it.sourceUrl == link.url || it.url == link.url) && it.status == DownloadStatus.COMPLETED
+            val seenSnapshot = app?.settings?.seenLinks?.first() ?: emptySet()
+            // 阶段 82：三源查重（内存快照 / 已完成任务 / 长期 seen_links 表）统一走 SeenLinkGuard，
+            // 不再在页面里手抄三行比对——任何一处忘记接 dedupKey 都会让「已解析」提示失真。
+            isDuplicateParse = withContext(Dispatchers.IO) {
+                SeenLinkGuard.isSeen(link.url, seenSnapshot)
             }
-            val dbSeen = withContext(Dispatchers.IO) {
-                runCatching { DownloadController.database().isLinkSeen(link.url) }.getOrDefault(false)
-            }
-            isDuplicateParse = link.url in seenBefore || hasCompleted || dbSeen
 
             parsing = true
             error = null
@@ -171,12 +170,16 @@ fun HomeScreen(
             parsing = false
             selected = result?.takeIf { it.isAlbumMultiSelect }?.media?.indices?.toSet() ?: setOf(0)
             if (result != null) {
-                withContext(Dispatchers.IO) {
-                    val seenAfter = DownloadController.database().isLinkSeen(link.url, result?.sourceUrl)
-                    DownloadController.database().markLinkSeen(link.url, result?.sourceUrl)
-                    if (seenAfter) isDuplicateParse = true
+                val seenAfter = withContext(Dispatchers.IO) {
+                    val already = SeenLinkGuard.isSeen(link.url, seenSnapshot, canonicalUrl = result?.sourceUrl)
+                    SeenLinkGuard.markSeen(
+                        link.url,
+                        result?.sourceUrl,
+                        app?.settings?.let { s -> SeenLinkGuard.SettingsWriter { s.markLinkSeen(it) } }
+                    )
+                    already
                 }
-                app?.settings?.markLinkSeen(link.url)
+                if (seenAfter) isDuplicateParse = true
                 if (isDuplicateParse) {
                     Toast.makeText(context, "该链接此前已解析过", Toast.LENGTH_SHORT).show()
                 }
@@ -206,14 +209,10 @@ fun HomeScreen(
                 return@launch
             }
             val app = context.applicationContext as? ClipDownApp
-            val seenBefore = app?.settings?.seenLinks?.first() ?: emptySet()
-            val hasCompleted = DownloadController.repository().tasks.value.any {
-                (it.sourceUrl == url || it.url == url) && it.status == DownloadStatus.COMPLETED
+            val seenSnapshot = app?.settings?.seenLinks?.first() ?: emptySet()
+            isDuplicateParse = withContext(Dispatchers.IO) {
+                SeenLinkGuard.isSeen(url, seenSnapshot)
             }
-            val dbSeen = withContext(Dispatchers.IO) {
-                runCatching { DownloadController.database().isLinkSeen(url) }.getOrDefault(false)
-            }
-            isDuplicateParse = url in seenBefore || hasCompleted || dbSeen
 
             parsing = true
             error = null
@@ -226,12 +225,16 @@ fun HomeScreen(
                 result = parsed
                 selected = if (parsed.isAlbumMultiSelect) parsed.media.indices.toSet() else setOf(0)
                 LinkCenter.publishResult(parsed)
-                withContext(Dispatchers.IO) {
-                    val seenAfter = DownloadController.database().isLinkSeen(url, parsed.sourceUrl)
-                    DownloadController.database().markLinkSeen(url, parsed.sourceUrl)
-                    if (seenAfter) isDuplicateParse = true
+                val seenAfter = withContext(Dispatchers.IO) {
+                    val already = SeenLinkGuard.isSeen(url, seenSnapshot, canonicalUrl = parsed.sourceUrl)
+                    SeenLinkGuard.markSeen(
+                        url,
+                        parsed.sourceUrl,
+                        app?.settings?.let { s -> SeenLinkGuard.SettingsWriter { s.markLinkSeen(it) } }
+                    )
+                    already
                 }
-                app?.settings?.markLinkSeen(url)
+                if (seenAfter) isDuplicateParse = true
                 if (isDuplicateParse) {
                     Toast.makeText(context, "该链接此前已解析过", Toast.LENGTH_SHORT).show()
                 }

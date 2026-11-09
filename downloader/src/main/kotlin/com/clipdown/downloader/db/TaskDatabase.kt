@@ -55,8 +55,27 @@ class TaskDatabase(context: Context) :
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status)")
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC)")
+        createSeenLinksSchema(db)
+    }
 
-        // 阶段 79：已解析链接长期持久化数据库表（杜绝内存限制或粗暴减半丢弃）
+    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
+        if (oldVersion < 2) {
+            // v2：来源帖子链接（图集分组 + 下载页"查看来源"）
+            db.execSQL("ALTER TABLE tasks ADD COLUMN source_url TEXT")
+        }
+        if (oldVersion < 3) {
+            // v3：长期保存已解析链接表与归一化索引
+            createSeenLinksSchema(db)
+        }
+    }
+
+    /**
+     * `seen_links` 表与索引的唯一建表入口。
+     *
+     * `onCreate`（全新安装）与 `onUpgrade(old < 3)`（升级）必须产出完全一致的形态，
+     * 之前两处各抄一遍 DDL，改一处忘另一处会让「全新装」与「升级装」出现隐性 schema 漂移。
+     */
+    private fun createSeenLinksSchema(db: SQLiteDatabase) {
         db.execSQL(
             """
             CREATE TABLE IF NOT EXISTS seen_links (
@@ -67,26 +86,6 @@ class TaskDatabase(context: Context) :
             """.trimIndent()
         )
         db.execSQL("CREATE INDEX IF NOT EXISTS idx_seen_normalized ON seen_links(normalized_url)")
-    }
-
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        if (oldVersion < 2) {
-            // v2：来源帖子链接（图集分组 + 下载页"查看来源"）
-            db.execSQL("ALTER TABLE tasks ADD COLUMN source_url TEXT")
-        }
-        if (oldVersion < 3) {
-            // v3：长期保存已解析链接表与归一化索引
-            db.execSQL(
-                """
-                CREATE TABLE IF NOT EXISTS seen_links (
-                    url TEXT PRIMARY KEY,
-                    normalized_url TEXT,
-                    created_at INTEGER
-                )
-                """.trimIndent()
-            )
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_seen_normalized ON seen_links(normalized_url)")
-        }
     }
 
     fun insert(task: TaskEntity) {

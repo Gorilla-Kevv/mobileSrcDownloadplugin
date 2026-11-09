@@ -68,7 +68,9 @@ import androidx.core.app.NotificationCompat
 import androidx.lifecycle.LifecycleOwner
 import androidx.savedstate.SavedStateRegistryOwner
 import com.clipdown.app.clip.ClipGateActivity
+import com.clipdown.app.clip.DedupeWindows
 import com.clipdown.app.clip.LinkCenter
+import com.clipdown.app.clip.SeenLinkGuard
 import com.clipdown.app.data.SettingsRepository
 import com.clipdown.app.ui.theme.ClipDownTheme
 import com.clipdown.app.ui.profile.ProfileCenter
@@ -300,6 +302,7 @@ class FloatingWindowService : Service() {
         bindOwners(composeView, lifecycleOwner)
         lifecycleOwner.attach()
 
+        val layout = BubbleLayout(resources)
         val params = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -310,11 +313,8 @@ class FloatingWindowService : Service() {
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             val (x, y) = lastPosition
-            val dm = resources.displayMetrics
-            val visualMarginX = ((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()
-            val maxX = dm.widthPixels - (64 * dm.density).toInt() + visualMarginX
-            this.x = if (x != -1) x else maxX
-            this.y = if (y != -1) y else dm.heightPixels / 3
+            this.x = if (x != -1) x else layout.defaultX
+            this.y = if (y != -1) y else layout.screenHeightPx / 3
         }
         bubbleParams = params
         bubblePos = params.x to params.y
@@ -327,7 +327,7 @@ class FloatingWindowService : Service() {
         var gestureInBubble = false
         /** 长按已触发：本次手势只用于进入App，抬手/拖拽都不再走点击语义 */
         var longPressed = false
-        val bubblePartH = (64 * resources.displayMetrics.density).toInt()
+        val bubblePartH = layout.shellSizePx
 
         @Suppress("DEPRECATION")
         composeView.setOnTouchListener { v, event ->
@@ -377,18 +377,7 @@ class FloatingWindowService : Service() {
                         return@setOnTouchListener true
                     }
                     if (moved) {
-                        val dm = resources.displayMetrics
-                        val visualMarginX = ((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()
-                        val minX = -visualMarginX
-                        val maxX = dm.widthPixels - (64 * dm.density).toInt() + visualMarginX
-                        val snapThreshold = (40 * dm.density).toInt()
-                        var finalX = bubblePos.first.coerceIn(minX, maxX)
-                        // 贴近边缘自动吸附到 0 间距
-                        if (finalX <= minX + snapThreshold) {
-                            finalX = minX
-                        } else if (finalX >= maxX - snapThreshold) {
-                            finalX = maxX
-                        }
+                        val finalX = layout.snapX(bubblePos.first)
                         bubblePos = finalX to bubblePos.second
                         params.x = finalX
                         runCatching { wm.updateViewLayout(composeView, params) }
@@ -431,14 +420,12 @@ class FloatingWindowService : Service() {
         val view = bubbleView ?: return
         val params = bubbleParams ?: return
         val dm = resources.displayMetrics
-        val bubbleH = (64 * dm.density).toInt()
+        val layout = BubbleLayout(resources)
+        val bubbleH = layout.shellSizePx
         val overlap = (BAR_OVERLAP_DP * dm.density).toInt()
         val barFull = (400 * dm.density).toInt()
-        val barW = (64 * dm.density).toInt()
-        val visualMarginX = ((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()
-        val minX = -visualMarginX
-        val maxX = dm.widthPixels - barW + visualMarginX
-        params.x = bubblePos.first.coerceIn(minX, maxX)
+        val barW = layout.shellSizePx
+        params.x = layout.clampX(bubblePos.first)
         val barOpen = state is PopupUiState.Mini ||
             (state is PopupUiState.Ready && state.multiSelect) ||
             state is PopupUiState.Panel
@@ -600,15 +587,11 @@ class FloatingWindowService : Service() {
                 manualRecognize = false
                 recognizeTimeoutJob?.cancel()
 
-                // 识别记忆与已下载历史查重（结合持久化数据库与下载库）：遇到识别过或已下载过的链接，再次下载需明确提醒用户
-                val seenBefore = settings.seenLinks.first()
-                val hasCompleted = DownloadController.repository().tasks.value.any {
-                    (it.sourceUrl == link.url || it.url == link.url) && it.status == DownloadStatus.COMPLETED
+                // 识别记忆与已下载历史查重：三源判定统一走 SeenLinkGuard（阶段 82），
+                // 不在服务里手抄一份比对逻辑——两处实现漂移过一次（忘记接 dedupKey）。
+                val isSeen = withContext(Dispatchers.IO) {
+                    SeenLinkGuard.isSeen(link.url, settings.seenLinks.first())
                 }
-                val dbSeen = withContext(Dispatchers.IO) {
-                    runCatching { DownloadController.database().isLinkSeen(link.url) }.getOrDefault(false)
-                }
-                val isSeen = link.url in seenBefore || hasCompleted || dbSeen
 
                 if (isSeen) {
                     // 已识别/已下载过：无论手动点击气泡还是自动触发，均提示用户确认是否再次下载
@@ -623,11 +606,11 @@ class FloatingWindowService : Service() {
                     return@onEach
                 }
 
-                scope.launch {
-                    settings.markLinkSeen(link.url)
-                    withContext(Dispatchers.IO) {
-                        runCatching { DownloadController.database().markLinkSeen(link.url) }
-                    }
+                withContext(Dispatchers.IO) {
+                    SeenLinkGuard.markSeen(
+                        link.url,
+                        settings = SeenLinkGuard.SettingsWriter { settings.markLinkSeen(it) }
+                    )
                 }
 
                 if (wasManual) {
@@ -671,7 +654,12 @@ class FloatingWindowService : Service() {
                 val parsed = result.getOrThrow()
                 LinkCenter.publishResult(parsed)
                 withContext(Dispatchers.IO) {
-                    runCatching { DownloadController.database().markLinkSeen(link.url, parsed.sourceUrl) }
+                    // 解析成功：补记规范链接（sourceUrl），提升下次同帖不同入口的命中率
+                    SeenLinkGuard.markSeen(
+                        link.url,
+                        parsed.sourceUrl,
+                        SeenLinkGuard.SettingsWriter { settings.markLinkSeen(it) }
+                    )
                 }
                 // 污染取证：识别到"别的视频"时，从这里核对解析产物的每条媒体来源 URL
                 android.util.Log.d(
@@ -743,8 +731,8 @@ class FloatingWindowService : Service() {
     private fun startAutoDownload(link: com.clipdown.app.clip.DetectedLink, parsed: ParseResult, item: MediaItem) {
         val now = System.currentTimeMillis()
         val lastDown = recentAutoDownloads[link.url] ?: recentAutoDownloads[item.url] ?: 0L
-        if (now - lastDown < 10_000L) {
-            android.util.Log.d("FloatingWindowService", "10秒内抑制同一媒体/链接重复自动下载: ${item.url}")
+        if (now - lastDown < DedupeWindows.AUTO_DOWNLOAD_MS) {
+            android.util.Log.d("FloatingWindowService", "短时间内抑制同一媒体/链接重复自动下载: ${item.url}")
             return
         }
         recentAutoDownloads[link.url] = now
@@ -1294,8 +1282,8 @@ class FloatingWindowService : Service() {
     companion object {
         private const val CHANNEL_MONITOR = "clipdown_monitor"
         private const val NOTIFICATION_ID = 9002
-        private const val SUPPRESS_MS = 10 * 60_000L
-        private const val PROMPT_SUPPRESS_MS = 5_000L
+        private const val SUPPRESS_MS = DedupeWindows.AUTO_RESCAN_SUPPRESS_MS
+        private const val PROMPT_SUPPRESS_MS = DedupeWindows.PROMPT_SUPPRESS_MS
 
         /** 双击判定窗口（ms）；单击行为延迟到窗口过期后执行 */
         private const val DOUBLE_TAP_MS = 250L
@@ -1352,8 +1340,7 @@ class FloatingWindowService : Service() {
 private val HaloPurple = Color(0xFFA855F7)
 private val HaloLightPurple = Color(0xFFC084FC)
 
-/** 气泡头像直径（dp）：光环半径与 logo 尺寸共用同一常量，保证二者始终贴合 */
-private const val BUBBLE_LOGO_SIZE_DP = 52f
+// 气泡头像直径常量见 BubbleLayout.kt 的 BUBBLE_LOGO_SIZE_DP（同包内联可见）
 
 /** 相位强调色：描边与光环共用，0.3s 过渡 */
 private fun BubblePhase.accent(): Color = when (this) {

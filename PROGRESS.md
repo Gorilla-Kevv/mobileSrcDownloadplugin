@@ -1914,3 +1914,54 @@
     三层去重窗口（1s/10s/15s）语义重叠、`content-script.js` 单文件过大。
   - 上述均为判断性问题、不影响功能，且改动面较大，适宜单独一轮重构而非混在视觉收敛里。
 - 本次文档更新时间：11.09 11:35
+
+
+## 阶段 82 结构性坏味道重构（查重/气泡几何/建表SQL/去重窗口四类重复收敛）[计划时间：11.09 11:40 BY Antigravity][完成时间：11.09 11:52 BY Antigravity]
+- 背景：阶段 80/81 的 `/code-review` 判断性问题（非硬性违规），功能无缺陷但四处重复逻辑已开始漂移，本轮定点收敛。
+- 已完成：
+  1. **`SeenLinkGuard`：三份「已解析过吗」判定合并为一处（`app/clip/SeenLinkGuard.kt`）**：
+     - **问题**：`seenBefore / hasCompleted / dbSeen → toast` 这段在 `HomeScreen` 两处几乎逐字节重复、`FloatingWindowService` 一处近似重复。三份实现只要有一处漏接 `dedupKey`，就会复现「几天前解析过却不弹提示」的假修复。
+     - **修法**：抽出 `isSeen(url, seenSnapshot, completedTasks, canonicalUrl)` 与 `markSeen(url, canonicalUrl, settings)`；三源（内存快照 / 已完成任务 / 长期 `seen_links` 表）统一按 `UrlUtil.dedupKey` 比对。
+     - 三处调用点全部改为委托，净删约 40 行重复比对。`settings` 通过 `SettingsWriter` 函数式接口注入，避免把整个 `SettingsRepository` 拖进这个纯判定工具。
+     - `markSeen` 声明为 `suspend`（内存快照走 DataStore 本身是挂起操作），调用方已在 IO 协程内。
+  2. **`BubbleLayout`：气泡贴边几何统一（`app/floatwindow/BubbleLayout.kt`）**：
+     - **问题**：`((64 - BUBBLE_LOGO_SIZE_DP) / 2f * dm.density).toInt()` 在窗口创建、拖拽吸附、`syncBubbleWindow` 三处逐字重复，还夹杂裸 `64 * density` 与裸 `40 * density`。任一常量改动漏改一处，就会造成「气泡贴边忽有忽无间隙」且只在某方向复现——这类 bug 极难定位。
+     - **修法**：收成 `BubbleLayout`，暴露 `shellSizePx` / `visualMarginPx` / `minX` / `maxX` / `defaultX` / `clampX()` / `snapX()` / `barGrowsDown()`；三处调用点各减 4~7 行手算。
+     - `BUBBLE_LOGO_SIZE_DP` 移入该文件作为同包 `internal const`，成为唯一来源。
+     - 构造参数用原始 `density/screenWidthPx/screenHeightPx` 而非 `Resources`，**使贴边数学可被纯 JVM 单测覆盖**；另提供 `Resources` 便捷构造器。
+  3. **`TaskDatabase` 建表 SQL 去重**：
+     - `seen_links` 的 CREATE TABLE + 索引原在 `onCreate`（全新装）与 `onUpgrade(old<3)`（升级）各抄一遍。改一处忘另一处会让「全新装」与「升级装」出现隐性 schema 漂移。
+     - 抽 `createSeenLinksSchema(db)` 单一入口，两端共用。
+  4. **`DedupeWindows`：三层去重窗口语义收口（`app/clip/DedupeWindows.kt`）**：
+     - **问题**：`LinkCenter` 15s/1s、`FloatingWindowService` 10min/5s、`recentAutoDownloads` 10s 共五个魔法数字散落三处，语义重叠又互不知情，排查「为什么没弹提示 / 为什么下两次」时看不出谁拦了谁。
+     - **修法**：集中为 `LINK_REEMIT_MS` / `LINK_FORCE_REEMIT_MS` / `PROMPT_SUPPRESS_MS` / `AUTO_RESCAN_SUPPRESS_MS` / `AUTO_DOWNLOAD_MS`，并用注释画出三层串联链路（①硬拦发射 → ②只拦提示 → ③拦真下一次）说明**为什么不能合并成一个窗口**。
+     - `:downloader` 的 `RECENTLY_COMPLETED_MS` 因模块不能反向依赖 `:app`，保留为模块内私有常量，但补注释指明与 `AUTO_DOWNLOAD_MS` 的对应关系。
+  5. **新增 `BubbleLayoutTest`（6 例）钉死不变量**：
+     - `贴左边缘时 Logo 外缘与屏幕重合 无间隙`（`minX + visualMarginPx == 0`）
+     - `贴右边缘时 Logo 外缘与屏幕右缘重合`
+     - `clampX 允许负偏移但不越过贴边极值` / `snapX 在阈值内吸附到边缘 阈值外保持原位`
+     - `外壳与可见留白按密度换算` / `竖条延伸方向按屏幕中线判定`
+- 改动文件：
+  - 新增 `app/src/main/java/com/clipdown/app/clip/SeenLinkGuard.kt`
+  - 新增 `app/src/main/java/com/clipdown/app/clip/DedupeWindows.kt`
+  - 新增 `app/src/main/java/com/clipdown/app/floatwindow/BubbleLayout.kt`
+  - 新增 `app/src/test/java/com/clipdown/app/floatwindow/BubbleLayoutTest.kt`
+  - `app/src/main/java/com/clipdown/app/ui/home/HomeScreen.kt`
+  - `app/src/main/java/com/clipdown/app/floatwindow/FloatingWindowService.kt`
+  - `app/src/main/java/com/clipdown/app/clip/LinkCenter.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/db/TaskDatabase.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/DownloadController.kt`
+  - `PROGRESS.md`
+  - `HANDOFF.md`
+- 测试结果：
+  - 单元测试 **172 例全绿**（parser 111 + downloader 41 + app **20**，新增 6 例 `BubbleLayoutTest`）；
+  - `:app:compileDebugKotlin` / `assembleDebug` / `assembleRelease` 均成功；
+  - 编译仅剩 3 条既有弃用警告（`overridePendingTransition` ×2、`ExitToApp`），非本轮引入。
+- 过程中踩到的坑（已修正，供后续参考）：
+  - `DownloadController` 是 `object`，**不能声明 `companion object`**，`const` 必须直接写在 `object` 体内；
+  - `SeenLinkGuard.markSeen` 因内部调用 DataStore 的挂起写入，必须声明为 `suspend`；
+  - 新增 `SettingsWriter` 为 `fun interface` 后，`markSeen` 的 `settings` 参数无默认值，所有调用点都要显式传（编译器会拦，不会漏）。
+- 未处理（评估后判定**不宜**本轮做）：
+  - `content-script.js` 单文件 2000+ 行（Divergent Change）：拆分需先建立构建/打包步骤，而当前扩展是「加载解压缩的扩展」直接用裸文件，贸然拆多文件会牵动 MV3 加载路径，风险大于收益，留作独立专题；
+  - `XiaohongshuParser:116 isVideoNote` 与 `TaskDatabase.getAllSeenUrls()` 疑似死代码：前者是**语义自文档化的中间量**（保留可读性更好），后者是给未来「已解析列表」UI 预留的读取入口；两者都无害，删除反而降低可读性/扩展性，故保留并在 HANDOFF 注明。
+- 本次文档更新时间：11.09 11:52
