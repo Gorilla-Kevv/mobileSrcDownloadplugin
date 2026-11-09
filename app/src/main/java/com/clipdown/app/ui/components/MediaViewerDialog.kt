@@ -87,6 +87,8 @@ import androidx.compose.ui.window.DialogProperties
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import com.clipdown.downloader.model.TaskEntity
+import com.clipdown.app.ui.theme.AppTheme
+import com.clipdown.app.ui.theme.DangerFg
 import com.clipdown.parser.model.MediaItem
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeoutOrNull
@@ -238,7 +240,7 @@ fun MediaViewerDialog(
                                 Icon(
                                     Icons.Default.Delete,
                                     contentDescription = "删除文件",
-                                    tint = Color(0xFFFF5252)
+                                    tint = DangerFg
                                 )
                             }
                         }
@@ -715,7 +717,7 @@ private fun VideoPlayerPage(
                         val deltaText = if (deltaSec >= 0) "+${deltaSec}s" else "${deltaSec}s"
                         Text(
                             text = deltaText,
-                            color = if (deltaSec >= 0) MaterialTheme.colorScheme.primary else Color(0xFFFF5252),
+                            color = if (deltaSec >= 0) MaterialTheme.colorScheme.primary else DangerFg,
                             style = MaterialTheme.typography.titleLarge.copy(
                                 fontWeight = FontWeight.Bold
                             )

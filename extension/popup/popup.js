@@ -9,6 +9,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const connectionPill = document.getElementById("connection-pill");
   const footerStatus = document.getElementById("footer-status");
 
+  // 版本号单一来源：manifest.json（勿在 HTML 里硬编码，避免两处维护漂移）
+  const appVersionEl = document.getElementById("app-version");
+  if (appVersionEl) {
+    const v = chrome?.runtime?.getManifest?.()?.version;
+    if (v) appVersionEl.textContent = `v${v}`;
+  }
+
   // 媒体嗅探与直接下载元素
   const mediaPlatformBadge = document.getElementById("media-platform-badge");
   const mediaTypeBadge = document.getElementById("media-type-badge");

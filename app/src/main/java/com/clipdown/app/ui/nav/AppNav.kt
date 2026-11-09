@@ -111,23 +111,24 @@ fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
                 BoxWithConstraints(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(2.5.dp)
+                        .height(NavIndicatorTrackHeight)
                         .background(MaterialTheme.colorScheme.outlineVariant)
                 ) {
                     val totalWidthPx = constraints.maxWidth.toFloat()
                     val tabWidthPx = totalWidthPx / routes.size
-                    val indicatorWidthDp = 38.dp
+                    val indicatorWidthDp = NavIndicatorWidth
 
                     Box(
                         modifier = Modifier
                             .width(indicatorWidthDp)
-                            .height(2.5.dp)
+                            .height(NavIndicatorTrackHeight)
                             .graphicsLayer {
                                 val progress = pagerState.currentPage + pagerState.currentPageOffsetFraction
                                 val centerPx = (progress + 0.5f) * tabWidthPx
                                 translationX = centerPx - (size.width / 2f)
                             }
-                            .clip(RoundedCornerShape(1.25.dp))
+                            // 胶囊两端半圆：圆角恒为高度的一半
+                            .clip(RoundedCornerShape(NavIndicatorTrackHeight / 2))
                             .background(
                                 brush = Brush.horizontalGradient(
                                     listOf(Brand500, BrandPrimary, Brand600)
@@ -212,3 +213,9 @@ fun AppNav(openParse: Boolean, openProfile: Boolean = false) {
         }
     }
 }
+
+// ── 底栏指示器尺寸（发丝级细条，需要亚像素精度，故不进 Spacing 的 4 的倍数序列） ──
+/** 指示条轨道高度 */
+private val NavIndicatorTrackHeight = 2.5.dp
+/** 滑动指示胶囊宽度 */
+private val NavIndicatorWidth = 38.dp

@@ -98,7 +98,7 @@
 - **硬规则**：**页面里禁止再写裸 `Color(0xFF...)` 与随手 dp 值**，一律引用令牌或共享组件；这样多屏才会看起来是同一套设计
 - **共享组件** `ui/components/AppUi.kt`：`PageHeader`（页面标题+副标题）、`AppCard`（白底+1dp 描边+18dp 圆角，**不用阴影**）、`CardHeader`、`Hairline`、`StatusPill`（语义胶囊）、`AppChip`、`KeyValueRow`、`NoticeBar`（错误/警告/成功提示条）、`PrimaryButton`/`SecondaryButton`、`SettingSwitchRow`、`EmptyState`、`GroupLabel`、`VSpace/HSpace/HGroup`
 - **版式规则**：页面 = `PageHeader` + 若干 `AppCard`，卡片间距 `spacing.md`、卡片内边距 `spacing.lg`、卡片内行用 `Hairline()` 分隔；列表/表单左右边界统一 `spacing.screen`
-- **主题策略**：默认**浅色优先**（`ClipDownTheme(darkTheme = false)`）——悬浮气泡与弹窗沿用深色磨砂玻璃，强跟随系统深色会让弹窗浅色块与页面深色底混搭；深色方案已在 `Theme.kt` 备好，需要时把默认值改为 `isSystemInDarkTheme()`
+- **主题策略**：默认**全沉浸暗黑秘夜优先**（`ClipDownTheme(darkTheme = true)`，见 `Theme.kt`）——阶段 65 起全局切为极夜 OLED 纯黑暗紫主题，`MainActivity` 直接调用 `ClipDownTheme { }` 即走深色。浅色方案 `LightColors` 仍完整保留在 `Theme.kt`，需要时把默认值改为 `isSystemInDarkTheme()` 即可；**不要把默认值改回 `false`**（旧文档曾写「默认浅色优先」，那是阶段 35 的结论，阶段 65 已推翻）。
 - **本轮未动**：`floatwindow/`（`ClipPopupContent`/`BubbleBar`）是独立的深色玻璃层，语义色值与令牌一致，若要统一需单独一轮
 
 ## 状态

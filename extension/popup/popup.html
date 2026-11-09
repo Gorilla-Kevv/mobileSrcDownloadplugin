@@ -326,7 +326,8 @@
     <!-- 底部状态条 -->
     <footer class="footer">
       <span id="footer-status">就绪</span>
-      <span class="version">v1.7.1</span>
+      <!-- 版本号由 popup.js 从 manifest 读取注入，勿在此硬编码（单一来源 = manifest.json） -->
+      <span class="version" id="app-version"></span>
     </footer>
 
     <!-- 弹窗 1：摄像头/截屏扫码配对 -->

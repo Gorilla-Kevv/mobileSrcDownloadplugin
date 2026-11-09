@@ -3,6 +3,7 @@ package com.clipdown.app.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
+import android.util.Log
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -17,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -28,8 +30,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
@@ -40,10 +42,22 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.clipdown.app.sync.QrCodeUtil
 import com.clipdown.app.ui.theme.AppTheme
+import com.clipdown.app.ui.theme.Brand600
+import com.clipdown.app.ui.theme.BrandPrimary
+import com.clipdown.app.ui.theme.Brand500
+import com.clipdown.app.ui.theme.DarkBg
+import com.clipdown.app.ui.theme.DarkOutline
+import com.clipdown.app.ui.theme.DarkSurface
+import com.clipdown.app.ui.theme.DarkTextPrimary
+import com.clipdown.app.ui.theme.DarkTextSecondary
+import com.clipdown.app.ui.theme.SuccessFg
 
 /**
  * 电脑端 Edge / Chrome 插件配对指引弹窗。
  * 指引用户如何在电脑浏览器上加载 ClipDown 插件，并配置局域网直连或扫码导入。
+ *
+ * 视觉：全部取 `ui/theme` 语义令牌（HANDOFF §UI 硬规则：页面禁止裸 `Color(0xFF…)`
+ * 与随手 dp 值），圆角统一走 `AppTheme.radius`。
  */
 @Composable
 fun SyncPairingDialog(
@@ -55,6 +69,8 @@ fun SyncPairingDialog(
 ) {
     val context = LocalContext.current
     val connectUrl = "http://${ip ?: "127.0.0.1"}:$port"
+    val cardShape = RoundedCornerShape(AppTheme.radius.card)
+    val controlShape = RoundedCornerShape(AppTheme.radius.control)
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -63,9 +79,10 @@ fun SyncPairingDialog(
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
-                .border(1.dp, Color(0xFF2E2048), RectangleShape),
-            shape = RectangleShape,
-            color = Color(0xFF09060E),
+                .clip(cardShape)
+                .border(1.dp, DarkOutline, cardShape),
+            shape = cardShape,
+            color = DarkBg,
             tonalElevation = 8.dp
         ) {
             Column(
@@ -84,19 +101,18 @@ fun SyncPairingDialog(
                             text = "🖥️ 电脑端 Edge / Chrome 插件配对",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFF5F3FF)
+                            color = DarkTextPrimary
                         )
-                        Spacer(Modifier.height(2.dp))
+                        Spacer(Modifier.height(AppTheme.spacing.xs))
                         Text(
                             text = "共享网页登录态 · 解决 Cookie 提取与下载记录同步",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFA855F7)
+                            color = BrandPrimary
                         )
                     }
                     StatusPill(
                         text = if (isRunning) "服务运行中" else "服务未启动",
-                        tone = if (isRunning) Tone.Success else Tone.Danger,
-                        shape = RectangleShape
+                        tone = if (isRunning) Tone.Success else Tone.Danger
                     )
                 }
 
@@ -109,7 +125,9 @@ fun SyncPairingDialog(
                 val qrBitmap = remember(connectUrl, pin) {
                     try {
                         QrCodeUtil.createQrBitmap(pairPayload, sizePx = 400)
-                    } catch (_: Throwable) {
+                    } catch (t: Throwable) {
+                        // 坑 12：失败不要静默吞，至少留日志便于定位
+                        Log.w("SyncPairingDialog", "生成配对二维码失败", t)
                         null
                     }
                 }
@@ -117,15 +135,16 @@ fun SyncPairingDialog(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF130E1F))
-                        .border(1.dp, Color(0xFF2E2048), RectangleShape)
+                        .clip(controlShape)
+                        .background(DarkSurface)
+                        .border(1.dp, DarkOutline, controlShape)
                         .padding(AppTheme.spacing.md),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // 配对二维码
+                    // 配对二维码（白底是扫码可识别性要求，属功能性例外）
                     if (qrBitmap != null) {
                         Surface(
-                            shape = RectangleShape,
+                            shape = RoundedCornerShape(AppTheme.radius.thumb),
                             color = Color.White,
                             modifier = Modifier.padding(bottom = AppTheme.spacing.sm)
                         ) {
@@ -134,13 +153,13 @@ fun SyncPairingDialog(
                                 contentDescription = "电脑扩展扫码配对",
                                 modifier = Modifier
                                     .size(160.dp)
-                                    .padding(8.dp)
+                                    .padding(AppTheme.spacing.sm)
                             )
                         }
                         Text(
                             text = "📷 电脑扩展打开「设置中心」点击「扫码连接」对准即可",
                             style = MaterialTheme.typography.labelSmall,
-                            color = Color(0xFFC084FC),
+                            color = Brand500,
                             fontWeight = FontWeight.SemiBold
                         )
                         VSpace(AppTheme.spacing.sm)
@@ -155,15 +174,15 @@ fun SyncPairingDialog(
                             Text(
                                 text = "局域网服务地址",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF94A3B8)
+                                color = DarkTextSecondary
                             )
-                            Spacer(Modifier.height(2.dp))
+                            Spacer(Modifier.height(AppTheme.spacing.xs))
                             Text(
                                 text = connectUrl,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFF8B5CF6),
-                                fontSize = 14.sp
+                                color = Brand600,
+                                style = MaterialTheme.typography.bodyMedium
                             )
                         }
 
@@ -171,16 +190,15 @@ fun SyncPairingDialog(
                             Text(
                                 text = "配对 PIN 码",
                                 style = MaterialTheme.typography.labelSmall,
-                                color = Color(0xFF94A3B8)
+                                color = DarkTextSecondary
                             )
-                            Spacer(Modifier.height(2.dp))
+                            Spacer(Modifier.height(AppTheme.spacing.xs))
                             Text(
                                 text = pin,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Black,
-                                color = Color(0xFF10B981),
-                                fontSize = 18.sp,
-                                letterSpacing = 1.sp
+                                color = SuccessFg,
+                                style = MaterialTheme.typography.titleLarge.copy(letterSpacing = 1.sp)
                             )
                         }
                     }
@@ -193,7 +211,7 @@ fun SyncPairingDialog(
                     text = "使用三步法：",
                     style = MaterialTheme.typography.bodySmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = Color(0xFFF5F3FF)
+                    color = DarkTextPrimary
                 )
 
                 VSpace(AppTheme.spacing.xs)
@@ -223,9 +241,9 @@ fun SyncPairingDialog(
                 ) {
                     OutlinedButton(
                         onClick = onDismiss,
-                        shape = RectangleShape,
+                        shape = controlShape,
                         colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = Color(0xFF94A3B8)
+                            contentColor = DarkTextSecondary
                         ),
                         modifier = Modifier.height(36.dp)
                     ) {
@@ -240,10 +258,10 @@ fun SyncPairingDialog(
                             cm.setPrimaryClip(ClipData.newPlainText("ClipDown Sync Config", pairPayload))
                             Toast.makeText(context, "已复制一键配对口令！在电脑扩展点击「粘贴口令」即可秒连", Toast.LENGTH_SHORT).show()
                         },
-                        shape = RectangleShape,
+                        shape = controlShape,
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFF8B5CF6),
-                            contentColor = Color(0xFFF5F3FF)
+                            containerColor = Brand600,
+                            contentColor = DarkTextPrimary
                         ),
                         modifier = Modifier.height(36.dp)
                     ) {
@@ -260,35 +278,34 @@ private fun StepItem(num: String, title: String, desc: String) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = AppTheme.spacing.xs),
         verticalAlignment = Alignment.Top
     ) {
         Surface(
-            shape = RectangleShape,
-            color = Color(0xFF2E2048),
-            modifier = Modifier.width(20.dp).height(20.dp)
+            shape = RoundedCornerShape(AppTheme.radius.control),
+            color = DarkOutline,
+            modifier = Modifier.size(20.dp)
         ) {
             Text(
                 text = num,
-                color = Color(0xFFF5F3FF),
+                color = DarkTextPrimary,
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 modifier = Modifier.padding(top = 1.dp, start = 6.dp)
             )
         }
-        Spacer(Modifier.width(8.dp))
+        Spacer(Modifier.width(AppTheme.spacing.sm))
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = title,
                 style = MaterialTheme.typography.bodySmall,
                 fontWeight = FontWeight.SemiBold,
-                color = Color(0xFFF5F3FF)
+                color = DarkTextPrimary
             )
             Text(
                 text = desc,
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF94A3B8),
-                lineHeight = 16.sp
+                color = DarkTextSecondary
             )
         }
     }

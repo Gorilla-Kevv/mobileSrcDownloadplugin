@@ -1867,3 +1867,50 @@
   - `popup.html:329` 硬编码扩展版本号，与 `manifest.json` 两处维护；
   - 三层去重窗口（`LinkCenter` 1s / `recentAutoDownloads` 10s / `DownloadController` 15s）语义重叠，建议后续合并为一个 `SeenLinkGuard`。
 - 本次文档更新时间：11.09 01:16
+
+
+## 阶段 81 设计令牌全面收敛（标准轴 4 项硬性违规清零）[计划时间：11.09 11:25 BY Antigravity][完成时间：11.09 11:35 BY Antigravity]
+- 背景：阶段 80 的 `/code-review` 标准轴留下 4 项硬性违规（裸色值 / 裸圆角 / 裸 dp / 文档矛盾 / 版本号多处维护），本轮全部清零。
+- 已完成：
+  1. **补齐 `Radius` 令牌刻度（`theme/Theme.kt`）**：原有 `card18/control12/thumb14/pill999` 无法表达弹窗与细条，
+     导致各处只能裸写。现补齐为完整刻度：`dialog20 / card18 / thumb14 / control12 / tiny6 / bar2 / pill999`。
+     —— 这一步是"消灭裸值"的前提：**先有令牌，才能引用令牌**。
+  2. **`DownloadsScreen.kt` 圆角全量令牌化**：20 处圆角全部改为 `RoundedCornerShape(AppTheme.radius.*)`，
+     裸数字字面量从 20 处降为 **0 处**（弹窗 `dialog`、卡片 `thumb`、缩略图 `control`、角标 `tiny`、进度条 `bar`）。
+  3. **`SyncPairingDialog.kt` 整体重写令牌化**：约 20 处裸色值全部替换为语义令牌
+     （`DarkBg`/`DarkSurface`/`DarkOutline`/`DarkTextPrimary`/`DarkTextSecondary`/`Brand600`/`BrandPrimary`/`Brand500`/`SuccessFg`），
+     裸 `14.sp/18.sp/15.sp` 改为 `MaterialTheme.typography`；圆角改 `AppTheme.radius.card/control/thumb`。
+     同时把 `catch (_: Throwable) { null }` 改为按坑 12 记录 `Log.w`（二维码生成失败不再静默）。
+     顺带把 `StatusPill(shape = RectangleShape)` 与各处 `RectangleShape` 统一为令牌圆角（与阶段 79 圆角化方向一致）。
+  4. **`MediaViewerDialog.kt` 裸红色清零**：两处 `Color(0xFFFF5252)`（删除按钮 tint、Seek 负向 HUD 文字）
+     改为 `DangerFg` 令牌。
+  5. **`AppNav.kt` 裸 dp 收口**：`38.dp / 2.5.dp / 1.25.dp` 提为文件内具名常量
+     `NavIndicatorTrackHeight` / `NavIndicatorWidth`，并说明为何不进 `Spacing`（发丝级细条需亚像素精度，
+     不属 4 的倍数序列）；指示胶囊圆角改用「高度的一半」表达，语义自解释。
+  6. **文档矛盾收敛（`HANDOFF.md`）**：§主题策略 原写「默认浅色优先 `darkTheme = false`」，
+     与 `Theme.kt` 实际 `darkTheme = true`（阶段 65 改的）矛盾。已改为「默认全沉浸暗黑秘夜优先」，
+     并注明旧结论属阶段 35、已被阶段 65 推翻，防止后来者再改回去。
+  7. **扩展版本号单一来源（`popup.html` + `popup.js`）**：删除硬编码 `v1.7.1`，
+     改由 `chrome.runtime.getManifest().version` 在 `DOMContentLoaded` 时注入，
+     与 `manifest.json` 保持唯一来源，杜绝两处维护漂移。
+- 改动文件：
+  - `app/src/main/java/com/clipdown/app/ui/theme/Theme.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/SyncPairingDialog.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/MediaViewerDialog.kt`
+  - `app/src/main/java/com/clipdown/app/ui/downloads/DownloadsScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/nav/AppNav.kt`
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.js`
+  - `HANDOFF.md`
+  - `PROGRESS.md`
+- 测试结果：
+  - `:app:compileDebugKotlin` 编译通过；
+  - 单测 **166 例全绿**（parser 111 + downloader 41 + app 14）；
+  - `node --check extension/popup/popup.js` 语法通过；
+  - `:app:assembleDebug` / `:app:assembleRelease` 均成功。
+- 遗留（非硬性违规，属结构性重构，另行排期）：
+  - 评审提到的坏味道仍在：`seenBefore/hasCompleted/dbSeen` 三处重复（建议抽 `SeenLinkGuard`）、
+    气泡 `visualMarginX` 三处重复（建议抽 `BubbleLayout`）、`TaskDatabase` 建表 SQL 在 `onCreate/onUpgrade` 重复、
+    三层去重窗口（1s/10s/15s）语义重叠、`content-script.js` 单文件过大。
+  - 上述均为判断性问题、不影响功能，且改动面较大，适宜单独一轮重构而非混在视觉收敛里。
+- 本次文档更新时间：11.09 11:35

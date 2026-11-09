@@ -32,12 +32,18 @@ data class Spacing(
 )
 
 data class Radius(
+    /** 弹窗（比卡片更圆，强化"浮起"层级） */
+    val dialog: Dp = 20.dp,
     /** 卡片 */
     val card: Dp = 18.dp,
-    /** 按钮 / 输入框等控件 */
-    val control: Dp = 12.dp,
     /** 缩略图 */
     val thumb: Dp = 14.dp,
+    /** 按钮 / 输入框等控件 */
+    val control: Dp = 12.dp,
+    /** 内嵌小角标 / 徽标 */
+    val tiny: Dp = 6.dp,
+    /** 进度条等极细长条 */
+    val bar: Dp = 2.dp,
     /** 胶囊标签 */
     val pill: Dp = 999.dp
 )

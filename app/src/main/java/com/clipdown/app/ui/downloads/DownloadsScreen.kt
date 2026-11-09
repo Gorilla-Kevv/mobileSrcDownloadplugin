@@ -200,7 +200,7 @@ fun DownloadsScreen() {
     taskPendingDelete?.let { task ->
         val path = task.localPath ?: task.localUri
         AlertDialog(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(AppTheme.radius.dialog),
             onDismissRequest = { taskPendingDelete = null },
             title = { Text("删除文件确认", style = MaterialTheme.typography.titleMedium) },
             text = {
@@ -225,7 +225,7 @@ fun DownloadsScreen() {
             },
             confirmButton = {
                 TextButton(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(AppTheme.radius.control),
                     onClick = {
                         DownloadController.repository().delete(task.id)
                         Toast.makeText(context, "已删除本地文件与记录", Toast.LENGTH_SHORT).show()
@@ -236,7 +236,7 @@ fun DownloadsScreen() {
                 }
             },
             dismissButton = {
-                TextButton(shape = RoundedCornerShape(8.dp), onClick = { taskPendingDelete = null }) {
+                TextButton(shape = RoundedCornerShape(AppTheme.radius.control), onClick = { taskPendingDelete = null }) {
                     Text("取消")
                 }
             }
@@ -246,7 +246,7 @@ fun DownloadsScreen() {
     // 整组任务删除确认弹窗（柔和圆角设计）
     albumPendingDelete?.let { tasksToDelete ->
         AlertDialog(
-            shape = RoundedCornerShape(20.dp),
+            shape = RoundedCornerShape(AppTheme.radius.dialog),
             onDismissRequest = { albumPendingDelete = null },
             title = { Text("批量删除文件确认", style = MaterialTheme.typography.titleMedium) },
             text = {
@@ -257,7 +257,7 @@ fun DownloadsScreen() {
             },
             confirmButton = {
                 TextButton(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(AppTheme.radius.control),
                     onClick = {
                         tasksToDelete.forEach { DownloadController.repository().delete(it.id) }
                         Toast.makeText(context, "已删除全部 ${tasksToDelete.size} 个本地文件与记录", Toast.LENGTH_SHORT).show()
@@ -268,7 +268,7 @@ fun DownloadsScreen() {
                 }
             },
             dismissButton = {
-                TextButton(shape = RoundedCornerShape(8.dp), onClick = { albumPendingDelete = null }) {
+                TextButton(shape = RoundedCornerShape(AppTheme.radius.control), onClick = { albumPendingDelete = null }) {
                     Text("取消")
                 }
             }
@@ -357,7 +357,7 @@ private fun TaskRow(
     val filePath = task.localPath ?: task.localUri
 
     AppCard(
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(AppTheme.radius.thumb),
         padding = if (compact) AppTheme.spacing.md else AppTheme.spacing.lg
     ) {
         Row(
@@ -368,7 +368,7 @@ private fun TaskRow(
             Box(
                 modifier = Modifier
                     .size(thumbSize)
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(AppTheme.radius.control))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -535,7 +535,7 @@ private fun AlbumGroupCard(
         } ?: tasks.firstOrNull { it.localUri != null }?.localUri
     }
 
-    AppCard(shape = RoundedCornerShape(14.dp)) {
+    AppCard(shape = RoundedCornerShape(AppTheme.radius.thumb)) {
         // 整包头：标题 + 状态胶囊 + 统计
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -548,7 +548,7 @@ private fun AlbumGroupCard(
             Box(
                 modifier = Modifier
                     .size(60.dp)
-                    .clip(RoundedCornerShape(10.dp))
+                    .clip(RoundedCornerShape(AppTheme.radius.control))
                     .background(MaterialTheme.colorScheme.surfaceVariant),
                 contentAlignment = Alignment.Center
             ) {
@@ -573,7 +573,7 @@ private fun AlbumGroupCard(
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomEnd)
-                        .clip(RoundedCornerShape(topStart = 6.dp, bottomEnd = 10.dp))
+                        .clip(RoundedCornerShape(topStart = AppTheme.radius.tiny, bottomEnd = AppTheme.radius.control))
                         .background(Color.Black.copy(alpha = 0.7f))
                         .padding(horizontal = 4.dp, vertical = 1.dp)
                 ) {
@@ -647,7 +647,7 @@ private fun AlbumGroupCard(
                     Box(
                         modifier = Modifier
                             .size(54.dp)
-                            .clip(RoundedCornerShape(8.dp))
+                            .clip(RoundedCornerShape(AppTheme.radius.control))
                             .background(MaterialTheme.colorScheme.surfaceVariant)
                             .clickable { onPreviewAlbum(t) },
                         contentAlignment = Alignment.Center
@@ -759,9 +759,9 @@ private fun FilePathBlock(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(AppTheme.radius.control))
             .clickable { onCopy() },
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(AppTheme.radius.control),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
     ) {
         Row(
@@ -798,7 +798,7 @@ private fun FilePathBlock(
             Spacer(Modifier.width(6.dp))
             Box(
                 modifier = Modifier
-                    .clip(RoundedCornerShape(6.dp))
+                    .clip(RoundedCornerShape(AppTheme.radius.tiny))
                     .background(MaterialTheme.colorScheme.surface)
                     .padding(horizontal = 6.dp, vertical = 2.dp)
             ) {
@@ -854,9 +854,9 @@ private fun SquareActionButton(
 
     Surface(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
+            .clip(RoundedCornerShape(AppTheme.radius.control))
             .clickable(enabled = enabled, onClick = onClick),
-        shape = RoundedCornerShape(8.dp),
+        shape = RoundedCornerShape(AppTheme.radius.control),
         color = bgColor,
         border = BorderStroke(1.dp, borderColor)
     ) {
@@ -890,12 +890,12 @@ private fun ProgressBar(fraction: Float) {
         modifier = Modifier
             .fillMaxWidth()
             .height(4.dp)
-            .clip(RoundedCornerShape(2.dp))
+            .clip(RoundedCornerShape(AppTheme.radius.bar))
             .background(MaterialTheme.colorScheme.surfaceVariant)
     ) {
         LinearProgressIndicator(
             progress = { fraction.coerceIn(0f, 1f) },
-            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)),
+            modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(AppTheme.radius.bar)),
             color = MaterialTheme.colorScheme.primary,
             trackColor = MaterialTheme.colorScheme.surfaceVariant
         )
