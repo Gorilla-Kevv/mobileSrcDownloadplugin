@@ -113,6 +113,22 @@ class MainActivity : ComponentActivity() {
         val uri = intent?.data ?: return
         if (uri.scheme?.lowercase() != "clipdown") return
         val host = uri.host?.lowercase() ?: return
+
+        // 阶段 83：电脑显示二维码、手机扫码。外部扫码器（微信/相机）扫到
+        // clipdown://pair 后直接拉起本 Activity，这里转交给配对流程。
+        if (host == "pair") {
+            val payload = com.clipdown.app.sync.PairPayload.parse(uri.toString())
+            if (payload != null) {
+                startActivity(
+                    Intent(this, com.clipdown.app.sync.PairScanActivity::class.java)
+                        .putExtra(com.clipdown.app.sync.PairScanActivity.EXTRA_PAYLOAD, uri.toString())
+                )
+            } else {
+                Toast.makeText(this, "二维码不是有效的 ClipDown 配对码", Toast.LENGTH_LONG).show()
+            }
+            return
+        }
+
         if (host != "cookie" && host != "import-cookie") return
 
         val platformStr = uri.getQueryParameter("platform") ?: "instagram"

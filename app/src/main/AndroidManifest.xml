@@ -37,6 +37,11 @@
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="https" />
         </intent>
+        <!-- 手机扫电脑二维码：把 clipdown://pair 交给系统扫码器（Android 11+ 包可见性） -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="clipdown" />
+        </intent>
     </queries>
 
     <application
@@ -78,6 +83,24 @@
                 <data
                     android:scheme="clipdown"
                     android:host="import-cookie" />
+            </intent-filter>
+        </activity>
+
+        <!-- 手机扫电脑二维码配对（阶段 83）：电脑显示二维码、手机扫码回连。
+             exported=true 以便系统扫码器把 clipdown://pair 结果回传本 Activity -->
+        <activity
+            android:name=".sync.PairScanActivity"
+            android:excludeFromRecents="true"
+            android:exported="true"
+            android:noHistory="true"
+            android:theme="@style/Theme.ClipDown">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="clipdown"
+                    android:host="pair" />
             </intent-filter>
         </activity>
 

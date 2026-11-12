@@ -1965,3 +1965,59 @@
   - `content-script.js` 单文件 2000+ 行（Divergent Change）：拆分需先建立构建/打包步骤，而当前扩展是「加载解压缩的扩展」直接用裸文件，贸然拆多文件会牵动 MV3 加载路径，风险大于收益，留作独立专题；
   - `XiaohongshuParser:116 isVideoNote` 与 `TaskDatabase.getAllSeenUrls()` 疑似死代码：前者是**语义自文档化的中间量**（保留可读性更好），后者是给未来「已解析列表」UI 预留的读取入口；两者都无害，删除反而降低可读性/扩展性，故保留并在 HANDOFF 注明。
 - 本次文档更新时间：11.09 11:52
+
+
+## 阶段 83 配对方向纠错（电脑显示二维码·手机扫码）+ 电脑端注入按钮错位修复 [计划时间：11.12 18:45 BY Antigravity][完成时间：11.12 19:58 BY Antigravity]
+- 背景（用户反馈两项）：
+  1. **配对方向完全做反了**：「电脑扫手机二维码」不符合任何正常使用逻辑，且笔记本常无摄像头（用户截图即显示「未检测到可用摄像头」）；
+  2. **电脑端视频/图片下载按钮全部错位**：Instagram 里按钮被挤成竖排一两字宽、或飘到卡片外/缩到右上角。
+- 已完成：
+  1. **配对方向纠正为「电脑显示二维码 → 手机扫码」**：
+     - **技术约束澄清（关键）**：扩展是 MV3，**没有监听端口的能力**，手机扫完无法「回连电脑」。
+       因此二维码里装的是**手机自己的 `http://IP:PORT` + 6 位 PIN**（由电脑通过已连接状态/自动搜寻取得），
+       手机扫到即确认配对并落库；电脑侧只需保存这组凭据。全程无需电脑起服务。
+     - **电脑端（`extension/popup/`）**：新增「📱 显示二维码」按钮与 `modal-pair-qr` 弹窗；
+       `renderPairQr()` 读取 `chrome.storage` 里的 `phoneUrl/phonePin` 生成 `clipdown://pair?url=...&pin=...&token=...`；
+       地址/PIN 缺失时给出明确引导（先「自动搜寻」或「粘贴口令」）。
+       「📷 电脑扫码」降级为备选并改名为明确表述；引导文案四条按推荐顺序重写。
+     - **手机端（`app/sync/`）**：新增 `PairPayload`（纯 Kotlin 解析 + 地址校验）与 `PairScanActivity`：
+       ① 支持外部扫码器（微信/相机）扫到 `clipdown://pair` → `MainActivity.handleDeepLink` 转交 →
+       ② 也支持应用内发起系统扫码器（**零新增依赖**，不引入 CameraX/MLKit，守住 2MB 红线）→
+       ③ 应用配对时若二维码里的地址与本机实际 IP/PIN 不一致，**以本机为准并明确提示回电脑重扫**——
+       这是「配对显示成功但电脑仍连不上」最常见的失败原因。
+     - `AndroidManifest` 注册 `PairScanActivity`（`clipdown://pair`）与 `<queries>` 包可见性声明。
+     - `SyncPairingDialog` 移除「电脑扫手机」的误导性二维码与旧三步法，改为顶部「📷 扫电脑二维码连接（推荐）」大按钮 + 新三步法。
+  2. **电脑端注入按钮错位根因与修复（`extension/content/content-script.js`）**：
+     - **根因**：`.clipdown-card-dl-btn` 是 `position:absolute; right/bottom`，依赖锚点容器尺寸 == 真实媒体框；
+       旧实现用猜测性选择器（`div[role="button"]`、`aria-label*=Image` 等），在 IG 新版 DOM 下会命中
+       **头像链接、播放控件层等窄元素**，`right:12px` 直接把按钮挤进 1~2 字宽 → 竖排文字；或命中过大的信息流容器 → 按钮飘到屏幕角落。
+     - **修法**：不再猜选择器，改为**按几何求解锚点**：
+       `findPrimaryMedia()` 取卡片内面积最大的 `img/video`（排除头像尺寸与 header），
+       `resolveMediaAnchor()` 从媒体元素向上找第一个「面积 ≥ 80×80、宽度 ≥ 120px、且不超过卡片根」的祖先；
+       `mountCardButton()` 统一挂载，**拿不到可信锚点就放弃注入**（宁可不显示，也不要在错位置显示）。
+     - **CSS 兜底**：加 `flex-wrap:nowrap / white-space:nowrap / min-width:max-content / max-width:calc(100% - 24px)`，
+       即使锚点偏小也不会竖排挤压。
+     - Instagram / X / 小红书三条注入链路全部改用该求解器。
+  3. **单测补齐**：新增 `PairPayloadTest`（9 例）锁定新方向契约——标准/未编码/旧 `pc` 字段/尾斜杠/非协议/缺 url/非法地址/PIN 净化/地址校验，
+     防止后续再把方向改回「电脑扫手机」。
+- 改动文件：
+  - 新增 `app/src/main/java/com/clipdown/app/sync/PairPayload.kt`
+  - 新增 `app/src/main/java/com/clipdown/app/sync/PairScanActivity.kt`
+  - 新增 `app/src/test/java/com/clipdown/app/sync/PairPayloadTest.kt`
+  - `app/src/main/AndroidManifest.xml`
+  - `app/src/main/java/com/clipdown/app/ui/MainActivity.kt`
+  - `app/src/main/java/com/clipdown/app/ui/components/SyncPairingDialog.kt`
+  - `extension/content/content-script.js`
+  - `extension/content/content-style.css`
+  - `extension/popup/popup.html`
+  - `extension/popup/popup.js`
+  - `PROGRESS.md` / `HANDOFF.md`
+- 测试结果：
+  - 单测 **181 例全绿**（parser 111 + downloader 41 + app **29**，新增 9 例 `PairPayloadTest`）；
+  - `node --check` 通过（`popup.js` / `content-script.js`）；
+  - `:app:compileDebugKotlin` / `assembleDebug` / `assembleRelease` 均成功。
+- 说明与遗留：
+  - 手机端扫码依赖系统扫码器（微信「扫一扫」/ 相机 / 系统扫码应用）。若设备无任何可处理 `clipdown://pair` 的扫码器，
+    会明确提示改用「粘贴口令」而非静默失败；
+  - `PairScanActivity` 使用 `startActivityForResult`（已弃用但兼容性最好）；后续可迁到 `ActivityResultContracts`，不影响功能。
+- 本次文档更新时间：11.12 19:58

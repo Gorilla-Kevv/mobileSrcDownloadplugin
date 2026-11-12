@@ -63,6 +63,87 @@
     return false;
   }
 
+  // ── 注入锚点求解（阶段 83 修复「按钮错位」）──────────────────────────────────
+  //
+  // 症状：下载按钮被挤成竖排一两字宽、或飘到卡片外/缩到角落。
+  // 根因：`.clipdown-card-dl-btn` 是 `position:absolute; right/bottom`，
+  //       依赖锚点容器尺寸 == 真正的媒体框。之前的候选选择器会命中
+  //       **头像链接、播放控件层等窄元素**，`right:12px` 就把它挤进 1-2 个字宽。
+  //
+  // 修法：不猜选择器，改为「按几何挑锚点」——从媒体元素（img/video）往上找，
+  //       取第一个「面积足够大且不是整页/信息流容器」的祖先作为定位基准。
+  //       拿不到合适祖先时返回 null，调用方宁可不注入，也不要在错误位置放按钮。
+  const CLIPDOWN_MIN_ANCHOR_AREA = 80 * 80; // 80×80 以下基本是头像/图标，不可能是媒体框
+
+  /**
+   * 以媒体元素为起点，向上寻找合适的绝对定位基准。
+   * @param {Element} mediaEl img 或 video
+   * @param {Element} cardRoot 单帖/单卡片根节点，向上不超过它
+   * @returns {Element|null}
+   */
+  function resolveMediaAnchor(mediaEl, cardRoot) {
+    if (!mediaEl) return null;
+    let node = mediaEl.parentElement;
+    const rootRect = cardRoot ? cardRoot.getBoundingClientRect() : null;
+
+    while (node && node !== document.body) {
+      // 不越过卡片根节点
+      if (cardRoot && node === cardRoot.parentElement) break;
+
+      const rect = node.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      // 必须是"足够大"的可见块
+      if (area >= CLIPDOWN_MIN_ANCHOR_AREA && rect.width >= 120) {
+        // 且不能大到离谱（整页信息流容器），否则按钮会贴到屏幕角落
+        const tooWide = rootRect && rect.width > rootRect.width * 1.02;
+        const tooTall = rootRect && rect.height > rootRect.height * 1.5;
+        if (!tooWide && !tooTall) {
+          const cs = window.getComputedStyle(node);
+          if (cs.position === "static") node.style.position = "relative";
+          return node;
+        }
+      }
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  /**
+   * 在给定卡片内找到「主媒体」元素：面积最大的 img/video（排除头像与图标）。
+   */
+  function findPrimaryMedia(cardRoot, { allowVideo = true } = {}) {
+    if (!cardRoot) return null;
+    const candidates = [];
+    cardRoot.querySelectorAll("img, video").forEach(el => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 100 || rect.height < 100) return;      // 头像/图标
+      if (el.tagName === "VIDEO" && !allowVideo) return;
+      const src = el.currentSrc || el.src || "";
+      if (src.includes("s150x150") || src.includes("s320x320")) return; // IG 头像尺寸
+      if (el.closest("header")) return;                        // 卡片头部
+      candidates.push({ el, area: rect.width * rect.height });
+    });
+    if (candidates.length === 0) return null;
+    candidates.sort((a, b) => b.area - a.area);
+    return candidates[0].el;
+  }
+
+  /**
+   * 统一注入：把按钮放进正确的媒体框右下角。
+   * @returns {boolean} 是否成功注入（false 表示没找到合适锚点，调用方应放弃本次注入）
+   */
+  function mountCardButton(cardRoot, btn, { allowVideo = true } = {}) {
+    const media = findPrimaryMedia(cardRoot, { allowVideo });
+    const anchor = resolveMediaAnchor(media, cardRoot);
+    if (!anchor) {
+      // 没有可信锚点：宁可不注入，也不要在错位置放一个错位按钮
+      return false;
+    }
+    anchor.setAttribute("data-clipdown-anchor", "true");
+    anchor.appendChild(btn);
+    return true;
+  }
+
   // ── Instagram 是否为轮播图集判断 ───────────────────────────────────────────
   function isInstagramArticleCarousel(article) {
     if (!article) return false;
@@ -618,21 +699,12 @@
       document.querySelectorAll('article:not([data-clipdown-injected])').forEach(article => {
         article.setAttribute("data-clipdown-injected", "true");
 
-        // 定位媒体容器或第一层卡片块
-        const mediaWrap = article.querySelector('div._aagv, div._aatk, div._aato, div._ab6-, div[role="presentation"], div[role="button"]') ||
-                          article.querySelector('div:has(> img), div:has(> video)') ||
-                          article;
+        // 定位媒体容器：由几何求解器决定（不再盲选 role=button 这类窄元素）
+        const isCarousel = isInstagramArticleCarousel(article);
+        const hasVideo = !!article.querySelector("video");
+        const labelText = isCarousel ? "📦 下载图集" : (hasVideo ? "🎬 下载视频" : "⬇️ 下载原图");
 
-        if (mediaWrap) {
-          const compStyle = window.getComputedStyle(mediaWrap);
-          if (compStyle.position === "static") {
-            mediaWrap.style.position = "relative";
-          }
-
-          const isCarousel = isInstagramArticleCarousel(article);
-          const hasVideo = !!article.querySelector("video");
-          const labelText = isCarousel ? "📦 下载图集" : (hasVideo ? "🎬 下载视频" : "⬇️ 下载原图");
-
+        {
           const btn = document.createElement("div");
           btn.className = "clipdown-card-dl-btn";
           btn.title = "ClipDown 一键下载此帖子 (仅下载此项)";
@@ -734,7 +806,8 @@
             }, 3000);
           });
 
-          mediaWrap.appendChild(btn);
+          // 几何锚点：mountCardButton 会挑出真正的媒体框；拿不到就放弃注入
+          if (!mountCardButton(article, btn)) return;
         }
       });
     }
@@ -744,19 +817,11 @@
       document.querySelectorAll('article[data-testid="tweet"]:not([data-clipdown-injected])').forEach(tweetEl => {
         tweetEl.setAttribute("data-clipdown-injected", "true");
 
-        const mediaWrap = tweetEl.querySelector('[data-testid="tweetPhoto"], [data-testid="videoPlayer"], [data-testid="videoComponent"], div[aria-label*="Image" i]') ||
-                          tweetEl.querySelector('div[role="group"]') ||
-                          tweetEl;
+        // 几何锚点：X 的视频/图片容器层级很浅，交给统一求解器
+        const hasVideo = !!tweetEl.querySelector("video");
+        const labelText = hasVideo ? "🎬 下载视频" : "⬇️ 下载原图";
 
-        if (mediaWrap) {
-          const compStyle = window.getComputedStyle(mediaWrap);
-          if (compStyle.position === "static") {
-            mediaWrap.style.position = "relative";
-          }
-
-          const hasVideo = !!tweetEl.querySelector("video");
-          const labelText = hasVideo ? "🎬 下载视频" : "⬇️ 下载原图";
-
+        {
           const btn = document.createElement("div");
           btn.className = "clipdown-card-dl-btn";
           btn.title = "ClipDown 一键下载此推文媒体";
@@ -849,7 +914,8 @@
             }, 3000);
           });
 
-          mediaWrap.appendChild(btn);
+          // 几何锚点：X 的媒体容器层级浅，交给统一求解器；拿不到就放弃注入
+          if (!mountCardButton(tweetEl, btn)) return;
         }
       });
     }
@@ -859,11 +925,7 @@
       document.querySelectorAll('section.note-item:not([data-clipdown-injected]), .note-item:not([data-clipdown-injected])').forEach(noteEl => {
         noteEl.setAttribute("data-clipdown-injected", "true");
 
-        const coverWrap = noteEl.querySelector('.cover, .image-wrapper') || noteEl;
-        const compStyle = window.getComputedStyle(coverWrap);
-        if (compStyle.position === "static") {
-          coverWrap.style.position = "relative";
-        }
+        {
 
         const btn = document.createElement("div");
         btn.className = "clipdown-card-dl-btn";
@@ -903,7 +965,9 @@
           }
         });
 
-        coverWrap.appendChild(btn);
+          // 几何锚点：小红书卡片有多层叠图容器，交给统一求解器
+          if (!mountCardButton(noteEl, btn)) return;
+        }
       });
     }
 

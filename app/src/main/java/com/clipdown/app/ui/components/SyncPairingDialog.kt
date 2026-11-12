@@ -3,9 +3,8 @@ package com.clipdown.app.ui.components
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.util.Log
+import android.content.Intent
 import android.widget.Toast
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -27,12 +26,9 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -40,11 +36,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
-import com.clipdown.app.sync.QrCodeUtil
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.app.ui.theme.Brand600
 import com.clipdown.app.ui.theme.BrandPrimary
-import com.clipdown.app.ui.theme.Brand500
 import com.clipdown.app.ui.theme.DarkBg
 import com.clipdown.app.ui.theme.DarkOutline
 import com.clipdown.app.ui.theme.DarkSurface
@@ -120,17 +114,8 @@ fun SyncPairingDialog(
                 Hairline()
                 VSpace(AppTheme.spacing.md)
 
-                // 当前配对凭据与二维码卡片
+                // 当前配对凭据卡片（地址 + PIN，供手动输入或旧版电脑扫码兜底）
                 val pairPayload = "clipdown://pair?url=$connectUrl&pin=$pin"
-                val qrBitmap = remember(connectUrl, pin) {
-                    try {
-                        QrCodeUtil.createQrBitmap(pairPayload, sizePx = 400)
-                    } catch (t: Throwable) {
-                        // 坑 12：失败不要静默吞，至少留日志便于定位
-                        Log.w("SyncPairingDialog", "生成配对二维码失败", t)
-                        null
-                    }
-                }
 
                 Column(
                     modifier = Modifier
@@ -141,30 +126,6 @@ fun SyncPairingDialog(
                         .padding(AppTheme.spacing.md),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // 配对二维码（白底是扫码可识别性要求，属功能性例外）
-                    if (qrBitmap != null) {
-                        Surface(
-                            shape = RoundedCornerShape(AppTheme.radius.thumb),
-                            color = Color.White,
-                            modifier = Modifier.padding(bottom = AppTheme.spacing.sm)
-                        ) {
-                            Image(
-                                bitmap = qrBitmap.asImageBitmap(),
-                                contentDescription = "电脑扩展扫码配对",
-                                modifier = Modifier
-                                    .size(160.dp)
-                                    .padding(AppTheme.spacing.sm)
-                            )
-                        }
-                        Text(
-                            text = "📷 电脑扩展打开「设置中心」点击「扫码连接」对准即可",
-                            style = MaterialTheme.typography.labelSmall,
-                            color = Brand500,
-                            fontWeight = FontWeight.SemiBold
-                        )
-                        VSpace(AppTheme.spacing.sm)
-                    }
-
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
@@ -206,6 +167,31 @@ fun SyncPairingDialog(
 
                 VSpace(AppTheme.spacing.md)
 
+                // 推荐方式：手机扫电脑二维码（阶段 83 修正方向）
+                Button(
+                    onClick = {
+                        context.startActivity(
+                            Intent(context, com.clipdown.app.sync.PairScanActivity::class.java)
+                        )
+                    },
+                    shape = controlShape,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Brand600,
+                        contentColor = DarkTextPrimary
+                    ),
+                    modifier = Modifier.fillMaxWidth().height(44.dp)
+                ) {
+                    Text("📷 扫电脑二维码连接（推荐）", style = MaterialTheme.typography.labelLarge)
+                }
+                VSpace(AppTheme.spacing.xs)
+                Text(
+                    text = "在电脑扩展「配对设置」点击「显示二维码」，用手机扫它即可自动配对。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = DarkTextSecondary
+                )
+
+                VSpace(AppTheme.spacing.md)
+
                 // 3步极简流程
                 Text(
                     text = "使用三步法：",
@@ -218,13 +204,13 @@ fun SyncPairingDialog(
 
                 StepItem(
                     num = "1",
-                    title = "电脑加载扩展",
-                    desc = "打开 Edge/Chrome 扩展管理页（勾选「开发者模式」）→ 点击「加载解压缩的扩展」→ 选择项目工程内的 extension 文件夹。"
+                    title = "电脑加载扩展并显示二维码",
+                    desc = "打开 Edge/Chrome 扩展管理页（勾选「开发者模式」）→「加载解压缩的扩展」→ 选择 extension 文件夹；在扩展「配对设置」点击「显示二维码」。"
                 )
                 StepItem(
                     num = "2",
-                    title = "填入服务地址与 PIN",
-                    desc = "点击浏览器右上角 ClipDown 图标，在「配对设置」填入上方服务地址与 PIN 码，点击测试连接。"
+                    title = "手机扫电脑二维码",
+                    desc = "点击上方「扫电脑二维码连接」，对准电脑屏幕上的二维码；手机会自动回连电脑完成配对，无需手输 IP 与 PIN。"
                 )
                 StepItem(
                     num = "3",

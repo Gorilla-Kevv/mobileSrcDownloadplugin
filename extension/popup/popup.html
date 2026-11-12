@@ -279,8 +279,11 @@
 
           <!-- 免手动输入：扫码/粘贴/自动搜寻 3 大极速配对工具 -->
           <div class="quick-pair-toolbar">
-            <button id="btn-scan-qr" class="btn btn-primary btn-sm btn-pair-action" title="打开摄像头扫码，或按 Ctrl+V 粘贴手机截图">
-              📷 扫码连接
+            <button id="btn-show-pair-qr" class="btn btn-primary btn-sm btn-pair-action" title="在电脑显示二维码，用手机扫它即可配对">
+              📱 显示二维码
+            </button>
+            <button id="btn-scan-qr" class="btn btn-secondary btn-sm btn-pair-action" title="用电脑摄像头扫手机截图中的二维码（无摄像头时请改用「显示二维码」）">
+              📷 电脑扫码
             </button>
             <button id="btn-paste-pairing" class="btn btn-secondary btn-sm btn-pair-action" title="一键识别剪贴板中的配对口令或服务地址">
               ⚡ 粘贴口令
@@ -311,12 +314,12 @@
           <div id="settings-status-box" class="status-box hidden"></div>
 
           <div class="guide-box">
-            <div class="guide-title">📖 极速连接方式（免输 IP）：</div>
+            <div class="guide-title">📖 极速连接方式（推荐顺序）：</div>
             <ol class="guide-steps">
-              <li><strong>摄像头扫码</strong>：点击上方「📷 扫码连接」，直接对准手机屏幕二维码；</li>
-              <li><strong>截屏粘贴</strong>：微信/截图手机屏幕后，直接在此处按 <strong>Ctrl + V</strong> 即可自动解析；</li>
-              <li><strong>一键口令</strong>：手机弹窗点击「复制一键配对口令」，电脑点击「⚡ 粘贴口令」秒连；</li>
-              <li><strong>局域网搜寻</strong>：同一 Wi-Fi 下点击「🔍 自动搜寻」，自动嗅探手机 IP。</li>
+              <li><strong>手机扫电脑（推荐）</strong>：点上方「📱 显示二维码」，用手机相机/扫码器对准电脑屏幕即可配对；</li>
+              <li><strong>一键口令</strong>：手机弹窗点「复制一键配对口令」，电脑点「⚡ 粘贴口令」秒连；</li>
+              <li><strong>局域网搜寻</strong>：同一 Wi-Fi 下点「🔍 自动搜寻」，自动嗅探手机 IP 与 PIN；</li>
+              <li><strong>电脑扫码（备选）</strong>：仅当电脑有摄像头时，用「📷 电脑扫码」扫手机截图；</li>
             </ol>
           </div>
         </div>
@@ -329,6 +332,23 @@
       <!-- 版本号由 popup.js 从 manifest 读取注入，勿在此硬编码（单一来源 = manifest.json） -->
       <span class="version" id="app-version"></span>
     </footer>
+
+    <!-- 弹窗 0：电脑显示配对二维码（手机扫它）—— 推荐方式 -->
+    <div id="modal-pair-qr" class="modal hidden">
+      <div class="modal-content">
+        <div class="modal-header">
+          <span class="modal-title">📱 用手机扫这个二维码</span>
+          <button id="btn-close-pair-qr" class="btn-close">×</button>
+        </div>
+        <div class="modal-body">
+          <div id="pair-qr-container" class="qrcode-wrapper"></div>
+          <div class="qr-hint" id="pair-qr-hint">正在读取手机地址…</div>
+          <div class="form-actions" style="margin-top:10px;">
+            <button id="btn-refresh-pair-qr" class="btn btn-secondary btn-sm btn-block">🔄 重新读取手机地址并刷新二维码</button>
+          </div>
+        </div>
+      </div>
+    </div>
 
     <!-- 弹窗 1：摄像头/截屏扫码配对 -->
     <div id="modal-scanner" class="modal hidden">

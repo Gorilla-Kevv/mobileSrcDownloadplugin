@@ -79,6 +79,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   const btnUploadQrImg = document.getElementById("btn-upload-qr-img");
   const inputQrFile = document.getElementById("input-qr-file");
 
+  // 电脑显示二维码（手机扫它）—— 阶段 83 推荐方式
+  const btnShowPairQr = document.getElementById("btn-show-pair-qr");
+  const modalPairQr = document.getElementById("modal-pair-qr");
+  const btnClosePairQr = document.getElementById("btn-close-pair-qr");
+  const btnRefreshPairQr = document.getElementById("btn-refresh-pair-qr");
+  const pairQrContainer = document.getElementById("pair-qr-container");
+  const pairQrHint = document.getElementById("pair-qr-hint");
+
   // 离线 Cookie 二维码弹窗
   const modalQr = document.getElementById("modal-qr");
   const btnCloseQr = document.getElementById("btn-close-qr");
@@ -866,6 +874,69 @@ document.addEventListener("DOMContentLoaded", async () => {
   inputPhonePin.addEventListener("input", () => {
     inputPhonePin.value = inputPhonePin.value.replace(/\D/g, "").slice(0, 6);
   });
+
+  // ── 📱 电脑显示二维码（手机扫它）—— 阶段 83 推荐方向 ─────────────────────
+  //
+  // 说明：扩展是 MV3，没有监听端口的能力，手机扫完无法"回连电脑"。
+  // 因此二维码里装的是**手机自己的地址 + PIN**（由电脑通过已连接状态或自动搜寻取得），
+  // 手机扫到后即确认配对；电脑这边只要把地址/PIN 存好即可。
+  async function renderPairQr() {
+    if (!pairQrContainer) return;
+    pairQrContainer.innerHTML = "";
+    pairQrHint.textContent = "正在读取手机地址…";
+
+    const { phoneUrl, phonePin } = await getPairingConfigFromStorage();
+
+    if (!phoneUrl) {
+      pairQrHint.innerHTML = "尚未连接手机，无法生成二维码。<br><small>请先点「🔍 自动搜寻」或「⚡ 粘贴口令」建立连接。</small>";
+      return;
+    }
+    if (!phonePin || String(phonePin).length !== 6) {
+      pairQrHint.innerHTML = `已找到手机地址 <strong>${phoneUrl}</strong>，但缺少 6 位 PIN。<br><small>请先在下方填入 PIN 并保存，再刷新二维码。</small>`;
+      return;
+    }
+
+    const token = Math.random().toString(16).slice(2, 10);
+    const payload = `clipdown://pair?url=${encodeURIComponent(phoneUrl)}&pin=${phonePin}&token=${token}`;
+
+    if (typeof QRCode === "undefined") {
+      pairQrHint.textContent = "二维码库未加载，请重新加载扩展。";
+      return;
+    }
+    new QRCode(pairQrContainer, {
+      text: payload,
+      width: 200,
+      height: 200,
+      colorDark: "#09060E",
+      colorLight: "#FFFFFF"
+    });
+    pairQrHint.innerHTML = `用手机扫上方二维码即可配对<br><small>地址 ${phoneUrl} · PIN ${phonePin}</small>`;
+  }
+
+  async function getPairingConfigFromStorage() {
+    const data = await chrome.storage.local.get(["phoneUrl", "phonePin"]);
+    const url = data.phoneUrl ? String(data.phoneUrl).trim().replace(/\/+$/, "") : "";
+    const pin = String(data.phonePin || "").trim().replace(/\D/g, "").slice(0, 6);
+    return { phoneUrl: url, phonePin: pin };
+  }
+
+  if (btnShowPairQr) {
+    btnShowPairQr.addEventListener("click", async () => {
+      modalPairQr.classList.remove("hidden");
+      await renderPairQr();
+    });
+  }
+  if (btnClosePairQr) {
+    btnClosePairQr.addEventListener("click", () => modalPairQr.classList.add("hidden"));
+  }
+  if (btnRefreshPairQr) {
+    btnRefreshPairQr.addEventListener("click", () => renderPairQr());
+  }
+  if (modalPairQr) {
+    modalPairQr.addEventListener("click", e => {
+      if (e.target === modalPairQr) modalPairQr.classList.add("hidden");
+    });
+  }
 
   // ── 扫码配对核心逻辑 (BarcodeDetector + jsQR 双轨保障) ──────────────────────
   let cameraStream = null;

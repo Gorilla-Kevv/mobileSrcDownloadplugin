@@ -572,6 +572,13 @@
   z-index: 999;
   display: inline-flex;
   align-items: center;
+  /* 阶段 83：锚点尺寸不足时绝不竖排/挤压——保持单行，超宽由 max-width 省略 */
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-width: max-content;
+  max-width: calc(100% - 24px);
+  overflow: hidden;
+  text-overflow: ellipsis;
   gap: 6px;
   padding: 6px 12px;
   background: linear-gradient(135deg, rgba(23, 15, 43, 0.94), rgba(46, 16, 101, 0.94));
