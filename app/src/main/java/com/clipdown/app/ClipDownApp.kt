@@ -72,7 +72,9 @@ class ClipDownApp : Application(), ImageLoaderFactory {
             context = this,
             config = DownloadConfig(
                 maxConcurrent = snapshot.maxConcurrent,
-                wifiOnly = snapshot.wifiOnly
+                wifiOnly = snapshot.wifiOnly,
+                saveToAlbum = snapshot.saveToAlbum,
+                saveSubDir = snapshot.saveSubDir
             )
         )
 
@@ -87,12 +89,35 @@ class ClipDownApp : Application(), ImageLoaderFactory {
         // 跨端同步：局域网配对与多端数据中枢初始化
         com.clipdown.app.sync.SyncManager.init(this)
 
+        // 设置热更新：任一存储相关项变化都重建配置，避免"改了设置不生效"。
+        // 阶段 84 之前 saveToAlbum / 子目录根本没接到引擎上，导致开关形同虚设。
         appScope.launch {
-            settings.maxConcurrent.collect { max ->
-                val wifi = settings.wifiOnly.first()
-                DownloadController.updateConfig(DownloadConfig(maxConcurrent = max, wifiOnly = wifi))
+            kotlinx.coroutines.flow.combine(
+                settings.maxConcurrent,
+                settings.wifiOnly,
+                settings.saveToAlbum,
+                settings.saveSubDir
+            ) { max, wifi, album, subDir ->
+                DownloadConfig(
+                    maxConcurrent = max,
+                    wifiOnly = wifi,
+                    saveToAlbum = album,
+                    saveSubDir = subDir
+                )
+            }.collect { cfg ->
+                DownloadController.updateConfig(cfg)
             }
         }
+        // 阶段 84：一次性清理升级前遗留的「相册 + 私有目录」双份文件，回收空间。
+        // 只在相册那份确认可读时删私有副本，避免删掉唯一实体。
+        appScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            val freed = runCatching { DownloadController.engine().cleanupLegacyDualCopies() }
+                .getOrDefault(0L)
+            if (freed > 0) {
+                Log.i("ClipDownApp", "已回收历史双份文件 ${freed / 1024 / 1024} MB")
+            }
+        }
+
         appScope.launch {
             settings.remoteEndpoint.collect { ParserEngine.updateConfig(settings.parserConfig()) }
         }

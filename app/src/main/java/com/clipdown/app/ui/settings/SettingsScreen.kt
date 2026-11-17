@@ -24,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -86,6 +87,7 @@ fun SettingsScreen() {
     val autoDownload by settings.autoDownload.collectAsStateWithLifecycle(initialValue = true)
     val wifiOnly by settings.wifiOnly.collectAsStateWithLifecycle(initialValue = false)
     val saveAlbum by settings.saveToAlbum.collectAsStateWithLifecycle(initialValue = true)
+    val saveSubDir by settings.saveSubDir.collectAsStateWithLifecycle(initialValue = "")
     val maxConcurrent by settings.maxConcurrent.collectAsStateWithLifecycle(initialValue = 3)
     val remoteEnabled by settings.remoteEnabled.collectAsStateWithLifecycle(initialValue = false)
     val remoteEndpoint by settings.remoteEndpoint.collectAsStateWithLifecycle(initialValue = "")
@@ -202,6 +204,49 @@ fun SettingsScreen() {
                     desc = "关闭后仅保存在应用私有目录",
                     checked = saveAlbum
                 ) { v -> scope.launch { settings.setSaveToAlbum(v) } }
+                Hairline()
+                // 阶段 84：自定义保存路径（相对相册根目录，如 ClipDown/视频）
+                VSpace(AppTheme.spacing.sm)
+                Text("保存目录名", style = MaterialTheme.typography.bodyMedium)
+                VSpace(AppTheme.spacing.xs)
+                var subDirInput by remember(saveSubDir) { mutableStateOf(saveSubDir) }
+                OutlinedTextField(
+                    value = subDirInput,
+                    onValueChange = { subDirInput = it.take(80) },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    placeholder = { Text("默认 ClipDown", style = MaterialTheme.typography.bodySmall) },
+                    textStyle = MaterialTheme.typography.bodySmall,
+                    shape = RoundedCornerShape(AppTheme.radius.control)
+                )
+                VSpace(AppTheme.spacing.xs)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = buildString {
+                            append("实际路径：")
+                            append(
+                                when {
+                                    !saveAlbum -> "应用私有目录"
+                                    else -> "相册/${subDirInput.ifBlank { "ClipDown" }}"
+                                }
+                            )
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        shape = RoundedCornerShape(AppTheme.radius.control),
+                        onClick = { scope.launch { settings.setSaveSubDir(subDirInput) } }
+                    ) {
+                        Text("保存", color = MaterialTheme.colorScheme.primary)
+                    }
+                }
+                Text(
+                    text = "支持子目录，如 ClipDown/视频。仅接受相对路径，视频归 Movies、图片归 Pictures、音频归 Music。",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 Hairline()
                 VSpace(AppTheme.spacing.sm)
                 Row(verticalAlignment = Alignment.CenterVertically) {

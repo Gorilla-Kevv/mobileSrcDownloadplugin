@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material.icons.filled.LinkOff
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
@@ -79,6 +80,8 @@ import com.clipdown.app.ui.components.VSpace
 import com.clipdown.app.ui.theme.AppTheme
 import com.clipdown.downloader.DownloadController
 import com.clipdown.downloader.model.DownloadStatus
+import com.clipdown.downloader.model.FileAvailability
+import com.clipdown.downloader.model.FileAvailabilityChecker
 import com.clipdown.downloader.model.ProgressEvent
 import com.clipdown.downloader.model.TaskEntity
 import com.clipdown.parser.model.MediaItem
@@ -178,11 +181,19 @@ fun DownloadsScreen() {
                     progressMap = progressMap,
                     onToggleExpand = { expandedGroups[row.key] = !(expandedGroups[row.key] ?: false) },
                     onPreviewAlbum = { initialTask ->
-                        val completed = row.tasks.filter { it.status == DownloadStatus.COMPLETED }
-                        if (completed.isNotEmpty()) {
-                            previewTasks = completed
+                        // 阶段 84：只把「文件仍可读」的条目放进浏览器。
+                        // 文件被移走/隐藏的条目保留在列表里可见，但点不进预览——
+                        // 否则会打开一个永远加载不出来的黑屏。
+                        val playable = row.tasks.filter {
+                            it.status == DownloadStatus.COMPLETED &&
+                                FileAvailabilityChecker.check(
+                                    context, it.localUri, it.localPath
+                                ).isPlayable
+                        }
+                        if (playable.isNotEmpty()) {
+                            previewTasks = playable
                             previewInitialIndex = if (initialTask != null) {
-                                completed.indexOf(initialTask).coerceAtLeast(0)
+                                playable.indexOf(initialTask).coerceAtLeast(0)
                             } else 0
                         }
                     },
@@ -352,7 +363,17 @@ private fun TaskRow(
 ) {
     val context = LocalContext.current
     val clipboard = LocalClipboardManager.current
-    val clickable = task.status == DownloadStatus.COMPLETED && (task.localUri != null || task.localPath != null)
+    // 阶段 84：能否预览不再只看 status，而是**实际探测文件是否还在**。
+    // 用户把相册里的文件隐藏/移走后，记录仍然保留可看，但点不进预览。
+    val availability = remember(task.id, task.localUri, task.localPath, task.updatedAt) {
+        if (task.status == DownloadStatus.COMPLETED) {
+            FileAvailabilityChecker.check(context, task.localUri, task.localPath)
+        } else {
+            FileAvailability.Unknown
+        }
+    }
+    val clickable = task.status == DownloadStatus.COMPLETED && availability.isPlayable
+    val isLost = task.status == DownloadStatus.COMPLETED && !availability.isPlayable
     val thumbSize = if (compact) 48.dp else 60.dp
     val filePath = task.localPath ?: task.localUri
 
@@ -378,6 +399,8 @@ private fun TaskRow(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
                     modifier = Modifier.size(if (compact) 22.dp else 26.dp)
                 )
+                // 缩略图：文件还在时优先本地首帧；已丢失时回落到网络封面（coverUrl），
+                // 这样历史记录里仍然「看得见是哪一条」，但点不开内容。
                 val thumbModel = resolveThumbModel(task)
                 if (thumbModel != null) {
                     AsyncImage(
@@ -391,7 +414,7 @@ private fun TaskRow(
                         contentScale = ContentScale.Crop
                     )
                 }
-                if (task.mimeType.startsWith("video/")) {
+                if (task.mimeType.startsWith("video/") && !isLost) {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -403,6 +426,22 @@ private fun TaskRow(
                             contentDescription = "视频",
                             tint = Color.White,
                             modifier = Modifier.size(if (compact) 20.dp else 26.dp)
+                        )
+                    }
+                }
+                // 文件已丢失：压一层暗色 + 断链图标，明确"看得见但打不开"
+                if (isLost) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .background(Color.Black.copy(alpha = 0.55f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            Icons.Default.LinkOff,
+                            contentDescription = "文件不可用",
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(if (compact) 18.dp else 22.dp)
                         )
                     }
                 }
@@ -425,12 +464,28 @@ private fun TaskRow(
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
+                // 阶段 84：文件已丢失时明确标注，避免用户以为还能播
+                if (isLost) {
+                    VSpace(2.dp)
+                    Text(
+                        text = "⚠ ${availability.label} · 文件可能已被隐藏、移动或删除",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.error,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             Spacer(Modifier.width(AppTheme.spacing.sm))
-            StatusPill(
-                text = statusLabel(task.status),
-                tone = statusTone(task.status)
-            )
+            if (isLost) {
+                // 覆盖掉「已完成」绿胶囊：状态自相矛盾会误导用户
+                StatusPill(text = "内容已丢失", tone = Tone.Danger)
+            } else {
+                StatusPill(
+                    text = statusLabel(task.status),
+                    tone = statusTone(task.status)
+                )
+            }
         }
 
         // 下载中展示平直四方形进度条
@@ -456,8 +511,8 @@ private fun TaskRow(
         VSpace(AppTheme.spacing.sm)
         Row(verticalAlignment = Alignment.CenterVertically) {
             SquareActionButton(
-                text = "预览",
-                icon = Icons.Default.Visibility,
+                text = if (isLost) "已丢失" else "预览",
+                icon = if (isLost) Icons.Default.LinkOff else Icons.Default.Visibility,
                 enabled = clickable,
                 onClick = onPreview
             )
@@ -940,13 +995,30 @@ private fun formatSpeed(bytesPerSec: Long): String {
     return if (kb >= 1024) String.format("%.1f MB/s", kb / 1024) else String.format("%.0f KB/s", kb)
 }
 
+/**
+ * 缩略图数据源。
+ *
+ * 阶段 84 修正：旧实现只要 `localUri` 非空就返回它，可文件被隐藏/移走后
+ * 这个 Uri 已经打不开，Coil 会一直转圈而不回落到封面。
+ * 现在先做一次存在性探测，失效时直接退到网络封面 `coverUrl`，
+ * 保证「历史记录里仍能看见是哪一条」。
+ */
 private fun resolveThumbModel(task: TaskEntity): Any? {
+    // 1. 私有目录副本还在 → 最可靠，直接读文件（视频可解首帧）
     task.localPath?.let {
         val f = File(it)
         if (f.exists() && f.length() > 0) return f
     }
-    task.localUri?.let { if (it.isNotBlank()) return android.net.Uri.parse(it) }
-    return task.coverUrl
+    // 2. 相册 Uri：用户可能已把文件隐藏/移走，此时 Coil 会失败。
+    //    把 coverUrl 作为 secondary 兜底，保证历史记录里仍能看到是哪一条。
+    val cover = task.coverUrl
+    task.localUri?.let { uriStr ->
+        if (uriStr.isNotBlank()) {
+            return if (cover.isNullOrBlank()) uriStr else listOf(uriStr, cover)
+        }
+    }
+    // 3. 都没有 → 网络封面
+    return cover
 }
 
 /** 下载记录时间显示：任务完成/更新时间 */

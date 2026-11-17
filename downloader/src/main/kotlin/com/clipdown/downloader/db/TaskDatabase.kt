@@ -120,14 +120,18 @@ class TaskDatabase(context: Context) :
 
     fun markCompleted(
         id: String,
-        localPath: String,
+        /**
+         * 私有目录副本的绝对路径；为 null 表示**成品已存入相册、私有副本已删除**
+         * （阶段 84 消除双份存储后的常态）。此时 localUri 才是唯一实体。
+         */
+        localPath: String?,
         localUri: String?,
         mimeType: String,
         totalBytes: Long
     ) {
         val cv = ContentValues().apply {
             put("status", DownloadStatus.COMPLETED.name)
-            put("local_path", localPath)
+            if (localPath != null) put("local_path", localPath) else putNull("local_path")
             put("local_uri", localUri)
             put("mime_type", mimeType)
             put("total_bytes", totalBytes)
@@ -201,6 +205,35 @@ class TaskDatabase(context: Context) :
 
     fun delete(id: String) {
         writableDatabase.delete(TABLE, "id = ?", arrayOf(id))
+    }
+
+    /**
+     * 找出「历史遗留双份」任务：同时持有 `localUri`（相册）与 `localPath`（私有副本）。
+     *
+     * 阶段 84 之前每个下载都是这样落库的，清理需在**确认相册那份可读**之后进行，
+     * 否则会删掉唯一实体。这里只返回候选，实际探测与删除由调用方（[DownloadEngine]）完成。
+     */
+    fun listLegacyDualCopies(): List<Pair<String, String>> {
+        val out = mutableListOf<Pair<String, String>>()
+        runCatching {
+            readableDatabase.rawQuery(
+                "SELECT id, local_path FROM $TABLE WHERE status = ? " +
+                    "AND local_uri IS NOT NULL AND local_path IS NOT NULL",
+                arrayOf(DownloadStatus.COMPLETED.name)
+            ).use { c ->
+                while (c.moveToNext()) {
+                    val path = c.getString(1) ?: continue
+                    out.add(c.getString(0) to path)
+                }
+            }
+        }
+        return out
+    }
+
+    /** 私有副本已删除：把 local_path 置空，让 UI 只认相册那份 */
+    fun clearLocalPath(id: String) {
+        val cv = ContentValues().apply { putNull("local_path") }
+        writableDatabase.update(TABLE, cv, "id = ?", arrayOf(id))
     }
 
     fun clearFinished() {

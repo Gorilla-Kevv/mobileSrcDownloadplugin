@@ -2021,3 +2021,66 @@
     会明确提示改用「粘贴口令」而非静默失败；
   - `PairScanActivity` 使用 `startActivityForResult`（已弃用但兼容性最好）；后续可迁到 `ActivityResultContracts`，不影响功能。
 - 本次文档更新时间：11.12 19:58
+
+
+## 阶段 84 存储治理（自定义路径 · 消除双份 · 历史记录与文件存在性解耦）[计划时间：11.18 02:20 BY Antigravity][完成时间：11.18 02:38 BY Antigravity]
+- 背景（用户反馈四项）：
+  1. 下载文件存了两份，白白占双倍空间；
+  2. 相册里的文件被隐藏/移走后，软件内仍能打开（其实是打开了失效引用）；
+  3. 无法自定义下载路径；
+  4. 要求历史记录独立保留，文件丢失时标记「不可用」但缩略图仍在。
+- 根因确诊：
+  - **双份存储**：`DownloadEngine.execute()` 把成品复制进相册（`MediaStoreWriter.save`）后**从未删除**私有目录的 `filesDir/downloads/<fileName>`，且 `markCompleted` 把 `localPath` 与 `localUri` 同时写入，两份都被当成"有效位置"。
+  - **失效仍可打开**：`TaskRow.clickable` 只判断 `status == COMPLETED && (localUri != null || localPath != null)`——**只看数据库字段非空，从不实际探测文件**。文件被移走后引用依然非空，于是照样进预览。
+  - **设置形同虚设**：`saveToAlbum` 虽然在设置页有开关，但 `ClipDownApp` 构造 `DownloadConfig` 时**根本没传这个字段**，引擎永远用默认 `true`。
+- 已完成：
+  1. **消除双份存储（核心）**：
+     - `DownloadConfig` 新增 `saveSubDir`（自定义子目录）与 `deletePrivateCopyAfterSave`（默认 true）。
+     - `DownloadEngine` 在相册写入**成功后**删除私有副本，并把 `localPath` 置为 null —— 从此**相册那份是唯一实体**，`localUri` 为权威引用；私有目录只作为下载中转。
+     - `markCompleted(localPath: String?)` 改为可空；`localPath` 为空即明确表示"成品只在相册"。
+     - 相册写入失败或用户关闭相册保存时**不删除**私有副本，保证至少有一份可用。
+     - 顺带修掉一个隐藏 bug：文件大小必须在删除前取快照，否则 `target.length()` 变 0 会让 `total_bytes` 记成 0。
+  2. **自定义下载路径**：
+     - `MediaStoreWriter.save(..., subDir)` 支持自定义子目录：视频仍归 `Movies/<子目录>`、图片 `Pictures/<子目录>`、音频 `Music/<子目录>`。
+     - `DownloadConfig.normalizedSubDir()` 做安全规整：剥掉绝对路径前缀、丢弃 `.`/`..` 与盘符段，防止越权写到公共媒体根之外。
+     - 设置页「保存到系统相册」下方新增目录名输入框 + 实时路径预览 + 保存按钮（`SAVE_SUB_DIR`）。
+  3. **设置真正接线**：
+     - `SettingsSnapshot` 补 `saveToAlbum` / `saveSubDir`；
+     - `ClipDownApp` 改为 `combine(maxConcurrent, wifiOnly, saveToAlbum, saveSubDir)` 统一热更新 `DownloadConfig`，**任一存储项变化都立即生效**。
+  4. **历史记录与文件存在性解耦**：
+     - 新增 `downloader/model/FileAvailability.kt`：`FileAvailability{Available, Missing, Unknown}` + `FileAvailabilityChecker`。
+       判定**实际探测存储**（`content://` 走 `openAssetFileDescriptor`，路径走 `exists()+length()>0`），带 3 秒 LRU 缓存避免列表滚动反复打盘。
+     - `DownloadsScreen.TaskRow`：
+       - 能否预览改由 `availability.isPlayable` 决定，不再看字段非空；
+       - 文件丢失时：缩略图压暗 + 断链图标，元信息追加「⚠ 文件不可用 · 文件可能已被隐藏、移动或删除」，状态胶囊由绿色「已完成」改为红色「内容已丢失」，预览按钮变「已丢失」且禁用；
+       - 缩略图 `resolveThumbModel` 在本地失效时回落到 `coverUrl`，保证「历史记录仍看得见是哪一条」。
+     - `AlbumGroupCard` 的「浏览全部」只把**仍可读**的条目放进浏览器，避免打开黑屏。
+  5. **历史遗留双份一次性回收**：
+     - `TaskDatabase.listLegacyDualCopies()` / `clearLocalPath()` + `DownloadEngine.cleanupLegacyDualCopies()`：
+       仅当**相册那份确认可读**时才删私有副本并清空 `local_path`；相册那份已丢失的条目一律不动。
+     - `ClipDownApp` 启动时在 IO 线程跑一次并记录回收量。
+  6. **单测**：新增 `DownloadConfigSubDirTest`（7 例）锁定子目录规整——空值回落、反斜杠归一、绝对路径剥离、路径穿越丢弃、盘符丢弃、默认删除私有副本。
+- 改动文件：
+  - 新增 `downloader/src/main/kotlin/com/clipdown/downloader/model/FileAvailability.kt`
+  - 新增 `downloader/src/test/kotlin/com/clipdown/downloader/DownloadConfigSubDirTest.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/model/TaskModels.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/storage/MediaStoreWriter.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/DownloadEngine.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/db/TaskDatabase.kt`
+  - `app/src/main/java/com/clipdown/app/data/SettingsRepository.kt`
+  - `app/src/main/java/com/clipdown/app/ClipDownApp.kt`
+  - `app/src/main/java/com/clipdown/app/ui/downloads/DownloadsScreen.kt`
+  - `app/src/main/java/com/clipdown/app/ui/settings/SettingsScreen.kt`
+  - `PROGRESS.md` / `HANDOFF.md`
+- 验收对照：
+  - ✅ 可自定义下载路径：设置页新增目录名输入，支持 `ClipDown/视频` 这类子目录；
+  - ✅ 不再无故占双份：新下载只留相册一份；老数据启动时自动回收；
+  - ✅ 文件移走后历史仍保留：条目不清除，缩略图回落到封面，标记「内容已丢失」，预览按钮禁用；
+  - ✅ 文件存在时功能不变：`Available` 走原有预览/分享/外部打开全链路。
+- 测试结果：
+  - 单测 **188 例全绿**（parser 111 + downloader **44**（新增 7）+ app 33）；
+  - `:app:compileDebugKotlin` / `assembleDebug` / `assembleRelease` 均成功。
+- 已知边界：
+  - 检测依赖实际探测，列表滚动有 3 秒缓存；文件在 App 运行期间被移走，最多 3 秒后状态刷新（切后台再回来也会刷新）。
+  - `saveToAlbum = false` 时成品仅存私有目录，卸载 App 会一并丢失（这是关闭相册保存的必然代价，设置页文案已说明）。
+- 本次文档更新时间：11.18 02:38

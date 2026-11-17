@@ -100,6 +100,43 @@ class DownloadEngine(
         config = newConfig
     }
 
+    /**
+     * 清理「历史遗留双份」（阶段 84，一次性）。
+     *
+     * 升级前每个下载都会同时留下相册副本与私有副本，占双份空间。
+     * 只有在**确认相册那份确实可读**时才删私有副本并把 `local_path` 置空；
+     * 相册那份已丢失的条目一律不动——否则会把用户唯一能找回的位置也抹掉。
+     *
+     * @return 实际释放的字节数
+     */
+    fun cleanupLegacyDualCopies(): Long {
+        var freed = 0L
+        runCatching {
+            db.listLegacyDualCopies().forEach { (id, path) ->
+                val task = db.get(id) ?: return@forEach
+                val albumReadable = task.localUri?.let { uriStr ->
+                    runCatching {
+                        context.contentResolver.openAssetFileDescriptor(
+                            android.net.Uri.parse(uriStr), "r"
+                        )?.use { it.length }
+                    }.getOrNull() != null
+                } ?: false
+                if (!albumReadable) return@forEach
+
+                val f = File(path)
+                val size = if (f.exists()) f.length() else 0L
+                if (f.exists() && f.delete()) {
+                    freed += size
+                    db.clearLocalPath(id)
+                }
+            }
+            if (freed > 0) repository.refresh()
+        }.onFailure {
+            android.util.Log.w("DownloadEngine", "清理历史双份文件失败", it)
+        }
+        return freed
+    }
+
     fun activeCount(): Int {
         val dbCount = runCatching { db.activeCount() }.getOrDefault(0)
         // 自愈防护：若内存中当前无作业且任务队列已空，但数据库由于历史崩溃/异常仍残留非终态任务，
@@ -294,20 +331,41 @@ class DownloadEngine(
         )
         db.get(task.id)?.let { notifier.notifyMerging(it) }
 
+        // 阶段 84：相册是唯一实体，私有目录只做中转。
+        // 旧实现把文件复制进相册后**没有删除源文件**，于是同一份内容同时占
+        // filesDir/downloads 与 Movies/ClipDown 两份空间 —— 这就是「双份存储」的根因。
+        // 文件大小必须在删除前取快照，否则 delete 之后 length() 会变成 0。
+        val finalBytes = target.length()
         val uri = if (config.saveToAlbum) {
-            MediaStoreWriter.save(context, target, task.fileName, task.mimeType)
+            MediaStoreWriter.save(
+                context,
+                target,
+                task.fileName,
+                task.mimeType,
+                subDir = config.normalizedSubDir(MediaStoreWriter.DEFAULT_APP_DIR)
+            )
         } else null
+
+        // 只有「相册写入成功」才允许删除私有副本；
+        // 相册关闭或写入失败时必须保留，否则用户会一份都拿不到。
+        val albumSaved = uri != null
+        val privateKept = !(albumSaved && config.deletePrivateCopyAfterSave)
+        if (albumSaved && config.deletePrivateCopyAfterSave) {
+            MediaStoreWriter.deletePrivateCopy(target)
+        }
 
         db.markCompleted(
             id = task.id,
-            localPath = target.absolutePath,
+            // localPath 只在「私有副本仍存在」时记录，否则它会指向一个已被删除的文件，
+            // 让 UI 误判"文件还在私有目录"（阶段 84 的可用性判定依赖这个语义）
+            localPath = if (privateKept) target.absolutePath else null,
             localUri = uri?.toString(),
             mimeType = task.mimeType,
-            totalBytes = target.length()
+            totalBytes = finalBytes
         )
         // 终态事件：悬浮窗等订阅方依赖它把 UI 切到"下载完成"
         _progress.tryEmit(
-            ProgressEvent(task.id, target.length(), target.length(), 0, DownloadStatus.COMPLETED)
+            ProgressEvent(task.id, finalBytes, finalBytes, 0, DownloadStatus.COMPLETED)
         )
         tmpDir.deleteRecursively()
     }

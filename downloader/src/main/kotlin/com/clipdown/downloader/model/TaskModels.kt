@@ -70,5 +70,34 @@ data class DownloadConfig(
     val readTimeoutMs: Long = 30_000,
     val maxRetry: Int = 3,
     /** 分片下载失败后的重试退避基数 */
-    val retryBackoffMs: Long = 1_500L
-)
+    val retryBackoffMs: Long = 1_500L,
+    /**
+     * 自定义保存子目录（阶段 84）。
+     *
+     * 语义：**相对公共媒体根目录**的路径，例如 `ClipDown` / `ClipDown/视频` / `MyVault/ClipDown`。
+     * - 留空或 null → 使用默认 `ClipDown`
+     * - 只允许相对路径（自动剥掉开头的 `/` 与盘符），防止越权写到别处
+     * - 视频仍落在 Movies 下、图片落 Pictures、音频落 Music，只是再往下多一层自定义目录
+     */
+    val saveSubDir: String? = null,
+    /**
+     * 是否在入库相册成功后**删除私有目录副本**（阶段 84 消除双份存储）。
+     *
+     * 必须为 true（默认）：相册里的那份就是唯一实体，私有目录只作为下载中的临时中转。
+     * 只有 `saveToAlbum = false` 时私有副本才是唯一实体、不能删。
+     */
+    val deletePrivateCopyAfterSave: Boolean = true
+) {
+    /** 规整后的子目录：剥掉绝对路径前缀与多余斜杠，为空时回落到默认值 */
+    fun normalizedSubDir(default: String = "ClipDown"): String {
+        val raw = saveSubDir?.trim().orEmpty()
+        if (raw.isEmpty()) return default
+        return raw
+            .replace('\\', '/')
+            .trimStart('/')
+            .split('/')
+            .filter { it.isNotBlank() && it != "." && it != ".." && !it.contains(':') }
+            .joinToString("/")
+            .ifBlank { default }
+    }
+}

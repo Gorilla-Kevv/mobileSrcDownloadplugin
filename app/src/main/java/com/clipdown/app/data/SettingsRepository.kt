@@ -34,6 +34,8 @@ class SettingsRepository(private val context: Context) {
         val WIFI_ONLY = booleanPreferencesKey("wifi_only")
         val MAX_CONCURRENT = intPreferencesKey("max_concurrent")
         val SAVE_ALBUM = booleanPreferencesKey("save_album")
+        /** 自定义保存子目录（相对公共媒体根，阶段 84）；空串表示使用默认 ClipDown */
+        val SAVE_SUB_DIR = stringPreferencesKey("save_sub_dir")
         val REMOTE_ENDPOINT = stringPreferencesKey("remote_endpoint")
         val REMOTE_TOKEN = stringPreferencesKey("remote_token")
         val REMOTE_ENABLED = booleanPreferencesKey("remote_enabled")
@@ -53,6 +55,9 @@ class SettingsRepository(private val context: Context) {
     val wifiOnly: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.WIFI_ONLY] ?: false }
     val maxConcurrent: Flow<Int> = context.settingsDataStore.data.map { it[Keys.MAX_CONCURRENT] ?: 3 }
     val saveToAlbum: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.SAVE_ALBUM] ?: true }
+
+    /** 自定义保存子目录（阶段 84）：空串 = 默认 `ClipDown` */
+    val saveSubDir: Flow<String> = context.settingsDataStore.data.map { it[Keys.SAVE_SUB_DIR] ?: "" }
     val remoteEndpoint: Flow<String> = context.settingsDataStore.data.map { it[Keys.REMOTE_ENDPOINT] ?: DEFAULT_REMOTE }
     val remoteToken: Flow<String> = context.settingsDataStore.data.map { it[Keys.REMOTE_TOKEN] ?: "" }
     val remoteEnabled: Flow<Boolean> = context.settingsDataStore.data.map { it[Keys.REMOTE_ENABLED] ?: false }
@@ -75,6 +80,14 @@ class SettingsRepository(private val context: Context) {
     suspend fun setWifiOnly(value: Boolean) = edit { it[Keys.WIFI_ONLY] = value }
     suspend fun setMaxConcurrent(value: Int) = edit { it[Keys.MAX_CONCURRENT] = value.coerceIn(1, 8) }
     suspend fun setSaveToAlbum(value: Boolean) = edit { it[Keys.SAVE_ALBUM] = value }
+
+    /**
+     * 保存自定义子目录（阶段 84）。
+     *
+     * 规整规则与 `DownloadConfig.normalizedSubDir` 保持一致：剥掉绝对路径前缀、
+     * 丢弃 `.`/`..` 与盘符段，避免用户误填 `/sdcard/...` 这类绝对路径导致写到别处。
+     */
+    suspend fun setSaveSubDir(value: String) = edit { it[Keys.SAVE_SUB_DIR] = sanitizeSubDir(value) }
     suspend fun setRemoteEndpoint(value: String) = edit { it[Keys.REMOTE_ENDPOINT] = value.trim() }
     suspend fun setRemoteToken(value: String) = edit { it[Keys.REMOTE_TOKEN] = value.trim() }
     suspend fun setRemoteEnabled(value: Boolean) = edit { it[Keys.REMOTE_ENABLED] = value }
@@ -107,7 +120,9 @@ class SettingsRepository(private val context: Context) {
         remoteToken = context.settingsDataStore.data.map { it[Keys.REMOTE_TOKEN] ?: "" }.first(),
         enabledPlatforms = parsePlatforms(context.settingsDataStore.data.map { it[Keys.ENABLED_PLATFORMS] }.first()),
         maxConcurrent = context.settingsDataStore.data.map { it[Keys.MAX_CONCURRENT] ?: 3 }.first(),
-        wifiOnly = context.settingsDataStore.data.map { it[Keys.WIFI_ONLY] ?: false }.first()
+        wifiOnly = context.settingsDataStore.data.map { it[Keys.WIFI_ONLY] ?: false }.first(),
+        saveToAlbum = context.settingsDataStore.data.map { it[Keys.SAVE_ALBUM] ?: true }.first(),
+        saveSubDir = context.settingsDataStore.data.map { it[Keys.SAVE_SUB_DIR] ?: "" }.first()
     )
 
     fun parserConfig(): ParserConfig = ParserConfig(
@@ -124,6 +139,15 @@ class SettingsRepository(private val context: Context) {
     private fun parsePlatforms(raw: String?): Set<String> =
         if (raw.isNullOrBlank()) emptySet() else raw.split(',').map { it.trim() }.filter { it.isNotEmpty() }.toSet()
 
+    /** 子目录规整：只保留安全的相对路径段 */
+    private fun sanitizeSubDir(raw: String): String =
+        raw.replace('\\', '/')
+            .trimStart('/')
+            .split('/')
+            .filter { it.isNotBlank() && it != "." && it != ".." && !it.contains(':') }
+            .joinToString("/")
+            .take(80)
+
     data class SettingsSnapshot(
         val floatEnabled: Boolean,
         val remoteEnabled: Boolean,
@@ -131,7 +155,11 @@ class SettingsRepository(private val context: Context) {
         val remoteToken: String,
         val enabledPlatforms: Set<String>,
         val maxConcurrent: Int,
-        val wifiOnly: Boolean
+        val wifiOnly: Boolean,
+        /** 是否把成品写入相册（阶段 84 起真正生效；关闭时私有目录副本为唯一实体） */
+        val saveToAlbum: Boolean = true,
+        /** 自定义保存子目录（空串 = 默认 ClipDown） */
+        val saveSubDir: String = ""
     )
 
     companion object {
