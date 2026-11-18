@@ -108,4 +108,126 @@ class XParserTest {
         assertEquals("IMAGE", img.kind.name)
         assertTrue("应拼接 orig 原图参数: ${img.url}", img.url.endsWith("?format=jpg&name=orig"))
     }
+
+    // ── 阶段 85：混合推文（图+视频）必须两类都拿到 ─────────────────────────────
+
+    /**
+     * 用户反馈的核心场景：推文同时有视频和图片，但 syndication 只下发 photos[]，
+     * 不下发 video_info.variants。旧实现因为 `media.isEmpty()` 为 false 而跳过兜底，
+     * 导致视频永远丢失。现在必须走 fxTwitter 把视频补回来。
+     */
+    @Test
+    fun `混合推文 syndication 只给图片时 由镜像补齐视频`() {
+        val syndication = """
+            {"text":"mixed tweet","user":{"name":"Mixed"},
+             "entities":{"media":[{"url":"https://t.co/abc"}]},
+             "photos":[{"url":"https://pbs.twimg.com/media/AAA.jpg"}]}
+        """.trimIndent()
+        val fx = """
+            {"code":200,"tweet":{"id":"2094077925989515691",
+             "media":{"all":[
+               {"type":"photo","url":"https://pbs.twimg.com/media/AAA.jpg?name=orig"},
+               {"type":"video","variants":[
+                 {"url":"https://video.twimg.com/ext_tw_video/1/pu/vid/720x1280/high.mp4","bitrate":2176000},
+                 {"url":"https://video.twimg.com/ext_tw_video/1/pu/vid/480x854/low.mp4","bitrate":632000}
+               ]}
+             ]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok(syndication)
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+
+        val videos = r.media.filter { it.kind.name == "VIDEO" }
+        val images = r.media.filter { it.kind.name == "IMAGE" }
+        assertTrue("混合推文必须解析出视频: ${r.media.map { it.kind }}", videos.isNotEmpty())
+        assertTrue("混合推文必须保留图片", images.isNotEmpty())
+        assertEquals("视频应有两个清晰度变体", 2, videos.size)
+        assertTrue("应说明由镜像补齐: ${r.warning}", r.warning?.contains("补齐") == true)
+    }
+
+    /** 反向场景：syndication 只给视频、缺图片，也要由镜像补图 */
+    @Test
+    fun `混合推文 syndication 只给视频时 由镜像补齐图片`() {
+        val syndication = """
+            {"text":"mixed","user":{"name":"M"},
+             "entities":{"media":[{"url":"https://t.co/abc"}]},
+             "mediaDetails":[{"video_info":{"variants":[
+               {"url":"https://video.twimg.com/a/high.mp4","content_type":"video/mp4","bitrate":2000000}
+             ]}}]}
+        """.trimIndent()
+        val fx = """
+            {"code":200,"tweet":{"media":{"all":[
+               {"type":"video","variants":[{"url":"https://video.twimg.com/a/high.mp4","bitrate":2000000}]},
+               {"type":"photo","url":"https://pbs.twimg.com/media/BBB.jpg"}
+            ]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok(syndication)
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        assertTrue(r.media.any { it.kind.name == "VIDEO" })
+        assertTrue("缺图片时应由镜像补图", r.media.any { it.kind.name == "IMAGE" })
+    }
+
+    /** 镜像把同一张图再给一遍时不能产生重复条目 */
+    @Test
+    fun `镜像补齐时按 URL 去重 不产生重复图片`() {
+        val syndication = """
+            {"text":"m","user":{"name":"M"},
+             "entities":{"media":[{"url":"https://t.co/x"}]},
+             "photos":[{"url":"https://pbs.twimg.com/media/SAME.jpg"}]}
+        """.trimIndent()
+        val fx = """
+            {"code":200,"tweet":{"media":{"all":[
+               {"type":"photo","url":"https://pbs.twimg.com/media/SAME.jpg?name=orig"},
+               {"type":"photo","url":"https://pbs.twimg.com/media/SAME.jpg"},
+               {"type":"video","variants":[{"url":"https://video.twimg.com/v.mp4","bitrate":1000000}]}
+            ]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok(syndication)
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        val images = r.media.filter { it.kind.name == "IMAGE" }
+        assertEquals("同一张图只能出现一次", 1, images.size)
+        assertEquals("视频应被补进来", 1, r.media.count { it.kind.name == "VIDEO" })
+    }
+
+    /** 两类都齐全时不应再请求镜像（避免多余网络开销） */
+    @Test
+    fun `两类媒体齐全时不再请求镜像`() {
+        val syndication = """
+            {"text":"full","user":{"name":"F"},
+             "entities":{"media":[{"url":"https://t.co/x"}]},
+             "mediaDetails":[{"video_info":{"variants":[
+               {"url":"https://video.twimg.com/a.mp4","content_type":"video/mp4","bitrate":1000000}
+             ]}}],
+             "photos":[{"url":"https://pbs.twimg.com/media/C.jpg"}]}
+        """.trimIndent()
+        var fxCalled = false
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok(syndication)
+                req.contains("fxtwitter") -> { fxCalled = true; notFound() }
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        assertTrue(r.media.any { it.kind.name == "VIDEO" })
+        assertTrue(r.media.any { it.kind.name == "IMAGE" })
+        assertTrue("齐全时不应再打镜像", !fxCalled)
+    }
 }

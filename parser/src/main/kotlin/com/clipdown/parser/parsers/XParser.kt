@@ -64,7 +64,7 @@ class XParser : PlatformParser {
         val media = mutableListOf<MediaItem>()
         val xHeaders = mapOf("Referer" to "https://x.com/")
 
-        root["mediaDetails"]?.jsonArray?.forEach { el ->
+        root["mediaDetails"]?.jsonArray?.forEachIndexed { mi, el ->
             val o = el.jsonObject
             val variants = o["video_info"]?.jsonObject?.get("variants")?.jsonArray
             variants?.mapNotNull { v ->
@@ -76,11 +76,12 @@ class XParser : PlatformParser {
                 u to bitrate
             }?.sortedByDescending { it.second }?.forEachIndexed { i, (u, bitrate) ->
                 media += MediaItem(
-                    id = "x-v-$i",
+                    id = "x-v-$mi-$i",
                     url = u,
                     kind = MediaKind.VIDEO,
                     quality = bitrateLabel(bitrate, i),
-                    rank = 100 - i,
+                    // 多个视频时按「第几个视频」分段，避免不同视频的变体 rank 撞车
+                    rank = 100 - mi * 10 - i,
                     container = "mp4",
                     mimeType = "video/mp4",
                     headers = xHeaders
@@ -106,14 +107,32 @@ class XParser : PlatformParser {
 
         // syndication 拿不到媒体时的兜底：第三方公开镜像 fxTwitter（2026-10 实测可用，
         // 它给的是 pbs.twimg.com 直链）。敏感内容标记 / 较老推文 / 已下线媒体都能覆盖
+        //
+        // 阶段 85 修正：**混合推文（图+视频）里 syndication 常常只下发 photos[]，
+        // 不下发 video_info.variants**。旧条件是 `media.isEmpty()`，于是图片一有值
+        // 就跳过兜底，视频永远丢失。现在改为「缺哪一类就补哪一类」，并按 URL 去重合并。
         var warning: String? = null
-        if (media.isEmpty()) {
+        val hasVideo = media.any { it.kind == MediaKind.VIDEO }
+        val hasImage = media.any { it.kind == MediaKind.IMAGE }
+        // 推文声明了媒体实体，但某一类没拿到 → 值得再问一次镜像
+        val declaredMedia = root["entities"]?.jsonObject?.containsKey("media") == true ||
+            root["mediaDetails"] != null
+        val needFallback = media.isEmpty() || (declaredMedia && (!hasVideo || !hasImage))
+
+        if (needFallback) {
             val fallback = fetchFxMedia(tweetId, ctx)
             if (fallback.isNotEmpty()) {
-                media += fallback
-                warning = "该推文的媒体未随公开 syndication 接口下发（常见于敏感内容标记或较老的推文），" +
-                    "已改由第三方镜像 fxTwitter 获取"
-                ctx.log(id, "fxTwitter 兜底命中：媒体 ${fallback.size} 项")
+                val added = mergeMissingMedia(media, fallback)
+                if (added > 0) {
+                    warning = if (media.isEmpty()) {
+                        "该推文的媒体未随公开 syndication 接口下发（常见于敏感内容标记或较老的推文），" +
+                            "已改由第三方镜像 fxTwitter 获取"
+                    } else {
+                        "公开接口只下发了部分媒体（缺少${if (!hasVideo) "视频" else "图片"}），" +
+                            "已由第三方镜像 fxTwitter 补齐 $added 项"
+                    }
+                    ctx.log(id, "fxTwitter 兜底命中：新增 $added 项，合计 ${media.size} 项")
+                }
             }
         }
 
@@ -150,6 +169,35 @@ class XParser : PlatformParser {
             warning = warning
         )
     }
+
+    /**
+     * 把镜像结果里**主通道缺失的媒体**合并进来，按规范化 URL 去重。
+     *
+     * 为什么不能直接 `media += fallback`：
+     * 混合推文里主通道已经拿到了图片，镜像会把同一批图片再给一遍，
+     * 直接追加会产生重复条目（用户看到两张一样的图）。
+     *
+     * 去重键用「去掉 query 的路径」：同一张图在两个通道里可能带不同的
+     * `?name=orig` / `?format=jpg` 参数，但路径相同即同一资源。
+     *
+     * @return 实际新增的条目数
+     */
+    private fun mergeMissingMedia(target: MutableList<MediaItem>, extra: List<MediaItem>): Int {
+        val seen = target.mapTo(mutableSetOf()) { mediaKey(it.url) }
+        var added = 0
+        extra.forEach { item ->
+            val key = mediaKey(item.url)
+            if (seen.add(key)) {
+                target += item
+                added++
+            }
+        }
+        return added
+    }
+
+    /** 媒体去重键：剥掉 query 与 fragment，只保留主机+路径 */
+    private fun mediaKey(url: String): String =
+        url.substringBefore('?').substringBefore('#').trimEnd('/').lowercase()
 
     /**
      * 兜底通道：第三方公开镜像 fxTwitter（`api.fxtwitter.com/i/status/<id>`，免登录）。
@@ -202,7 +250,8 @@ class XParser : PlatformParser {
                             url = u,
                             kind = MediaKind.VIDEO,
                             quality = bitrateLabel(bitrate, vi),
-                            rank = 100 - vi,
+                            // 多个视频时按「第几个视频」分段，避免不同视频的变体 rank 撞车
+                            rank = 100 - i * 10 - vi,
                             container = "mp4",
                             mimeType = "video/mp4",
                             headers = xHeaders

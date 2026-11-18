@@ -2084,3 +2084,39 @@
   - 检测依赖实际探测，列表滚动有 3 秒缓存；文件在 App 运行期间被移走，最多 3 秒后状态刷新（切后台再回来也会刷新）。
   - `saveToAlbum = false` 时成品仅存私有目录，卸载 App 会一并丢失（这是关闭相册保存的必然代价，设置页文案已说明）。
 - 本次文档更新时间：11.18 02:38
+
+
+## 阶段 85 X 混合推文（图+视频）视频丢失修复 [计划时间：11.18 14:00 BY Antigravity][完成时间：11.18 14:08 BY Antigravity]
+- 背景（用户反馈）：解析 X 链接时，推文里同时有视频和图片，但**只解析出图片、视频丢失**。
+- 根因确诊（`XParser.kt`）：
+  - 主通道 syndication 对**混合推文**常常只下发 `photos[]`，**不下发 `mediaDetails[].video_info.variants`**；
+  - 而 fxTwitter 兜底的触发条件是 `if (media.isEmpty())` —— 图片一有值，`media` 就非空，
+    于是**兜底被整体跳过**，视频永远拿不到。这是「只解析了图片」的直接原因。
+  - 附带发现：主通道与镜像通道的视频 `rank` 都用 `100 - i`，**多个视频时不同视频的变体会撞 rank**，
+    导致排序/默认选中错乱。
+- 已完成：
+  1. **兜底条件改为「缺哪一类补哪一类」**：
+     - 新增判定 `hasVideo` / `hasImage` / `declaredMedia`（`entities.media` 或 `mediaDetails` 存在即视为声明了媒体）；
+     - `needFallback = media.isEmpty() || (declaredMedia && (!hasVideo || !hasImage))`；
+     - 两类齐全时**不再请求镜像**，避免多余网络开销。
+  2. **按 URL 去重合并**（`mergeMissingMedia`）：
+     - 镜像会把主通道已拿到的图片再给一遍，直接 `+=` 会产生重复条目；
+     - 去重键 = 剥掉 query/fragment 的主机+路径（同一张图在两通道可能带不同 `?name=orig` / `?format=jpg`）；
+     - 只追加缺失项，并返回实际新增数用于文案。
+  3. **文案分诊**：完全无媒体 → 沿用原「未随公开接口下发」说明；部分缺失 → 「公开接口只下发了部分媒体（缺少视频/图片），已由 fxTwitter 补齐 N 项」。
+  4. **rank 分段**：主通道 `100 - mi*10 - i`、镜像 `100 - i*10 - vi`，多视频不再撞车；主通道视频 id 也带上媒体序号 `x-v-$mi-$i`。
+  5. **单测新增 4 例**（`XParserTest` 8 → 12）：
+     - `混合推文 syndication 只给图片时 由镜像补齐视频`（用户反馈的核心场景）
+     - `混合推文 syndication 只给视频时 由镜像补齐图片`（反向场景）
+     - `镜像补齐时按 URL 去重 不产生重复图片`
+     - `两类媒体齐全时不再请求镜像`（用 FakeHttp 计数断言未打镜像）
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/XParser.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/XParserTest.kt`
+  - `PROGRESS.md` / `HANDOFF.md`
+- 测试结果：
+  - `XParserTest` **12 例全绿**；
+  - 全量单测 **192 例全绿**（parser **115** + downloader 44 + app 33）；
+  - `assembleDebug` / `assembleRelease` 均成功。
+- 说明：本次只改解析层，不涉及存储与 UI；混合推文现在会正确进入图集多选模式（`isAlbumMultiSelect` 由 media 种类决定，图+视频天然为 true）。
+- 本次文档更新时间：11.18 14:08
