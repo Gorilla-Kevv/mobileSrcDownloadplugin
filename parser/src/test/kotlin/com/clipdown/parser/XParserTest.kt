@@ -230,4 +230,103 @@ class XParserTest {
         assertTrue(r.media.any { it.kind.name == "IMAGE" })
         assertTrue("齐全时不应再打镜像", !fxCalled)
     }
+
+    // ── 阶段 86：GIF 必须能下载 ────────────────────────────────────────────────
+
+    /**
+     * 用户反馈「gif 不会下载」。
+     *
+     * X 的 GIF 有两种下发形态：
+     * 1. `variants` 里同时给 `.mp4`（转码后）与 `.gif`（原始动图）；
+     * 2. 只给 `.gif`。
+     *
+     * 旧实现用 `filter { url.contains(".mp4") }` 硬过滤，只给 `.gif` 时
+     * 变体列表被清空 → 该 GIF 整条丢失，表现为「gif 下载不了」。
+     */
+    @Test
+    fun `GIF 只有 gif 原文件时也要解析出来`() {
+        val fx = """
+            {"code":200,"tweet":{"media":{"all":[
+               {"type":"gif","url":"https://pbs.twimg.com/tweet_video/ABC.gif",
+                "variants":[{"url":"https://video.twimg.com/tweet_video/ABC.gif","bitrate":0}]}
+            ]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok("""{"text":"gif","user":{"name":"G"}}""")
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        assertTrue("GIF 必须被解析出来: ${r.media.map { it.url }}", r.media.isNotEmpty())
+        val gif = r.media.first()
+        assertTrue("应保留 .gif 直链: ${gif.url}", gif.url.contains(".gif"))
+        assertEquals("gif", gif.container)
+    }
+
+    /** GIF 同时给 mp4 与 gif 时，优先 mp4（体积更小、相册可直接播），但 gif 作为备选保留 */
+    @Test
+    fun `GIF 同时有 mp4 与 gif 时两者都保留且 mp4 优先`() {
+        val fx = """
+            {"code":200,"tweet":{"media":{"all":[
+               {"type":"gif","variants":[
+                 {"url":"https://video.twimg.com/tweet_video/ABC.mp4","bitrate":0},
+                 {"url":"https://video.twimg.com/tweet_video/ABC.gif","bitrate":0}
+               ]}
+            ]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok("""{"text":"gif","user":{"name":"G"}}""")
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        assertEquals("两种形态都要保留", 2, r.media.size)
+        assertTrue("mp4 应排名更高（优先）", r.media.first().url.contains(".mp4"))
+        assertTrue("gif 作为备选保留", r.media.any { it.url.contains(".gif") })
+    }
+
+    /** GIF 的 MIME 必须标成 image/gif（否则会被当成视频写入 Movies/ 且播放器打不开） */
+    @Test
+    fun `GIF 的 mimeType 是 image gif 而不是 video mp4`() {
+        val fx = """
+            {"code":200,"tweet":{"media":{"all":[
+               {"type":"gif","variants":[{"url":"https://video.twimg.com/tweet_video/ABC.gif","bitrate":0}]}
+            ]}}}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok("""{"text":"gif","user":{"name":"G"}}""")
+                req.contains("fxtwitter") -> ok(fx)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        val gif = r.media.first { it.url.contains(".gif") }
+        assertEquals("image/gif", gif.mimeType)
+    }
+
+    /** 主通道 syndication 的 content_type 可能是 image/gif，同样不能被过滤 */
+    @Test
+    fun `主通道 content_type 为 image gif 时也能解析出 GIF`() {
+        val syndication = """
+            {"text":"gif","user":{"name":"G"},
+             "mediaDetails":[{"video_info":{"variants":[
+               {"url":"https://video.twimg.com/tweet_video/XYZ.gif","content_type":"image/gif","bitrate":0}
+             ]}}]}
+        """.trimIndent()
+        val http = FakeHttp { req ->
+            when {
+                req.contains("syndication") -> ok(syndication)
+                else -> notFound()
+            }
+        }
+        val r = parser.parse("https://x.com/a/status/2094077925989515691", testContext(http))
+        val gif = r.media.single()
+        assertEquals("image/gif", gif.mimeType)
+        assertEquals("gif", gif.container)
+    }
 }

@@ -2120,3 +2120,38 @@
   - `assembleDebug` / `assembleRelease` 均成功。
 - 说明：本次只改解析层，不涉及存储与 UI；混合推文现在会正确进入图集多选模式（`isAlbumMultiSelect` 由 media 种类决定，图+视频天然为 true）。
 - 本次文档更新时间：11.18 14:08
+
+
+## 阶段 86 GIF 动图无法解析与下载修复 [计划时间：11.21 14:38 BY Antigravity][完成时间：11.21 14:48 BY Antigravity]
+- 背景（用户反馈）：GIF 不会下载。
+- 根因确诊（两条独立的丢媒体路径 + 一条静默损坏）：
+  1. **镜像通道硬过滤 `.mp4`**（`XParser.fetchFxMedia`）：X 的 GIF 有两种下发形态——① `variants` 同时给 `.mp4`（转码）与 `.gif`（原始）；② 只给 `.gif`。旧代码 `filter { url.contains(".mp4") }` 在形态② 时把变体列表清空，整条 GIF 消失。
+  2. **主通道硬过滤 `content_type`**（`XParser.parse`）：旧代码 `if (!ct.contains("mp4")) continue`，而 GIF 的 `content_type` 可能是 `image/gif`，同样被丢弃。
+  3. **GIF 缺少完整性校验**：`MediaIntegrityValidator` 只有 JPEG / PNG 分支，GIF 被截断时不会触发重试，用户拿到裂图却显示「已完成」。
+- 已完成：
+  1. **两条通道都接受 GIF**：
+     - 主通道按 `content_type` 或 URL 后缀判定 `isMp4` / `isGif`，两者都收；
+     - 镜像通道允许 `.mp4` / `.gif` / `.webm`；
+     - 排序规则：**mp4 优先**（相册可直接播、体积通常更小），gif 作为备选保留。
+  2. **GIF 归类为 `MediaKind.IMAGE` + `mimeType=image/gif`**：
+     - 这是关键修正。若标成 `VIDEO`，下载侧会把文件写进 `Movies/`，系统图库反而打不开动图；
+     - 归为 IMAGE 后走 `Pictures/`，相册可正常预览动图，UI 也显示为图片而非视频。
+  3. **补齐 GIF 完整性校验**（`MediaIntegrityValidator`）：
+     - 头部必须是 `GIF87a` / `GIF89a`（拦下「HTML 错误页被存成 .gif」）；
+     - 尾部 64 字节内必须有 Trailer `0x3B`（拦下截断）；
+     - mime 缺失时按 `.gif` 后缀兜底识别。
+  4. **单测新增 9 例**：
+     - `XParserTest` 5 例（12 → 17）：`GIF 只有 gif 原文件时也要解析出来`、`GIF 同时有 mp4 与 gif 时两者都保留且 mp4 优先`、`GIF 的 mimeType 是 image gif 而不是 video mp4`、`主通道 content_type 为 image gif 时也能解析出 GIF`；
+     - `MediaIntegrityValidatorTest` 4 例（7 → 11）：`valid gif passes`、`html 头被拒`、`截断被拒`、`按后缀兜底识别`。
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/XParser.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/XParserTest.kt`
+  - `downloader/src/main/kotlin/com/clipdown/downloader/engine/MediaIntegrityValidator.kt`
+  - `downloader/src/test/kotlin/com/clipdown/downloader/engine/MediaIntegrityValidatorTest.kt`
+  - `PROGRESS.md` / `HANDOFF.md`
+- 测试结果：
+  - `XParserTest` **17 例全绿**、`MediaIntegrityValidatorTest` **11 例全绿**；
+  - 全量单测 **201 例全绿**（parser **120** + downloader **48** + app 33）；
+  - `assembleDebug` / `assembleRelease` 均成功。
+- 已知边界：GIF 与同名视频同时存在时（X 常见），会在列表里同时出现「动图 MP4」与「GIF 原图」两项，由用户自选；这是有意保留（mp4 兼容性更好、gif 保真），不是重复。
+- 本次文档更新时间：11.21 14:48

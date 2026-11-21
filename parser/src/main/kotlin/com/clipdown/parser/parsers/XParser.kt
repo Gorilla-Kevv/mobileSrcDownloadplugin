@@ -66,27 +66,38 @@ class XParser : PlatformParser {
 
         root["mediaDetails"]?.jsonArray?.forEachIndexed { mi, el ->
             val o = el.jsonObject
+            // 阶段 86：GIF 的 content_type 可能是 image/gif，也可能是 video/mp4 的转码；
+            // 旧实现要求 content_type 含 mp4，会把只给 image/gif 的动图整条丢掉。
             val variants = o["video_info"]?.jsonObject?.get("variants")?.jsonArray
             variants?.mapNotNull { v ->
                 val vo = v.jsonObject
                 val u = vo.str("url") ?: return@mapNotNull null
-                val ct = vo.str("content_type") ?: ""
-                if (!ct.contains("mp4")) return@mapNotNull null
-                val bitrate = vo.int("bitrate") ?: 0
-                u to bitrate
-            }?.sortedByDescending { it.second }?.forEachIndexed { i, (u, bitrate) ->
-                media += MediaItem(
-                    id = "x-v-$mi-$i",
-                    url = u,
-                    kind = MediaKind.VIDEO,
-                    quality = bitrateLabel(bitrate, i),
-                    // 多个视频时按「第几个视频」分段，避免不同视频的变体 rank 撞车
-                    rank = 100 - mi * 10 - i,
-                    container = "mp4",
-                    mimeType = "video/mp4",
-                    headers = xHeaders
-                )
+                val ct = (vo.str("content_type") ?: "").lowercase()
+                val base = u.substringBefore('?').lowercase()
+                val isMp4 = ct.contains("mp4") || base.endsWith(".mp4")
+                val isGif = ct.contains("gif") || base.endsWith(".gif")
+                if (!isMp4 && !isGif) return@mapNotNull null
+                Triple(u, vo.int("bitrate") ?: 0, isGif && !isMp4)
             }
+                // mp4 优先（相册可直接播），gif 作为备选保留
+                ?.sortedWith(
+                    compareByDescending<Triple<String, Int, Boolean>> { !it.third }
+                        .thenByDescending { it.second }
+                )
+                ?.forEachIndexed { i, (u, bitrate, isGifOnly) ->
+                    media += MediaItem(
+                        id = "x-v-$mi-$i",
+                        url = u,
+                        // GIF 归 IMAGE：写 Pictures/ 相册可播动图；标 VIDEO 会被塞进 Movies/ 打不开
+                        kind = if (isGifOnly) MediaKind.IMAGE else MediaKind.VIDEO,
+                        quality = if (isGifOnly) "GIF 原图" else bitrateLabel(bitrate, i),
+                        // 多个视频时按「第几个视频」分段，避免不同视频的变体 rank 撞车
+                        rank = 100 - mi * 10 - i,
+                        container = if (isGifOnly) "gif" else "mp4",
+                        mimeType = if (isGifOnly) "image/gif" else "video/mp4",
+                        headers = xHeaders
+                    )
+                }
             // 注：mediaDetails[].photo_info 已被上游移除（2026-10 实测为 undefined），
             // 图片统一走下方 photos[] 通道
         }
@@ -240,20 +251,47 @@ class XParser : PlatformParser {
                     )
                 }
                 type == "video" || type == "gif" || type == "animated_gif" -> {
-                    val variants = o["variants"]?.jsonArray
-                        ?.mapNotNull { v -> v.jsonObject.str("url")?.let { u -> u to (v.jsonObject.int("bitrate") ?: 0) } }
-                        ?.filter { it.first.contains(".mp4") }
-                        ?.sortedByDescending { it.second }
-                    variants?.forEachIndexed { vi, (u, bitrate) ->
+                    val isGifLike = type != "video"
+                    // 阶段 86：GIF 不能只留 mp4。
+                    // X 的动图有两种下发形态：① variants 同时给 .mp4（转码）与 .gif（原始）；
+                    // ② 只给 .gif。旧实现硬过滤 contains(".mp4")，形态② 时变体列表被清空，
+                    // 整条 GIF 直接消失（用户反馈「gif 不会下载」）。
+                    val candidates = o["variants"]?.jsonArray
+                        ?.mapNotNull { v ->
+                            v.jsonObject.str("url")?.let { u -> u to (v.jsonObject.int("bitrate") ?: 0) }
+                        }
+                        // 只接受视频/动图容器；webm 与 m3u8 在这里没有意义
+                        ?.filter { (u, _) ->
+                            val base = u.substringBefore('?').lowercase()
+                            base.endsWith(".mp4") || base.endsWith(".gif") || base.endsWith(".webm")
+                        }
+                        // mp4 优先（相册可直接播、体积通常更小），gif 作为备选保留
+                        ?.sortedWith(
+                            compareByDescending<Pair<String, Int>> {
+                                it.first.substringBefore('?').lowercase().endsWith(".mp4")
+                            }.thenByDescending { it.second }
+                        )
+                        .orEmpty()
+
+                    candidates.forEachIndexed { vi, (u, bitrate) ->
+                        val isGifFile = u.substringBefore('?').lowercase().endsWith(".gif")
                         out += MediaItem(
                             id = "x-fx-v-$i-$vi",
                             url = u,
-                            kind = MediaKind.VIDEO,
-                            quality = bitrateLabel(bitrate, vi),
-                            // 多个视频时按「第几个视频」分段，避免不同视频的变体 rank 撞车
+                            // GIF 归为 IMAGE：下载侧据此写入 Pictures（相册可播动图），
+                            // 若标成 VIDEO 会被塞进 Movies/，系统图库反而打不开。
+                            kind = if (isGifFile) MediaKind.IMAGE else MediaKind.VIDEO,
+                            quality = when {
+                                isGifFile -> if (isGifLike) "GIF 原图" else "GIF 备选"
+                                bitrate > 0 -> bitrateLabel(bitrate, vi)
+                                isGifLike -> "动图 MP4"
+                                else -> bitrateLabel(bitrate, vi)
+                            },
+                            // 同一媒体内 mp4 排在 gif 前；跨媒体按 i 分段避免撞车
                             rank = 100 - i * 10 - vi,
-                            container = "mp4",
-                            mimeType = "video/mp4",
+                            // 关键：gif 必须标 image/gif，否则会被写进 Movies/ 且播放器打不开
+                            container = if (isGifFile) "gif" else "mp4",
+                            mimeType = if (isGifFile) "image/gif" else "video/mp4",
                             headers = xHeaders
                         )
                     }

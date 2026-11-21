@@ -111,4 +111,59 @@ class MediaIntegrityValidatorTest {
             assertTrue(e.message?.contains("IEND") == true)
         }
     }
+
+    // ── 阶段 86：GIF 完整性校验 ────────────────────────────────────────────────
+
+    private fun validGif(): ByteArray = buildList {
+        addAll("GIF89a".toByteArray(Charsets.US_ASCII).toList())
+        // 模拟调色板/图像数据
+        repeat(16) { add(0x00) }
+        add(0x3B) // Trailer
+    }.toByteArray()
+
+    @Test
+    fun `valid gif passes validation`() {
+        val file = File(tempDir, "ok.gif").apply { writeBytes(validGif()) }
+        MediaIntegrityValidator.validate(file, mimeType = "image/gif")
+    }
+
+    /** 头部不是 GIF87a/GIF89a 说明拿到的是 HTML 错误页，必须拦下 */
+    @Test
+    fun `gif with html header throws exception`() {
+        val html = "<!DOCTYPE html><html><body>403</body></html>".toByteArray()
+        val file = File(tempDir, "err.gif").apply { writeBytes(html) }
+        try {
+            MediaIntegrityValidator.validate(file, mimeType = "image/gif")
+            fail("Expected DownloadHttpException for HTML masquerading as GIF")
+        } catch (e: DownloadHttpException) {
+            assertTrue("应提示文件头无效: ${e.message}", e.message?.contains("文件头") == true)
+        }
+    }
+
+    /** 被截断的 GIF（缺 Trailer 0x3B）必须触发重试，而不是静默标完成 */
+    @Test
+    fun `truncated gif missing trailer throws exception`() {
+        val truncated = "GIF89a".toByteArray(Charsets.US_ASCII) + ByteArray(32) { 0x11 }
+        val file = File(tempDir, "half.gif").apply { writeBytes(truncated) }
+        try {
+            MediaIntegrityValidator.validate(file, mimeType = "image/gif")
+            fail("Expected DownloadHttpException for truncated GIF")
+        } catch (e: DownloadHttpException) {
+            assertTrue("应提示数据被截断: ${e.message}", e.message?.contains("截断") == true)
+        }
+    }
+
+    /** 扩展名兜底：mime 缺失时按 .gif 后缀也要走校验 */
+    @Test
+    fun `gif detected by extension when mime missing`() {
+        val file = File(tempDir, "by-ext.gif").apply {
+            writeBytes("GIF89a".toByteArray(Charsets.US_ASCII) + ByteArray(8))
+        }
+        try {
+            MediaIntegrityValidator.validate(file, mimeType = null)
+            fail("Expected exception: 后缀为 .gif 时必须走 GIF 校验")
+        } catch (e: DownloadHttpException) {
+            assertTrue(e.message?.contains("截断") == true)
+        }
+    }
 }

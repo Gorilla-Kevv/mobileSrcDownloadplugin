@@ -14,6 +14,7 @@ import java.io.RandomAccessFile
  * 2. JPEG 格式完整性（重点）：必须以 SOI (0xFF, 0xD8) 起始，且文件尾部 256 字节内必须含有 EOI (0xFF, 0xD9) 结束标记；
  *    若未检测到 EOI，判定为传输中断截断的残缺图片，抛出 [DownloadHttpException] 触发断点续传或重试；
  * 3. PNG 格式完整性：必须以 PNG 魔数起始，且尾部 128 字节内必须含有 IEND chunk。
+ * 4. GIF 格式完整性（阶段 86）：头部必须是 GIF87a/GIF89a，尾部必须有 Trailer 0x3B。
  */
 object MediaIntegrityValidator {
 
@@ -35,11 +36,45 @@ object MediaIntegrityValidator {
         val name = file.name.lowercase()
         val isJpeg = mime.contains("jpeg") || mime.contains("jpg") || name.endsWith(".jpg") || name.endsWith(".jpeg")
         val isPng = mime.contains("png") || name.endsWith(".png")
+        val isGif = mime.contains("gif") || name.endsWith(".gif")
 
         if (isJpeg && actualLength >= 4) {
             validateJpeg(file, actualLength)
         } else if (isPng && actualLength >= 16) {
             validatePng(file, actualLength)
+        } else if (isGif && actualLength >= 6) {
+            validateGif(file, actualLength)
+        }
+    }
+
+    /**
+     * GIF 完整性校验（阶段 86 补齐）。
+     *
+     * 之前完全没有 GIF 分支：动图下载被截断时不会触发重试，
+     * 用户拿到一张裂图却显示"已完成"。这里校验两件事：
+     * 1. 头部必须是 `GIF87a` 或 `GIF89a`（拒绝把 HTML 错误页当动图存下来）；
+     * 2. 尾部必须出现块结束符 `0x3B`（Trailer），允许尾部有少量填充。
+     */
+    private fun validateGif(file: File, length: Long) {
+        RandomAccessFile(file, "r").use { raf ->
+            val header = ByteArray(6)
+            raf.readFully(header)
+            val magic = String(header, Charsets.US_ASCII)
+            if (magic != "GIF87a" && magic != "GIF89a") {
+                throw DownloadHttpException(-1, "无效的 GIF 文件头（可能是错误页而非动图）")
+            }
+
+            // 尾部 64 字节内找 Trailer (0x3B)
+            val checkSize = minOf(length, 64L).toInt()
+            raf.seek(length - checkSize)
+            val tail = ByteArray(checkSize)
+            raf.readFully(tail)
+            if (tail.none { it == 0x3B.toByte() }) {
+                throw DownloadHttpException(
+                    -1,
+                    "GIF 动图数据被截断：未读取到结束块（文件受损/仅接收到部分图像）"
+                )
+            }
         }
     }
 
