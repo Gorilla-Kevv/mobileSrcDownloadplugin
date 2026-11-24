@@ -1,16 +1,16 @@
 # PROGRESS
 
 ## 进度看板
-- 当前正在开发任务：**阶段 86 已完成：GIF 动图解析与下载修复（主/镜像通道不再硬过滤 mp4 · GIF 归 IMAGE+image/gif 写入相册 · 补齐 GIF 完整性校验）**
-- 上一阶段：阶段 85 X 混合推文（图+视频）视频丢失修复；阶段 84 存储治理（自定义路径/消除双份/历史与文件存在性解耦）；阶段 83 配对方向纠错 + 注入按钮错位修复；阶段 82 结构性坏味道收敛；阶段 81 设计令牌全面收敛；阶段 80 代码评审三项高危修复
-- 下一阶段任务：多端端到端走查与新特性真机体验（重点复测 X 混合推文 / GIF / 文件丢失后的历史展示 / 自定义保存目录）
+- 当前正在开发任务：**阶段 89 已完成：交付文档复核（阶段 88 状态固化 · 未发布标记 · 测试基线核对）**
+- 上一阶段：阶段 88 小红书笔记下载识别修复（2026-11 noteData 作用域 · ci/originVideoKey 长期直链 · 404 守卫）；阶段 87 交付文档全量校准；阶段 86 GIF 动图解析与下载修复；阶段 85 X 混合推文（图+视频）视频丢失修复
+- 下一阶段任务：真机与扩展浏览器端到端复验小红书笔记识别；多端走查（X 混合推文 / GIF / 文件丢失后的历史展示 / 自定义保存目录）
 - 可提前进行的任务：加载更多透传 cursor 减少重扫
-- 未完成的任务：IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证；`content-script.js` 单文件过大（需先引入扩展构建步骤再拆）
-- 测试基线：parser **119 例** + downloader **52 例** + app **30 例**全绿（共 **201 例**）
+- 未完成的任务：阶段 88 真机 App 与浏览器扩展端到端复验；IG 主页实测；XHS 主页回归（会话 Cookie 已失效，非代码问题）；其他平台主页；应用内更新真机端到端验证；`content-script.js` 单文件过大（需先引入扩展构建步骤再拆）
+- 测试基线：parser **123 例** + downloader **52 例** + app **30 例**全绿（共 **205 例**）
 - 当前线上版本：**v1.1.36（versionCode 41）**，2026-11-21 发布
 - 说明：BY ZCode / Qoder / Antigravity（本项目全程编码系 agent，含前序会话）；历史"修复 8/9/10/11/12"已并入对应阶段条目（8→16、9→18、10 系列→22-25、11→28、12→29）
 - 旧编号对照：原阶段 9/10 时间交错重排为 10/11；原 12-18→13-19；原 19/20→20/21；原 20 返工→21；原修复 10 系列→22-25；原 21a→26、原 21b→27；原修复 11→28；原修复 12→29；本 session 新增阶段 30（release 装机冒烟+新坑 14）
-- 本次文档更新时间：11.24 14:12
+- 本次文档更新时间：11.24 20:21
 
 ## 阶段 1 应用完整实现（三模块/解析内核/下载引擎/四通道/悬浮窗） [计划时间：09.25 20:00 BY ZCode][完成时间：09.26 17:36 BY ZCode]
 - 已完成：
@@ -2184,3 +2184,45 @@
   - 文档中所有测试数字与实测一致；阶段条目严格升序（79→80→…→87）。
 - 说明：本轮**纯文档**，无代码改动；`version.properties` 保持 1.1.36(41)，不触发新发布。
 - 本次文档更新时间：11.24 14:20
+
+## 阶段 88 小红书笔记下载识别全部失效修复（2026-11 SSR 结构 / 长期媒体直链 / 失效页守卫）[计划时间：11.24 15:20 BY Antigravity][完成时间：11.24 16:24 BY Antigravity]
+- 背景：用户反馈小红书链接「下载识别全部失效」。实测当前线上笔记页仍能正常返回 SSR，但解析器取错了数据作用域，且图片/视频直链形态已改版。
+- 根因（四条叠加）：
+  1. **笔记主数据路径变更**：2026-11 线上结构为 `__INITIAL_STATE__.noteData.data.noteData`；旧实现取页面第一个 `"imageList"` 的 ±3000 字符窗口，常先命中 `feed.undertakeNote[].noteCard` 或推荐流，导致标题/作者/图片全部取错。
+  2. **图片直链过期**：旧 `sns-webpic` 直链带前缀签名，当前返回 403；有效路径是按 `fileId` 生成 `https://ci.xiaohongshu.com/<fileId>?imageView2/format/jpeg`。
+  3. **视频直链过期且可能拿错**：旧实现全页取第一个 `"video":{...}` 并只用签名 `masterUrl`；现在优先 `video.consumer.originVideoKey` → `https://sns-video-bd.xhscdn.com/<key>`，转码流从 `stream.<codec>[].backupUrls[0] ?: masterUrl` 补齐。
+  4. **失效页未识别**：笔记失效会落到 `/404/sec_...?source=xhs_sec_server`，页面可能只有「小红书」标题并含 `notFoundPage` / `error.code=300031`，旧 title 守卫抓不到，随后把推荐流当图集返回。
+- 已完成：
+  1. `XiaohongshuParser` 新增 `resolveNoteScope()`：`noteData.data.noteData` → `noteDetailMap[noteId].note` / 最后一个 note → 顶层 `note` → URL noteId 匹配的 `noteCard`；标题/作者/描述/图片/视频/封面全部限定在笔记作用域内提取。
+  2. 图片改由 `fileId` 生成 `ci.xiaohongshu.com` 长期直链（旧 URL 仅作最后兜底）；视频按 `originVideoKey` 优先、stream 清晰度按 `height` 排序补齐；纯视频帖仍只保留视频，不把封面帧当图集。
+  3. 新增 `/404/`、`xhs_sec_server`、`/login`、`website-login`、`notFoundPage`、`300031` 守卫；安全页文案明确提示「重新复制带 `xsec_token` 的分享链接 / 补充 Cookie」。
+  4. 解析时的 `Referer + Cookie + User-Agent` 全量透传到图片、视频、LivePhoto 与 `coverHeaders`；部分原图/视频没有会话头会 403。
+  5. WebView 轮询探针识别 `"imageList"` / `noteDetailMap`，图集页不再白等约 40 秒；直连探测也认 `noteData + noteId`。
+  6. 浏览器扩展同步修复：按括号配对提取完整 `imageList`、限定当前笔记作用域、`fileId → ci`、`originVideoKey → sns-video-bd`；卡片保留 `xsec_token`，不再用泛 `svg` 把图片卡片误判成视频/MP4。
+- 改动文件：
+  - `parser/src/main/kotlin/com/clipdown/parser/parsers/XiaohongshuParser.kt`
+  - `parser/src/test/kotlin/com/clipdown/parser/XiaohongshuParserTest.kt`
+  - `app/src/main/java/com/clipdown/app/clip/WebViewHtmlFetcher.kt`
+  - `extension/content/content-script.js`
+  - `PROGRESS.md` / `HANDOFF.md` / `README.md`
+- 测试结果：
+  - `XiaohongshuParserTest` **18 例全绿**（新增 4 例：2026-11 `noteData` 结构 + ci 图片直链 + Cookie 透传；`noteDetailMap` 优先于 feed 卡片；`originVideoKey` 视频直链；`/404/sec` 安全页文案）。
+  - `./gradlew.bat test` 全量通过：parser **123** + downloader **52** + app **30** = **205 例**（按 `TEST-*.xml` 的 `tests=` 实测求和）。
+  - `:app:assembleDebug` 成功；`node --check extension/content/content-script.js` 与 `node scripts/check-inject-js.js` 通过。
+  - 真实线上页主机冒烟：noteId `6af4031300000000250120ea` 解析出 2 张图，均为 `https://ci.xiaohongshu.com/notes_pre_post/...`，实测 HTTP 200 / `image/jpeg`；标题与作者正确。
+  - 用真实 HTML 跑扩展提取：`images=2 videos=0`，两张均为 ci 直链；合成视频 SSR 正确得到 `https://sns-video-bd.xhscdn.com/stream/1/110/abc.mp4`。
+- 已知边界：本轮完成主机侧真实页面与单测验证，**尚未做真机 App 与浏览器扩展的端到端复验**；旧分享链接若已落 `/404/sec`，修复后返回明确失效文案而不是推荐流。未改 `version.properties`，当前线上仍为 `v1.1.36（versionCode 41）`，本轮未发布。
+- 本次文档更新时间：11.24 16:28
+
+## 阶段 89 交付文档复核（阶段 88 状态固化 / 未发布标记 / 测试基线核对）[计划时间：11.24 20:18 BY Antigravity][完成时间：11.24 20:21 BY Antigravity]
+- 背景：用户要求再次更新交付文档。本轮只做阶段 88 完成后的状态复核与文档校准，不改代码、不改版本号。
+- 已完成：
+  1. `PROGRESS.md` 看板切换到阶段 89，补记阶段 88 的 小红书笔记识别修复摘要；测试基线保持 **205 例**（parser 123 + downloader 52 + app 30）；当前线上版本保持 `v1.1.36（versionCode 41）`，阶段 88 未发布。
+  2. `HANDOFF.md` 状态区同步为「阶段 89 文档复核」，阶段 88 改为上轮记录；确认阶段 88 的 7 个修改文件仍在工作区、无新增未跟踪文件、无版本号变更。
+  3. `README.md` 版本行标注「阶段 88 未发布；阶段 89 文档复核完成」，能力表与 205 例测试基线不变，不新增功能描述。
+  4. 阶段序列复核：阶段 1-89 严格升序、无重复；阶段 88 的测试结论、真机/扩展未复验边界与发布状态均与看板一致。
+- 未完成：阶段 88 的真机 App 与浏览器扩展端到端复验；本阶段未重复运行测试（无代码改动，沿用 16:24 `./gradlew.bat test` 的 205 例全绿结果与 `:app:assembleDebug` 成功结果）。
+- 改动文件：`PROGRESS.md` / `HANDOFF.md` / `README.md`（纯文档）。
+- 风险：未做真机/扩展端到端验证；工作区改动尚未提交，未发布。
+- 下一阶段入口：真机安装 debug APK 或重载扩展，使用当前带 `xsec_token` 的小红书分享链接复测图集、视频与失效链接文案。
+- 本次文档更新时间：11.24 20:21

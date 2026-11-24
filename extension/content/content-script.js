@@ -42,6 +42,65 @@
     return bestUrl;
   }
 
+  // 小红书 2026-11：旧 sns-webpic 前缀签名会过期（403），fileId 对应的 ci 图片服务长期可用。
+  function decodeXhsJsonString(value) {
+    return String(value || "")
+      .replace(/\\u002F/gi, "/")
+      .replace(/\\\//g, "/")
+      .replace(/\\u003D/gi, "=")
+      .replace(/\\u0026/gi, "&");
+  }
+
+  function xhsCiImageUrl(raw) {
+    if (!raw) return "";
+    let id = decodeXhsJsonString(raw).trim();
+    if (/^https?:\/\//i.test(id)) {
+      const noQuery = id.split("?")[0].split("!")[0];
+      const marker = noQuery.indexOf("/notes_pre_post/");
+      id = marker >= 0 ? noQuery.slice(marker + 1) : noQuery.split("/").pop();
+    }
+    id = id.split("?")[0].split("!")[0].replace(/^\/+/, "").trim();
+    return id ? `https://ci.xiaohongshu.com/${id}?imageView2/format/jpeg` : "";
+  }
+
+  function xhsOriginVideoUrl(raw) {
+    const key = decodeXhsJsonString(raw).trim().replace(/^\/+/, "");
+    if (!key) return "";
+    return /^https?:\/\//i.test(key) ? key : `https://sns-video-bd.xhscdn.com/${key}`;
+  }
+
+  // 从 SSR 文本中按括号配对取 JSON 数组；旧正则 `\[.*?\]` 会在 infoList 的第一个 `]` 提前截断。
+  function extractJsonArrayByKey(text, key, from = 0) {
+    const re = new RegExp('"' + key + '"\\s*:\\s*\\[');
+    const match = re.exec(text.slice(from));
+    if (!match) return null;
+    const start = from + match.index + match[0].lastIndexOf("[");
+    let depth = 0;
+    let inStr = false;
+    let escaped = false;
+    for (let i = start; i < text.length; i++) {
+      const ch = text[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (ch === "\\" && inStr) {
+        escaped = true;
+        continue;
+      }
+      if (ch === '"') {
+        inStr = !inStr;
+        continue;
+      }
+      if (!inStr && ch === "[") depth++;
+      else if (!inStr && ch === "]") {
+        depth--;
+        if (depth === 0) return { text: text.slice(start, i + 1), end: i };
+      }
+    }
+    return null;
+  }
+
   function isProfileOrLikesPage() {
     const path = window.location.pathname.toLowerCase();
     const href = window.location.href.toLowerCase();
@@ -475,29 +534,37 @@
         }
       });
     } else if (IS_XIAOHONGSHU) {
-      document.querySelectorAll('section.note-item, .note-item, a[href*="/explore/"]').forEach(el => {
-        const a = el.tagName === "A" ? el : el.querySelector('a[href*="/explore/"]');
+      document.querySelectorAll('section.note-item, .note-item, a[href*="/explore/"], a[href*="/discovery/item/"]').forEach(el => {
+        const a = el.tagName === "A" ? el : el.querySelector('a[href*="/explore/"], a[href*="/discovery/item/"]');
         if (!a) return;
         const href = a.getAttribute("href") || "";
-        const m = href.match(/\/explore\/([a-zA-Z0-9_-]+)/);
+        const m = href.match(/\/(?:explore|discovery\/item)\/([a-zA-Z0-9_-]+)/);
         if (m) {
           const noteId = m[1];
           if (!seenCodes.has(noteId)) {
             seenCodes.add(noteId);
+            // 保留卡片链接里的 xsec_token：2026-11 起裸 /explore/<id> 会落到 /404 安全页。
+            let noteUrl = `https://www.xiaohongshu.com/explore/${noteId}`;
+            try {
+              noteUrl = new URL(href, window.location.origin).href;
+            } catch (_) {}
             const img = el.querySelector("img");
             let cover = img ? img.src : "";
-            if (cover) cover = cover.replace(/![a-zA-Z0-9_-]+$/, "");
+            if (cover && /^https?:\/\//i.test(cover)) cover = xhsCiImageUrl(cover) || cover;
             const titleEl = el.querySelector(".title, .footer .name, span");
             const title = titleEl ? titleEl.textContent.trim() : `小红书笔记 (${noteId})`;
-            const isVideo = !!el.querySelector(".play-icon, svg");
+            // 不能再用泛 `svg` 判断：卡片上的收藏/更多图标会让图片笔记全部误判成视频，
+            // 后续按 .mp4 保存一张 JPG。只认明确的播放角标。
+            const isVideo = !!el.querySelector(".play-icon, .video-icon, [class*='play-icon'], [class*='video-icon']");
             harvested.push({
               platform: "xiaohongshu",
               shortcode: noteId,
-              url: `https://www.xiaohongshu.com/explore/${noteId}`,
+              url: noteUrl,
               title,
               author: document.querySelector(".user-name, .author-name")?.textContent.trim() || "小红书博主",
               cover,
-              items: cover ? [{ url: cover, type: isVideo ? "video" : "image", label: isVideo ? "视频封面" : "无水印大图", ext: isVideo ? "mp4" : "jpg" }] : [],
+              // 卡片层只拿得到封面图，不能把 JPG 标成 mp4；视频正文交给单帖解析器。
+              items: cover ? [{ url: cover, type: "image", label: isVideo ? "视频封面" : "无水印大图", ext: "jpg" }] : [],
               isVideo
             });
           }
@@ -600,38 +667,70 @@
       const match = window.location.pathname.match(/\/(explore|discovery\/item)\/([a-zA-Z0-9_-]+)/);
       const noteId = match ? match[2] : null;
 
-      const videos = [];
-      document.querySelectorAll("video").forEach(v => {
-        if (v.src && v.src.startsWith("http") && !videos.includes(v.src)) {
-          videos.push(v.src);
-        }
-      });
-
-      const images = [];
-      // 1. 优先从页内 __INITIAL_STATE__ 深度抽取完整原图列表
+      // 优先限定在当前笔记的 SSR 作用域：页面里还可能有 feed 推荐流，
+      // 直接从第一个 imageList 取会把推荐笔记的图混进来。
+      let scope = "";
       try {
         const scripts = document.querySelectorAll("script");
         for (const s of scripts) {
-          if (s.textContent.includes("__INITIAL_STATE__") && s.textContent.includes("imageList")) {
-            const m = s.textContent.match(/"imageList"\s*:\s*(\[.*?\])/);
-            if (m) {
-              const re = /"(?:urlDefault|url)"\s*:\s*"([^"]+)"/g;
-              let sm;
-              while ((sm = re.exec(m[1])) !== null) {
-                const u = sm[1].replace(/\\u002F/g, "/").replace(/!.*$/, "").split("?")[0];
-                if (u && !images.includes(u)) images.push(u);
-              }
-            }
-            break;
-          }
+          const text = s.textContent || "";
+          if (!text.includes("__INITIAL_STATE__")) continue;
+          const noteDataIdx = text.indexOf('"noteData"');
+          const detailIdx = text.indexOf('"noteDetailMap"');
+          const candidates = [];
+          // noteDetailMap 一定是笔记详情；noteData 在首页配置里也存在，故有 detail 时优先。
+          if (detailIdx >= 0) candidates.push(text.slice(detailIdx));
+          if (noteDataIdx >= 0) candidates.push(text.slice(noteDataIdx));
+          candidates.push(text);
+          scope = candidates.find(part => extractJsonArrayByKey(part, "imageList")) || candidates[0];
+          break;
         }
       } catch (_) {}
 
+      const videos = [];
+      const addVideo = (url) => {
+        const clean = decodeXhsJsonString(url).trim();
+        if (/^https?:\/\//i.test(clean) && !videos.includes(clean)) videos.push(clean);
+      };
+      if (scope) {
+        let originMatch;
+        const originRe = /"originVideoKey"\s*:\s*"([^"]+)"/g;
+        while ((originMatch = originRe.exec(scope)) !== null) addVideo(xhsOriginVideoUrl(originMatch[1]));
+        if (!videos.length) {
+          let masterMatch;
+          const masterRe = /"masterUrl"\s*:\s*"([^"]+)"/g;
+          while ((masterMatch = masterRe.exec(scope)) !== null) addVideo(masterMatch[1]);
+        }
+      }
+      if (!videos.length) {
+        document.querySelectorAll("video").forEach(v => {
+          if (v.src && v.src.startsWith("http")) addVideo(v.src);
+        });
+      }
+
+      const images = [];
+      const addImage = (url) => {
+        const clean = xhsCiImageUrl(url);
+        if (clean && !images.includes(clean)) images.push(clean);
+      };
+      // 1. 优先从当前笔记的 imageList 按 fileId 生成 ci 长期直链
+      if (scope) {
+        const arr = extractJsonArrayByKey(scope, "imageList");
+        if (arr) {
+          let fileMatch;
+          const fileRe = /"fileId"\s*:\s*"([^"]+)"/g;
+          while ((fileMatch = fileRe.exec(arr.text)) !== null) addImage(fileMatch[1]);
+          if (!images.length) {
+            let urlMatch;
+            const urlRe = /"(?:urlDefault|urlPre|url)"\s*:\s*"([^"]+)"/g;
+            while ((urlMatch = urlRe.exec(arr.text)) !== null) addImage(urlMatch[1]);
+          }
+        }
+      }
+
       // 2. DOM 兜底
-      document.querySelectorAll('img[src*="sns-webpic"]').forEach(img => {
-        let src = img.src;
-        src = src.replace(/![a-zA-Z0-9_-]+$/, "");
-        if (!images.includes(src)) images.push(src);
+      document.querySelectorAll('img[src*="sns-webpic"], img[src*="ci.xiaohongshu.com"]').forEach(img => {
+        if (img.src && /^https?:\/\//i.test(img.src)) addImage(img.src);
       });
 
       return {
@@ -946,7 +1045,7 @@
 
           const img = noteEl.querySelector("img");
           let cover = img ? img.src : "";
-          if (cover) cover = cover.replace(/![a-zA-Z0-9_-]+$/, "");
+          if (cover && /^https?:\/\//i.test(cover)) cover = xhsCiImageUrl(cover) || cover;
           const title = noteEl.querySelector(".title, .name")?.textContent.trim() || "小红书笔记";
 
           if (cover) {

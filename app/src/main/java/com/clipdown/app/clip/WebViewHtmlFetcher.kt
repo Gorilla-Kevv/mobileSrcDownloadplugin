@@ -190,6 +190,7 @@ object WebViewHtmlFetcher {
                 attempt++
                 val curUrl = v.url ?: ""
                 val isIg = curUrl.contains("instagram.com")
+                val isXhs = curUrl.contains("xiaohongshu.com")
                 if (isIg) installIgHook(v)
                 val isReel = curUrl.contains("/reel/", ignoreCase = true) || curUrl.contains("/reels/", ignoreCase = true)
                 val js = if (isIg) {
@@ -200,13 +201,15 @@ object WebViewHtmlFetcher {
                 v.evaluateJavascript(js) { raw ->
                     val page = runCatching { JSONTokener(raw).nextValue() as? String }.getOrNull()
                     if (page != null) {
-                        val hasMedia = if (isReel) {
-                            page.contains("video_versions") || page.contains("video_url") ||
+                        val hasMedia = when {
+                            // 小红书图集页没有 <video>/og:video，媒体只在 SSR 的 imageList /
+                            // noteDetailMap 里；旧探针不认这两个标记，图集页必然白等到超时。
+                            isXhs -> page.contains("\"imageList\"") || page.contains("noteDetailMap")
+                            isReel -> page.contains("video_versions") || page.contains("video_url") ||
                                 page.contains("playable_url") || page.contains("browser_native") ||
                                 page.contains("og:video") || page.contains("<video") ||
                                 (page.contains("<<<IG_PAGES>>>") && !page.endsWith("<<<IG_PAGES>>>[]"))
-                        } else {
-                            page.contains("video_versions") || page.contains("video_url") ||
+                            else -> page.contains("video_versions") || page.contains("video_url") ||
                                 page.contains("image_versions2") || page.contains("xig_polaris_media") ||
                                 page.contains("playable_url") || page.contains("og:video") || page.contains("<video")
                         }

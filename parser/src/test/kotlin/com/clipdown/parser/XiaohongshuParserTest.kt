@@ -45,7 +45,7 @@ class XiaohongshuParserTest {
         assertEquals("xiaohongshu", result.platform.id)
         val images = result.media.filter { it.kind.name == "IMAGE" }
         assertTrue("应从 urlDefault 提取到图片: ${result.media.size}", images.isNotEmpty())
-        assertTrue(images.all { !it.url.contains("?") })  // 裁剪参数被去掉
+        assertTrue("图片应使用 ci 长期直链: ${images.map { it.url }}", images.all { it.url.startsWith("https://ci.xiaohongshu.com/") })
     }
 
     @Test
@@ -98,7 +98,7 @@ class XiaohongshuParserTest {
         val images = result.media.filter { it.kind.name == "IMAGE" }
         // 夹具实际是 2 张图（urlDefault/urlPre 各 4 条），去重后应为 2
         assertEquals("图集不应出现重复图: ${images.map { it.url }}", 2, images.size)
-        assertTrue("应保留默认画质 urlDefault: ${images.map { it.url }}", images.all { it.url.contains("nd_dft") })
+        assertTrue("应保留默认画质 fileId: ${images.map { it.url }}", images.all { it.url.contains("https://ci.xiaohongshu.com/notes_pre_post/") })
     }
 
     /**
@@ -386,4 +386,128 @@ class XiaohongshuParserTest {
         assertTrue("图文与视频混合笔记必须判为多选图集模式", result.isAlbumMultiSelect)
         assertEquals("混合作品集", result.title)
     }
+
+    /**
+     * 2026-11 线上结构：笔记数据在 `noteData.data.noteData`，页面里还有 `feed` 推荐流。
+     * 必须只取笔记作用域，并由 fileId 生成新的 ci 图片直链；媒体请求要透传 Cookie。
+     */
+    @Test
+    fun `2026-11 线上 noteData 结构 生成 ci 图片直链并透传 Cookie`() {
+        val state = """
+            window.__INITIAL_STATE__={"feed":{"feeds":[{"noteCard":{"noteId":"feed1","imageList":[{"fileId":"notes_pre_post\u002FFEED","urlDefault":"http://sns-webpic-qc.xhscdn.com/f/notes_pre_post/FEED!nd_dft.jpg"}]}}]},
+            "noteData":{"routeQuery":{"xsec_token":"T"},"data":{"noteData":{
+            "noteId":"6af4031300000000250120ea","type":"normal","title":"招聘","desc":"正文",
+            "imageList":[
+            {"fileId":"notes_pre_post\u002FAAA","livePhoto":false,"stream":{},"url":"http://sns-webpic-qc.xhscdn.com/202611241605/a/notes_pre_post/AAA!h5_1080jpg"},
+            {"fileId":"notes_pre_post\u002FBBB","livePhoto":false,"stream":{},"url":"http://sns-webpic-qc.xhscdn.com/202611241605/b/notes_pre_post/BBB!h5_1080jpg"}],
+            "user":{"userId":"u1","nickName":"出版社"},"cover":{"fileId":"notes_pre_post\u002FAAA"}}}}}
+        """.trimIndent()
+        val html = "<html><head><title>XHS</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=seed20261124;path=/"), "")
+            } else ok(html)
+        }
+        val cookie = "a1=abc; web_session=sess"
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/explore/6af4031300000000250120ea?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to cookie))
+        )
+
+        assertEquals("招聘", result.title)
+        assertEquals("出版社", result.author)
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals("只能取笔记作用域的两张图: ${images.map { it.url }}", 2, images.size)
+        assertEquals(
+            "https://ci.xiaohongshu.com/notes_pre_post/AAA?imageView2/format/jpeg",
+            images[0].url
+        )
+        assertEquals(
+            "https://ci.xiaohongshu.com/notes_pre_post/BBB?imageView2/format/jpeg",
+            images[1].url
+        )
+        assertTrue("图片 URL 不应再指向旧 sns-webpic: ${images.map { it.url }}", images.none { it.url.contains("sns-webpic") })
+        assertEquals("https://www.xiaohongshu.com/", images[0].headers["Referer"])
+        assertTrue("媒体请求必须透传登录 Cookie: ${images[0].headers}", images[0].headers["Cookie"]!!.contains("web_session=sess"))
+        assertTrue("媒体请求应保留预热种子: ${images[0].headers}", images[0].headers["Cookie"]!!.contains("acw_tc=seed20261124"))
+    }
+
+    /** noteDetailMap 才是笔记详情权威节点；页面更前面的 feed.noteCard 不能抢占作用域。 */
+    @Test
+    fun `noteDetailMap 优先于前面的 feed noteCard`() {
+        val state = """
+            window.__INITIAL_STATE__={"feed":{"undertakeNote":{"items":[{"noteCard":{"noteId":"6ab7ffb0000000000b006b28","type":"normal","title":"卡片标题",
+            "imageList":[{"fileId":"card","urlDefault":"http://sns-webpic-qc.xhscdn.com/c/notes_pre_post/CARD!nd_dft.jpg"}]}}]}},
+            "note":{"noteDetailMap":{"6ab7ffb0000000000b006b28":{"note":{"noteId":"6ab7ffb0000000000b006b28","type":"normal","title":"详情标题",
+            "user":{"nickName":"详情作者"},
+            "imageList":[{"fileId":"detail","urlDefault":"http://sns-webpic-qc.xhscdn.com/d/notes_pre_post/DETAIL!nd_dft.jpg"}]}}}}}
+        """.trimIndent()
+        val html = "<html><head><title>XHS</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=seed;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/explore/6ab7ffb0000000000b006b28?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+
+        val images = result.media.filter { it.kind.name == "IMAGE" }
+        assertEquals("只能取 noteDetailMap 的图: ${images.map { it.url }}", 1, images.size)
+        assertEquals("https://ci.xiaohongshu.com/detail?imageView2/format/jpeg", images[0].url)
+        assertEquals("详情标题", result.title)
+        assertEquals("详情作者", result.author)
+    }
+
+    /** 视频优先用 consumer.originVideoKey 生成长期有效的 sns-video-bd 直链。 */
+    @Test
+    fun `视频 originVideoKey 优先生成 sns-video-bd 直链`() {
+        val state = """
+            window.__INITIAL_STATE__={"note":{"noteId":"6ac05cc4000000001b02d811","type":"video","title":"视频","user":{"nickName":"作者"},
+            "video":{"consumer":{"originVideoKey":"stream/1/110/abc.mp4"},"media":{"stream":{"h264":[
+            {"masterUrl":"http://sns-video-v4.xhscdn.com/fallback.mp4","backupUrls":["http://sns-bak-v1.xhscdn.com/bak.mp4"],"height":720}]}}},
+            "imageList":[{"fileId":"cover1","urlDefault":"http://sns-webpic.xhscdn.com/cover1!nd_dft.jpg"}]}}
+        """.trimIndent()
+        val html = "<html><head><title>XHS</title></head><body><script>$state</script></body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=seed;path=/"), "")
+            } else ok(html)
+        }
+        val result = parser.parse(
+            "https://www.xiaohongshu.com/discovery/item/6ac05cc4000000001b02d811?xsec_token=T",
+            testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+        )
+
+        val videos = result.media.filter { it.kind.name == "VIDEO" }
+        assertEquals("https://sns-video-bd.xhscdn.com/stream/1/110/abc.mp4", videos.first().url)
+        assertTrue("备用清晰度也要保留: ${videos.map { it.url }}", videos.any { it.url.contains("bak.mp4") || it.url.contains("fallback.mp4") })
+        assertTrue("视频封面不能作为独立图片: ${result.media.map { it.url }}", result.media.none { it.kind.name == "IMAGE" })
+        assertTrue("单视频帖应走自动下载", !result.isAlbumMultiSelect)
+    }
+
+    /** /404/sec_ 安全校验页必须给出可操作文案，不能落进推荐流。 */
+    @Test
+    fun `404 安全校验页 提示重新复制分享链接`() {
+        val html = "<html><head><title>XHS</title></head><body>" +
+            "<script>window.__INITIAL_STATE__={\"noteData\":{\"data\":{}},\"notFoundPage\":{\"noteType\":\"normal\"},\"error\":{\"code\":300031}}</script>" +
+            "</body></html>"
+        val http = FakeHttp { url ->
+            if (url == "https://www.xiaohongshu.com/") {
+                HttpResponse(200, "home", headersOf("Set-Cookie", "acw_tc=seed;path=/"), "")
+            } else ok(html)
+        }
+        val err = runCatching {
+            parser.parse(
+                "https://www.xiaohongshu.com/explore/6ab7ffb0000000000b006b27?xsec_token=OLD",
+                testContext(http, cookies = mapOf(Platform.XIAOHONGSHU to "a1=abc"))
+            )
+        }.exceptionOrNull()
+        assertTrue("应判定为失效安全页: $err", err is ParseException)
+        assertTrue("文案应说明笔记不存在: ${err?.message}", err!!.message!!.contains("笔记不存在"))
+        assertTrue("文案应提示重新复制链接: ${err.message}", err.message!!.contains("重新复制"))
+        assertTrue("文案应提示 xsec_token: ${err.message}", err.message!!.contains("xsec_token"))
+    }
+
 }
