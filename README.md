@@ -86,7 +86,7 @@ mobileSrcDownloadplugin/
 
 ## 四、能力一览
 
-> 当前线上版本：**v1.1.36（versionCode 41）** · 工作区含阶段 88（未发布；阶段 89 文档复核完成）· 单测基线 **205 例全绿**（parser 123 + downloader 52 + app 30）
+> 当前线上版本：**v1.1.37（versionCode 42）** · 阶段 88 已随 v1.1.37 发布（阶段 90）· 单测基线 **205 例全绿**（parser 123 + downloader 52 + app 30）
 
 **解析**
 - 9 个平台解析器 + 通用网页兜底，SPI 注册表可插拔
@@ -96,7 +96,7 @@ mobileSrcDownloadplugin/
 - B站 WBI 签名完整实现，无需代理
 - **X 混合推文（图 + 视频）全量解析**：公开接口只下发部分媒体时，按「缺哪一类补哪一类」由镜像补齐，并按 URL 去重合并（阶段 85）
 - **GIF 动图**：主通道与镜像通道都接受 `.gif`（不再硬过滤 mp4）；GIF 以 `image/gif` 入库到 `Pictures/`，相册可直接播放动图（阶段 86）
-- **小红书 2026-11 结构适配**：笔记数据限定在 `noteData.data.noteData` 作用域；图片按 `fileId` 生成 `ci.xiaohongshu.com` 长期直链，视频优先 `originVideoKey` → `sns-video-bd`；`/404/sec` 安全页明确判失效；媒体下载透传 Referer + Cookie + UA（阶段 88，未发布）
+- **小红书 2026-11 结构适配**：笔记数据限定在 `noteData.data.noteData` 作用域；图片按 `fileId` 生成 `ci.xiaohongshu.com` 长期直链，视频优先 `originVideoKey` → `sns-video-bd`；`/404/sec` 安全页明确判失效；媒体下载透传 Referer + Cookie + UA（阶段 88，已随 v1.1.37 发布）
 
 **下载**
 - 自研队列引擎：并发控制、暂停/继续/取消、指数退避重试
